@@ -14,6 +14,7 @@
 | 06 | [组件文档](./06-components.md) | 28 个 UI 组件、14 个区块组件、Slot 插槽模式、Context/Hooks | ✅ 完成 |
 | 07 | [部署文档](./07-deployment.md) | Vercel/Cloudflare/Docker 三种部署方式、本地开发配置、Stripe Webhook | ✅ 完成 |
 | 08 | [配置与环境变量](./08-config-env.md) | 全部配置文件解析、环境变量清单（已有+待新增）、i18n 配置 | ✅ 完成 |
+| 09 | [架构评审意见](./09-architecture-review.md) | 22 个问题：6 严重安全 + 7 架构 + 5 代码质量 + 4 模板可复用性 + 优先级调整 | ✅ 已采纳 |
 
 另见根目录 [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) - 完整开发方案（已有功能审计 + 待完成功能规划 + 路线图）。
 
@@ -32,6 +33,8 @@
 | 部署 | Vercel（首选） | - |
 
 ## 已知关键问题（高优先级）
+
+> 以下问题经架构评审（[09-architecture-review.md](./09-architecture-review.md)）确认，已纳入 DEVELOPMENT_PLAN.md 的 P-1 安全修复阶段。
 
 | # | 问题 | 文档位置 | 严重程度 |
 |---|------|----------|----------|

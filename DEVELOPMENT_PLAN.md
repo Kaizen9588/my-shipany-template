@@ -532,6 +532,112 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 
 ---
 
+## 六-补、安全修复（P-1：功能开发之前必须完成）
+
+> 以下问题来自架构评审（docs/09-architecture-review.md），经评估全部合理。
+> 这些是现有代码的安全漏洞和架构缺陷，必须在任何新功能开发之前修复。
+
+### P-1.1 定价架构修复（根因）
+
+| 项 | 说明 |
+|----|------|
+| **问题** | 定价数据放在 i18n JSON 中，服务端无法校验价格。Checkout API 信任客户端传入的 amount/credits，可被 0 成本攻击 |
+| **方案** | 新增 `data/pricing.ts` 服务端定价常量表（或数据库 products 表），Checkout API 根据 product_id 从服务端查询真实价格，忽略客户端传入值 |
+| **涉及文件** | 新增 `data/pricing.ts`、修改 `app/api/checkout/route.ts`、i18n pricing 节点改为引用服务端数据 |
+| **优先级** | **最高，其他安全修复的前置条件** |
+
+### P-1.2 积分扣减安全
+
+| 项 | 说明 |
+|----|------|
+| **问题** | decreaseCredits 不检查余额，并发请求可透支。显示时 Math.max(0) 遮盖负数但 DB 层面已透支 |
+| **方案** | 扣减前检查余额，不足时返回错误；用 Supabase RPC + 行锁实现原子性「检查+扣减」 |
+| **涉及文件** | `services/credit.ts`、`app/api/ping/route.ts`、新增 Supabase 存储过程 |
+| **优先级** | **最高** |
+
+### P-1.3 支付处理事务化
+
+| 项 | 说明 |
+|----|------|
+| **问题** | Webhook 处理三步（更新订单+充值积分+记录联盟）无事务，中间失败导致数据不一致 |
+| **方案** | 用 PostgreSQL 存储过程包在一个事务中，或用 Supabase rpc() 调用 |
+| **涉及文件** | `services/order.ts`、新增 Supabase 存储过程 `handle_order_payment()` |
+| **优先级** | **最高** |
+
+### P-1.4 认证安全修复
+
+| 项 | 说明 |
+|----|------|
+| **问题 1** | /api/update-invite 无认证，依赖请求体 user_uuid |
+| **方案 1** | 从 NextAuth session 获取 user_uuid，删除请求体参数 |
+| **问题 2** | Demo AI 接口无认证无限流无积分检查 |
+| **方案 2** | 加登录认证 + 积分扣减 + IP 限流 |
+| **涉及文件** | `app/api/update-invite/route.ts`、`app/api/demo/*/route.ts` |
+| **优先级** | **高** |
+
+### P-1.5 API Key hash 存储
+
+| 项 | 说明 |
+|----|------|
+| **问题** | API Key 明文存储，DB 泄露即全部密钥泄露 |
+| **方案** | 存储 SHA-256 hash，查询时 hash 匹配；创建时仅展示一次完整密钥 |
+| **涉及文件** | `models/apikey.ts`、`types/apikey.d.ts`、控制台 API Key 页面 |
+| **优先级** | **中高** |
+
+### P-1.6 配置安全修复
+
+| 项 | 说明 |
+|----|------|
+| **问题 1** | reactStrictMode: false |
+| **方案 1** | 改为 true |
+| **问题 2** | images.hostname: "*" |
+| **方案 2** | 限制为已知域名（Google/GitHub 头像、S3 CDN） |
+| **问题 3** | Middleware 语言列表含 14 种但实际只支持 en/zh |
+| **方案 3** | matcher 只列 en/zh |
+| **问题 4** | output: "standalone" 与 next start 冲突 |
+| **方案 4** | Vercel 部署去掉 standalone，或环境变量条件控制 |
+| **涉及文件** | `next.config.mjs`、`middleware.ts` |
+| **优先级** | **中** |
+
+### P-1.7 环境变量校验 + 日志封装
+
+| 项 | 说明 |
+|----|------|
+| **问题 1** | 无环境变量校验，缺失必填项启动不报错 |
+| **方案 1** | 用 zod 在启动时校验，缺失直接 fail fast |
+| **问题 2** | console.log 作为唯一日志手段 |
+| **方案 2** | 封装 lib/logger.ts，为 Sentry 接入做准备 |
+| **涉及文件** | 新增 `lib/env.ts`、`lib/logger.ts` |
+| **优先级** | **中高** |
+
+### P-1.8 基础设施补齐
+
+| 项 | 说明 |
+|----|------|
+| **问题 1** | 无数据库迁移系统 |
+| **方案 1** | 引入 Drizzle ORM + Drizzle Kit，拆分 install.sql 为初始迁移 |
+| **问题 2** | 无外键约束 + 缺索引 |
+| **方案 2** | 在 Drizzle schema 中声明外键和索引 |
+| **问题 3** | Supabase Client 每次新建 |
+| **方案 3** | 改为模块级单例 |
+| **问题 4** | UserCredits 幽灵字段 |
+| **方案 4** | 删除未实现的字段 |
+| **问题 5** | 联盟奖励逻辑错误（固定值非比例计算） |
+| **方案 5** | 改为 min(amount * percent, max) 或明确语义 |
+| **涉及文件** | 新增 Drizzle 配置、`models/db.ts`、`types/user.d.ts`、`services/affiliate.ts` |
+| **优先级** | **中高** |
+
+### P-1.9 测试基础设施
+
+| 项 | 说明 |
+|----|------|
+| **问题** | 零测试文件，核心业务逻辑无回归保障 |
+| **方案** | 引入 Vitest，优先测试：FIFO 积分扣减、支付处理流程、用户创建幂等性、定价校验 |
+| **涉及文件** | 新增 `vitest.config.ts`、`__tests__/` 目录 |
+| **优先级** | **中** |
+
+---
+
 ## 七、开发路线图
 
 ```
@@ -539,9 +645,21 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 ├── ✅ Fork + 改名 + 克隆
 ├── ✅ Next.js 16 升级
 ├── ✅ Build 验证通过
+├── ✅ 全套技术文档
 ├── ⬜ Supabase 项目创建 + 建表
 ├── ⬜ Google/GitHub OAuth 配置
 └── ⬜ 本地 dev 跑通（登录 + Landing Page）
+
+阶段 1.5：安全修复（评审要求，功能开发前必须完成）
+├── ⬜ P-1.1 定价架构修复（data/pricing.ts + Checkout 校验）
+├── ⬜ P-1.2 积分扣减安全（余额检查 + 并发锁）
+├── ⬜ P-1.3 支付处理事务化（存储过程）
+├── ⬜ P-1.4 认证安全（update-invite + Demo API）
+├── ⬜ P-1.5 API Key hash 存储
+├── ⬜ P-1.6 配置安全（strictMode + images + middleware + standalone）
+├── ⬜ P-1.7 环境变量校验 + 日志封装
+├── ⬜ P-1.8 基础设施（Drizzle ORM + 迁移 + 索引 + 单例 + 幽灵字段 + 联盟逻辑）
+└── ⬜ P-1.9 测试基础设施（Vitest）
 
 阶段 2：P0 核心功能
 ├── ⬜ Creem 支付集成
@@ -614,6 +732,9 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 ---
 
 ## 九、已知问题 & 风险
+
+> ⚠️ 架构评审（docs/09-architecture-review.md）发现 22 个问题，其中 6 个严重安全问题已纳入 P-1 安全修复阶段（见第六-补章），必须在功能开发前解决。
+
 
 | # | 问题 | 影响 | 应对 |
 |---|------|------|------|
