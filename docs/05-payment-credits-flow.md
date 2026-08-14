@@ -15,6 +15,10 @@
 
 定价方案通过 i18n JSON 配置，位于 `i18n/pages/landing/{locale}.json` 的 `pricing` 节点：
 
+> ⚠️ **安全问题**：定价数据存储在 i18n JSON 中，Checkout API 信任客户端传入的 `amount`/`credits`。
+> 恶意用户可构造低价请求获取大量积分。`cn_amount` 字段定义了但从未使用。
+> 修复方案见 DEVELOPMENT_PLAN.md P-1.1（定价架构修复）。
+
 ```typescript
 // PricingItem 结构 (types/blocks/pricing.d.ts)
 interface PricingItem {
@@ -283,6 +287,13 @@ async function decreaseCredits({ user_uuid, trans_type, credits }) {
   └──────────────────────────────────────────────────────┘
 
   有效积分 = 50 + 100 + 150 - 120 = 180
+
+  ⚠️ BUG: 2024-12-01 之后，Credit B(+100) 和 Credit D(-120) 同时过期
+  被查询排除，剩余 Credit A(+50, 已过期排除) 和 Credit C(+150)
+  有效积分 = 150  ← 应该是 80，凭空多出 70 积分！
+
+  根因：负数扣减记录不应继承原始积分的 expired_at
+  修复：负数记录 expired_at 设为 NULL，查询时不做 expired_at 过滤
 ```
 
 ### 2.5 积分余额查询
@@ -452,7 +463,7 @@ AffiliateRewardAmount = {
 | 3 | 无退款流程 | 中 | 后台无法发起退款 |
 | 4 | 无订阅取消流程 | 中 | 用户无法自助取消订阅 |
 | 5 | 联盟奖励金额固定 | 低 | reward_amount 固定 $50，非按比例计算 |
-| 6 | 积分可为负 | 低 | 扣减时不检查余额，仅显示时 max(0) |
+| 6 | 积分可为负 + FIFO expired_at 余额复活 | **高** | 扣减不检查余额可透支；负数记录继承 expired_at 导致过期后余额复活。已纳入 P-1.2 修复 |
 | 7 | UserCredits 字段未赋值 | 低 | one_time_credits 等字段始终 undefined |
 | 8 | /api/update-invite 无认证 | 高 | 依赖参数 user_uuid，可被伪造 |
 | 9 | 无交易事务 | 高 | 订单更新+积分充值+联盟记录非原子操作 |

@@ -180,7 +180,11 @@ created ──(支付成功 webhook)──> paid
 **缺失索引**：
 - `user_uuid` - 按用户查订单（`getOrdersByUserUuid`），高频
 - `status` - 按状态筛选（`getPaiedOrders`），中频
-- `stripe_session_id` - 按 Session ID 查（回调处理），中频
+- `payment_provider` - 按支付渠道筛选（多渠道后），中频
+
+> ⚠️ **表结构变更预告**：当前 orders 表包含 Stripe 专属字段（stripe_session_id, sub_id 等）。
+> 多支付渠道集成时将拆分为：orders（共享）+ stripe_orders + creem_orders（渠道专属）。
+> 详见 DEVELOPMENT_PLAN.md 第 4.2 节。
 
 ---
 
@@ -214,13 +218,21 @@ CREATE TABLE credits (
 用户有效积分 = SUM(credits.credits)
   WHERE user_uuid = ?
     AND expired_at >= now()    -- 未过期
-    AND credits > 0            -- 仅累计正数
+    （正负记录都包含，净余额 = 正数之和 + 负数之和）
 
 实际查询: getUserValidCredits()
   -> SELECT * FROM credits
      WHERE user_uuid = ? AND expired_at >= now()
      ORDER BY expired_at ASC   -- FIFO: 先扣最早过期的
 ```
+
+> ⚠️ **文档修正**：此前文档写有 `AND credits > 0` 过滤条件，但实际代码无此过滤。
+> 代码返回所有未过期记录（正数+负数），在 `getUserCredits()` 中累加计算净余额，这是正确的。
+> 但负数记录的 `expired_at` 存在设计缺陷，见下方说明。
+
+> ⚠️ **FIFO 扣减 expired_at 缺陷**：`decreaseCredits` 将原始积分的 `expired_at` 复制到负数扣减记录上。
+> 当原始积分过期后，对应的负数记录也过期被查询排除，导致已消耗的积分"复活"，余额凭空增加。
+> 修复方案：负数扣减记录不设 `expired_at`（NULL），查询时对 NULL 不过滤。
 
 **积分扣减算法** (`decreaseCredits`)：
 

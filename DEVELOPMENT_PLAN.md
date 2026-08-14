@@ -169,7 +169,44 @@ affiliates (id, user_uuid, invited_by, status, paid_order_no,
             paid_amount, reward_percent, reward_amount, created_at)
 ```
 
-### 4.2 待新增表
+### 4.2 表结构变更（多支付渠道）
+
+现有 `orders` 表包含 Stripe 专属字段（stripe_session_id, sub_id 等），无法适配多渠道。拆分为共享表 + 渠道专属表：
+
+```sql
+-- orders 表变更：新增 payment_provider，移除 Stripe 专属字段
+ALTER TABLE orders ADD COLUMN payment_provider VARCHAR(50) DEFAULT 'stripe';
+-- stripe_session_id, sub_id, sub_interval_count, sub_cycle_anchor,
+-- sub_period_end, sub_period_start, sub_times 迁移到 stripe_orders 表
+
+-- Stripe 专属表
+CREATE TABLE stripe_orders (
+    id SERIAL PRIMARY KEY,
+    order_no VARCHAR(255) UNIQUE NOT NULL,
+    stripe_session_id VARCHAR(255),
+    sub_id VARCHAR(255),
+    sub_interval_count INT,
+    sub_cycle_anchor INT,
+    sub_period_end INT,
+    sub_period_start INT,
+    sub_times INT,
+    created_at timestamptz
+);
+
+-- Creem 专属表
+CREATE TABLE creem_orders (
+    id SERIAL PRIMARY KEY,
+    order_no VARCHAR(255) UNIQUE NOT NULL,
+    creem_checkout_id VARCHAR(255),
+    creem_subscription_id VARCHAR(255),
+    creem_payment_method VARCHAR(100),
+    created_at timestamptz
+);
+
+-- 未来新增渠道只需加对应的 xxx_orders 表
+```
+
+### 4.3 待新增表
 
 ```sql
 -- 站内通知
@@ -180,12 +217,11 @@ notifications (id, uuid, user_uuid, type, title, content,
 audit_logs (id, admin_uuid, action, target_type, target_uuid,
             detail, ip, created_at)
 
--- 用户角色（或直接在 users 表加 role 字段）
--- 方案 A: users 表加 role VARCHAR DEFAULT 'user'
--- 方案 B: user_roles 表 (user_uuid, role)
+-- 邮箱验证码
+verification_codes (id, email, code, expired_at, used, created_at)
 
--- 反馈记录（如果自建反馈系统，用 Crisp 则不需要）
-feedbacks (id, user_uuid, type, content, status, created_at)
+-- users 表加 role 字段（RBAC）
+-- ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT 'user';
 ```
 
 ---
@@ -349,16 +385,101 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 
 ### P0 - 核心必须
 
-#### 6.1 Creem 支付集成
+#### 6.1 多支付渠道集成（Stripe + Creem + 未来扩展）
+
+**设计原则**：支付渠道会持续增加（Stripe、Creem、PayPal、微信支付等），不同渠道的 Session ID、订阅模型、Webhook 格式、退款 API 各不相同。不能强行塞进一张表，采用**共享订单表 + 渠道专属表**的分离设计。
+
+**数据库表设计**：
+
+```sql
+-- 1. orders 表（共享，去掉 Stripe 专属字段）
+ALTER TABLE orders
+  ADD COLUMN payment_provider VARCHAR(50) DEFAULT 'stripe',
+  -- 删除 stripe 专属字段：stripe_session_id, sub_id, sub_interval_count,
+  -- sub_cycle_anchor, sub_period_end, sub_period_start, sub_times
+  -- 保留共享字段：order_no, user_uuid, amount, credits, currency,
+  -- status, product_id, product_name, valid_months, created_at, expired_at,
+  -- paid_at, paid_email, order_detail, paid_detail
+
+-- 2. stripe_orders 表（Stripe 专属）
+CREATE TABLE stripe_orders (
+    id SERIAL PRIMARY KEY,
+    order_no VARCHAR(255) UNIQUE NOT NULL,  -- 关联 orders.order_no
+    stripe_session_id VARCHAR(255),
+    sub_id VARCHAR(255),
+    sub_interval_count INT,
+    sub_cycle_anchor INT,
+    sub_period_end INT,
+    sub_period_start INT,
+    sub_times INT,
+    created_at timestamptz
+);
+
+-- 3. creem_orders 表（Creem 专属）
+CREATE TABLE creem_orders (
+    id SERIAL PRIMARY KEY,
+    order_no VARCHAR(255) UNIQUE NOT NULL,  -- 关联 orders.order_no
+    creem_checkout_id VARCHAR(255),
+    creem_subscription_id VARCHAR(255),
+    creem_payment_method VARCHAR(100),
+    created_at timestamptz
+);
+```
+
+**架构分层**：
+
+```
+                         前端 Pricing 区块
+                              │
+                              ▼
+                    POST /api/checkout
+                    （统一入口）
+                              │
+                 ┌────────────┼────────────┐
+                 ▼            ▼            ▼
+           Stripe 分支    Creem 分支   未来渠道分支
+                 │            │            │
+                 ▼            ▼            ▼
+          创建 Stripe    创建 Creem    创建 XXX
+          Session       Checkout      Session
+                 │            │            │
+                 ▼            ▼            ▼
+          INSERT orders (payment_provider = 'stripe'/'creem'/'xxx')
+          INSERT stripe_orders / creem_orders / xxx_orders
+                 │            │            │
+                 ▼            ▼            ▼
+          /api/stripe-   /api/creem-   /api/xxx-
+          notify         notify        notify
+                 │            │            │
+                 └────────────┼────────────┘
+                              ▼
+                    services/order.ts
+                    handleOrderSession()
+                    （统一：更新订单状态 + 充值积分 + 联盟奖励）
+```
+
+**前端渠道选择策略**：
+- 环境变量 `NEXT_PUBLIC_PAYMENT_PROVIDER` 配置可用渠道：`stripe` / `creem` / `stripe,creem`
+- 若多渠道可用，前端 Pricing 区块显示支付方式选择（或根据用户地区自动推荐）
+- 若单渠道，直接跳转该渠道 Checkout
+
+**Webhook 统一处理**：
+- 每个渠道有独立的 `/api/{provider}-notify` 端点（签名验证方式不同）
+- 验签通过后，统一调用 `services/order.ts` 的 `handleOrderSession()` 处理订单
+- `handleOrderSession` 只操作共享的 `orders` + `credits` + `affiliates` 表，不关心渠道
+
+**退款处理**：
+- 每个渠道的退款 API 不同，`services/order.ts` 新增 `refundOrder(order_no)` 函数
+- 内部根据 `orders.payment_provider` 分发到对应渠道的退款逻辑
+- 退款成功后统一扣回积分 + 更新订单状态
 
 | 项 | 说明 |
 |----|------|
-| **目标** | 新增 Creem 支付渠道，与 Stripe 共存，通过环境变量切换 |
-| **原因** | 用户无海外信用卡，Creem 支持支付宝 |
-| **技术方案** | 新增 `app/api/creem-checkout/route.ts` 创建 Creem 订单；新增 `app/api/creem-notify/route.ts` 处理 Creem Webhook；复用现有 orders + credits 体系 |
-| **涉及文件** | `app/api/checkout/route.ts`（改为统一入口，按配置分发）、`services/order.ts`、`models/order.ts` |
-| **环境变量** | `CREEM_API_KEY`、`CREEM_WEBHOOK_SECRET`、`NEXT_PUBLIC_PAYMENT_PROVIDER=stripe|creem|both` |
-| **风险** | Creem API 文档需确认 webhook 签名验证方式 |
+| **目标** | 多支付渠道架构，当前支持 Stripe + Creem，未来可扩展 |
+| **原因** | 用户无海外信用卡，Creem 支持支付宝；后续可能对接更多渠道 |
+| **涉及文件** | 重构 `app/api/checkout/route.ts`（统一入口分发）、新增 `app/api/creem-checkout/route.ts`、新增 `app/api/creem-notify/route.ts`、重构 `services/order.ts`、重构 `models/order.ts`、新增 `models/stripe_order.ts`、新增 `models/creem_order.ts`、数据库迁移 SQL |
+| **环境变量** | `CREEM_API_KEY`、`CREEM_WEBHOOK_SECRET`、`NEXT_PUBLIC_PAYMENT_PROVIDER` |
+| **风险** | ① Creem API 文档需确认 webhook 签名验证方式；② 现有 orders 表的 Stripe 专属字段需迁移到 stripe_orders 表，需编写数据迁移脚本 |
 
 #### 6.2 邮件通知系统
 
@@ -388,9 +509,22 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 |----|------|
 | **目标** | 支持邮箱 + 验证码注册/登录（无 OAuth 依赖） |
 | **技术** | NextAuth Credentials Provider + Resend 发送验证码 |
-| **涉及文件** | `auth/config.ts`（新增 Credentials Provider）、`app/api/send-verification/route.ts`（发送验证码）、新增 `components/sign/email-form.tsx` |
-| **新增表** | `verification_codes (id, email, code, expired_at, created_at)` |
+| **涉及文件** | `auth/config.ts`（新增 Credentials Provider）、`app/api/send-verification/route.ts`（发送验证码）、`app/api/verify-code/route.ts`（验证码校验）、新增 `components/sign/email-form.tsx` |
+| **新增表** | `verification_codes (id, email, code, expired_at, used, created_at)` |
 | **流程** | 用户输入邮箱 -> 发送 6 位验证码 -> 验证码登录 -> NextAuth 建用户 |
+
+**密码安全设计**：
+
+| 安全项 | 方案 |
+|--------|------|
+| 密码哈希 | 使用 `bcrypt`（成本因子 12）或 `argon2id` 哈希存储，绝不存明文 |
+| 密码重置 | 通过邮箱验证码重置（复用 verification_codes 表），重置链接有效期 30 分钟 |
+| 登录失败限制 | 同一邮箱 5 次失败后锁定 15 分钟，同一 IP 10 次失败后封禁 1 小时 |
+| 邮箱验证 | 注册后必须验证邮箱才能使用（发送验证码，验证后才赠送新手积分） |
+| 密码强度校验 | 最少 8 位，包含字母+数字（前端 zod 校验 + 后端二次校验） |
+| 密码不纳入 JWT | 密码 hash 仅存数据库，不写入 JWT token 或 session |
+
+**新增环境变量**：`BCRYPT_SALT_ROUNDS=12`
 
 ---
 
@@ -483,6 +617,27 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 | **技术** | 简单方案：PostgreSQL LIKE / 全文索引；高级方案：Algolia |
 | **涉及文件** | `app/api/search/route.ts`、后台各列表页加搜索框 |
 
+#### 6.15 数据备份与灾难恢复
+
+| 项 | 说明 |
+|----|------|
+| **目标** | 保障支付和用户数据安全，防止数据丢失 |
+| **数据库备份** | ① Supabase 自动备份（免费版每日一次，保留 7 天）；② 定期导出关键表（users/orders/credits）到 S3，频率每日一次；③ 生产环境考虑 Supabase Pro（$25/月，30 天 PITR） |
+| **Webhook 容错** | ① Stripe Webhook 重试机制：Stripe 自动重试最多 3 天，`handleOrderSession` 必须幂等（已纳入 P-1.3）；② 增加定时任务扫描 status=created 超过 1 小时的订单，主动查询 Stripe/Creem 确认支付状态 |
+| **服务降级** | Supabase 宕机时，前端 Landing Page 仍可展示（静态），但登录/支付/控制台不可用，显示维护提示页 |
+| **涉及文件** | 新增 `lib/backup.ts`（导出逻辑）、`app/api/health/route.ts`（健康检查）、Vercel Cron Job 配置 |
+
+#### 6.16 GDPR 数据隐私合规
+
+| 项 | 说明 |
+|----|------|
+| **目标** | 满足海外用户数据隐私要求 |
+| **用户数据删除权** | 新增 `app/api/user/delete-account/route.ts`，用户可删除账号。删除时：① 软删除 users 表记录；② 保留 orders/credits 记录（财务合规要求）；③ 清除个人信息（nickname、avatar_url、email 改为 deleted@deleted.com） |
+| **Cookie 同意** | Landing Page 加 Cookie 同意横幅，用户同意后才加载 GA/OpenPanel 追踪脚本 |
+| **数据保留策略** | ① 用户数据保留至账号删除；② 订单/财务数据保留 7 年（税务合规）；③ 积分流水保留至过期后 1 年 |
+| **隐私政策更新** | 当前隐私政策是静态页面，需改为动态内容，明确列出收集的数据类型、用途、保留期限、第三方服务（Stripe/Supabase/GA）的数据处理 |
+| **涉及文件** | `app/[locale]/(default)/settings/`（删除账号入口）、`components/cookie-consent/`（Cookie 横幅）、`app/(legal)/`（隐私政策重写） |
+
 ---
 
 ### P3 - 工程化 & 安全
@@ -534,7 +689,7 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 
 ## 六-补、安全修复（P-1：功能开发之前必须完成）
 
-> 以下问题来自架构评审（docs/09-architecture-review.md），经评估全部合理。
+> 以下问题来自架构评审（评审报告已合并至本章节，原文件已删除），经评估全部合理。
 > 这些是现有代码的安全漏洞和架构缺陷，必须在任何新功能开发之前修复。
 
 ### P-1.1 定价架构修复（根因）
@@ -543,15 +698,20 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 |----|------|
 | **问题** | 定价数据放在 i18n JSON 中，服务端无法校验价格。Checkout API 信任客户端传入的 amount/credits，可被 0 成本攻击 |
 | **方案** | 新增 `data/pricing.ts` 服务端定价常量表（或数据库 products 表），Checkout API 根据 product_id 从服务端查询真实价格，忽略客户端传入值 |
-| **涉及文件** | 新增 `data/pricing.ts`、修改 `app/api/checkout/route.ts`、i18n pricing 节点改为引用服务端数据 |
+| **涉及文件** | 新增 `data/pricing.ts`、修改 `app/api/checkout/route/route.ts`、i18n pricing 节点改为引用服务端数据 |
+| **额外修复** | `cn_amount` 字段定义了但从未使用（checkout 不读它），给人支持人民币定价的假象。定价架构修复时一并处理：服务端定价表按 currency 返回正确金额 |
 | **优先级** | **最高，其他安全修复的前置条件** |
 
 ### P-1.2 积分扣减安全
 
 | 项 | 说明 |
 |----|------|
-| **问题** | decreaseCredits 不检查余额，并发请求可透支。显示时 Math.max(0) 遮盖负数但 DB 层面已透支 |
-| **方案** | 扣减前检查余额，不足时返回错误；用 Supabase RPC + 行锁实现原子性「检查+扣减」 |
+| **问题 1** | decreaseCredits 不检查余额，并发请求可透支。显示时 Math.max(0) 遮盖负数但 DB 层面已透支 |
+| **方案 1** | 扣减前检查余额，不足时返回错误；用 Supabase RPC + 行锁实现原子性「检查+扣减」 |
+| **问题 2** | FIFO 扣减算法将原始积分的 expired_at 复制到负数记录上。当原始积分过期后，负数记录同时过期被排除查询，导致已消耗的积分"复活"，余额凭空增加 |
+| **方案 2** | 负数扣减记录不设 expired_at（设为 NULL 或远期时间），扣减是永久消费行为，不应随原始积分过期而消失。查询有效积分时对负数记录不做 expired_at 过滤 |
+| **问题 3** | 文档（docs/03-database-schema.md）描述积分查询含 `credits > 0` 过滤，但实际代码无此过滤。需同步修正文档 |
+| **方案 3** | 修正文档，删除 `credits > 0` 过滤条件说明。实际代码累加正负记录计算净余额是正确的
 | **涉及文件** | `services/credit.ts`、`app/api/ping/route.ts`、新增 Supabase 存储过程 |
 | **优先级** | **最高** |
 
@@ -561,7 +721,8 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 |----|------|
 | **问题** | Webhook 处理三步（更新订单+充值积分+记录联盟）无事务，中间失败导致数据不一致 |
 | **方案** | 用 PostgreSQL 存储过程包在一个事务中，或用 Supabase rpc() 调用 |
-| **涉及文件** | `services/order.ts`、新增 Supabase 存储过程 `handle_order_payment()` |
+| **额外修复** | `updateOrderStatus` 未检查订单是否已为 paid 状态，Stripe Webhook 重试时 paid_at/paid_detail 被覆盖。事务化时一并加入幂等检查 |
+| **涉及文件** | `services/order.ts`、`models/order.ts`、新增 Supabase 存储过程 `handle_order_payment()` |
 | **优先级** | **最高** |
 
 ### P-1.4 认证安全修复
@@ -610,22 +771,32 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 | **涉及文件** | 新增 `lib/env.ts`、`lib/logger.ts` |
 | **优先级** | **中高** |
 
-### P-1.8 基础设施补齐
+### P-1.8 基础设施补齐（不含 ORM 迁移）
 
 | 项 | 说明 |
 |----|------|
-| **问题 1** | 无数据库迁移系统 |
-| **方案 1** | 引入 Drizzle ORM + Drizzle Kit，拆分 install.sql 为初始迁移 |
-| **问题 2** | 无外键约束 + 缺索引 |
-| **方案 2** | 在 Drizzle schema 中声明外键和索引 |
-| **问题 3** | Supabase Client 每次新建 |
-| **方案 3** | 改为模块级单例 |
-| **问题 4** | UserCredits 幽灵字段 |
-| **方案 4** | 删除未实现的字段 |
-| **问题 5** | 联盟奖励逻辑错误（固定值非比例计算） |
-| **方案 5** | 改为 min(amount * percent, max) 或明确语义 |
-| **涉及文件** | 新增 Drizzle 配置、`models/db.ts`、`types/user.d.ts`、`services/affiliate.ts` |
+| **问题 1** | 无外键约束 + 缺索引 |
+| **方案 1** | 通过 SQL `ALTER TABLE` 添加外键约束和高频查询索引（不依赖 ORM） |
+| **问题 2** | Supabase Client 每次调用都新建 |
+| **方案 2** | 改为模块级单例，避免重复创建 HTTP 连接池 |
+| **问题 3** | UserCredits 幽灵字段（one_time_credits 等始终 undefined） |
+| **方案 3** | 删除未实现的字段，保持类型与实际行为一致 |
+| **问题 4** | 联盟奖励逻辑错误（reward_amount 固定 $50 而非按比例计算） |
+| **方案 4** | 改为 `reward_amount = min(order.amount * reward_percent / 100, max_reward)`，明确语义 |
+| **涉及文件** | `data/install.sql`（补充 ALTER）、`models/db.ts`、`types/user.d.ts`、`services/affiliate.ts`、`services/constant.ts` |
 | **优先级** | **中高** |
+
+> **Drizzle ORM + 数据库迁移系统**已降级到阶段 5（P3 工程化），当前阶段聚焦基础设施和功能完善。
+
+### P-1.10 CORS 配置
+
+| 项 | 说明 |
+|----|------|
+| **问题** | API 支持通过 API Key 从外部调用，但未配置 CORS。浏览器跨域请求会被拦截 |
+| **方案** | 新增 `middleware.ts` 中的 CORS 处理或独立 CORS 中间件，允许配置的域名访问 API 路由 |
+| **涉及文件** | `middleware.ts` 或新增 `lib/cors.ts` |
+| **环境变量** | `CORS_ALLOWED_ORIGINS`（逗号分隔的允许域名列表） |
+| **优先级** | **中** |
 
 ### P-1.9 测试基础设施
 
@@ -658,8 +829,9 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 ├── ⬜ P-1.5 API Key hash 存储
 ├── ⬜ P-1.6 配置安全（strictMode + images + middleware + standalone）
 ├── ⬜ P-1.7 环境变量校验 + 日志封装
-├── ⬜ P-1.8 基础设施（Drizzle ORM + 迁移 + 索引 + 单例 + 幽灵字段 + 联盟逻辑）
-└── ⬜ P-1.9 测试基础设施（Vitest）
+├── ⬜ P-1.8 基础设施（索引 + 外键 + 单例 + 幽灵字段 + 联盟逻辑）
+├── ⬜ P-1.9 测试基础设施（Vitest）
+└── ⬜ P-1.10 CORS 配置
 
 阶段 2：P0 核心功能
 ├── ⬜ Creem 支付集成
@@ -679,14 +851,19 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 ├── ⬜ 订阅管理
 ├── ⬜ 用量统计
 ├── ⬜ 通知中心
-└── ⬜ 搜索
+├── ⬜ 搜索
+├── ⬜ 数据备份与灾难恢复
+└── ⬜ GDPR 数据隐私合规
 
 阶段 5：P3 工程化
+├── ⬜ Drizzle ORM + 数据库迁移系统（从 P-1.8 降级至此）
 ├── ⬜ API 限流
 ├── ⬜ 错误监控（Sentry）
 ├── ⬜ 审计日志
 ├── ⬜ Webhook 安全增强
-└── ⬜ CSRF 防护
+├── ⬜ CSRF 防护
+├── ⬜ 数据备份/灾难恢复
+└── ⬜ GDPR 数据隐私合规
 ```
 
 ---
@@ -733,7 +910,7 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 
 ## 九、已知问题 & 风险
 
-> ⚠️ 架构评审（docs/09-architecture-review.md）发现 22 个问题，其中 6 个严重安全问题已纳入 P-1 安全修复阶段（见第六-补章），必须在功能开发前解决。
+> ⚠️ 架构评审发现 22 个问题，其中 6 个严重安全问题已纳入 P-1 安全修复阶段（见第六-补章），必须在功能开发前解决。
 
 
 | # | 问题 | 影响 | 应对 |
@@ -742,10 +919,10 @@ feedbacks (id, user_uuid, type, content, status, created_at)
 | 2 | next-auth 5.0.0-beta.25 是 beta 版 | 可能有 breaking change | 持续关注 Auth.js v5 正式版发布 |
 | 3 | Supabase Client 无 ORM | 数据模型无类型推导 | 可后续引入 Drizzle ORM 或保持手写 |
 | 4 | Tailwind v3（非 v4） | 功能差异 | 暂不升级，v4 迁移成本大且无紧急需求 |
-| 5 | Stripe Webhook 仅处理 1 种事件 | 订阅取消等场景缺失 | P3 阶段补充 |
-| 6 | 无 Rate Limiting | AI API 可被滥用 | P3 阶段引入 Upstash |
+| 5 | Stripe Webhook 仅处理 1 种事件 | 订阅取消等场景缺失 | **P1 阶段补充**（评审提升优先级） |
+| 6 | 无 Rate Limiting | Demo AI API 可被滥用 | **P-1.4 已纳入**（认证安全修复） |
 | 7 | S3 有 SDK 无 UI | 用户无法上传文件 | P2 阶段补 UI |
-| 8 | `output: standalone` 与 `next start` 冲突 | production 启动方式 | 用 `node .next/standalone/server.js` 或去掉 standalone |
+| 8 | `output: standalone` 与 `next start` 冲突 | production 启动方式 | **P-1.6 已纳入**（配置安全修复） |
 | 9 | Cloudflare 部署兼容性 | @cloudflare/next-on-pages 可能不支持 Next 16 | 暂以 Vercel 为首选 |
 
 ---

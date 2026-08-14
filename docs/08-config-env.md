@@ -206,6 +206,8 @@ export const config = {
 | `RESEND_API_KEY` | Resend 邮件发送 | P0 |
 | `EMAIL_FROM` | 发件人地址 | P0 |
 | `NEXT_PUBLIC_CRISP_WEBSITE_ID` | Crisp 客服 | P0 |
+| `BCRYPT_SALT_ROUNDS` | 密码哈希成本因子 | P0 |
+| `CORS_ALLOWED_ORIGINS` | CORS 允许的域名 | P-1 |
 | `UPSTASH_REDIS_REST_URL` | 限流 Redis | P3 |
 | `UPSTASH_REDIS_REST_TOKEN` | 限流 Redis Token | P3 |
 | `SENTRY_DSN` | Sentry 错误监控 | P3 |

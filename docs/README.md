@@ -33,7 +33,7 @@
 
 ## 已知关键问题（高优先级）
 
-> 以下问题经架构评审（[09-architecture-review.md](./09-architecture-review.md)）确认，已纳入 DEVELOPMENT_PLAN.md 的 P-1 安全修复阶段。
+> 以下问题经架构评审确认，已纳入 DEVELOPMENT_PLAN.md 的 P-1 安全修复阶段。
 
 | # | 问题 | 文档位置 | 严重程度 |
 |---|------|----------|----------|
