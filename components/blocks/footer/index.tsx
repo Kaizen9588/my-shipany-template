@@ -76,7 +76,7 @@ export default function Footer({ footer }: { footer: FooterType }) {
                     target="_blank"
                     className="px-2 text-primary"
                   >
-                    build with ShipAny
+                    build with my-shipany-template
                   </a>
                 )}
               </p>

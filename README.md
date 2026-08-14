@@ -1,76 +1,36 @@
-# ShipAny Template One
+# my-shipany-template
 
-Ship Any AI SaaS Startups in hours.
+基于 ShipAny 开源版打造的 AI SaaS 模板项目。
 
-![preview](preview.png)
+## 技术栈
 
-## Quick Start
+- Next.js (App Router) + React 19 + TypeScript
+- Tailwind CSS + shadcn/ui
+- Supabase (PostgreSQL)
+- NextAuth 5.0 (Google / GitHub OAuth)
+- Stripe (支付)
+- AI SDK (OpenAI / DeepSeek / Replicate / OpenRouter)
+- next-intl (i18n)
 
-1. Clone the repository
+## 快速开始
 
 ```bash
-git clone https://github.com/shipanyai/shipany-template-one.git
-```
-
-2. Install dependencies
-
-```bash
+# 安装依赖
 pnpm install
-```
 
-3. Run the development server
+# 配置环境变量
+cp .env.example .env.local
 
-```bash
+# 运行开发服务器
 pnpm dev
 ```
 
-## Customize
+## 部署
 
-- Set your environment variables
-
-```bash
-cp .env.example .env.local
-```
-
-- Set your theme in `app/theme.css`
-
-[shadcn-ui-theme-generator](https://zippystarter.com/tools/shadcn-ui-theme-generator)
-
-- Set your landing page content in `i18n/pages/landing`
-
-- Set your i18n messages in `i18n/messages`
-
-## Deploy
-
-- Deploy to Vercel
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fshipanyai%2Fshipany-template-one&project-name=my-shipany-project&repository-name=my-shipany-project&redirect-url=https%3A%2F%2Fshipany.ai&demo-title=ShipAny&demo-description=Ship%20Any%20AI%20Startup%20in%20hours%2C%20not%20days&demo-url=https%3A%2F%2Fshipany.ai&demo-image=https%3A%2F%2Fpbs.twimg.com%2Fmedia%2FGgGSW3La8AAGJgU%3Fformat%3Djpg%26name%3Dlarge)
-
-- Deploy to Cloudflare
-
-1. Customize your environment variables
-
-```bash
-cp .env.example .env.production
-cp wrangler.toml.example wrangler.toml
-```
-
-edit your environment variables in `.env.production`
-
-and put all the environment variables under `[vars]` in `wrangler.toml`
-
-2. Deploy
-
-```bash
-npm run cf:deploy
-```
-
-## Community
-
-- [ShipAny](https://shipany.ai)
-- [Documentation](https://docs.shipany.ai)
-- [Discord](https://discord.gg/HQNnrzjZQS)
+- Vercel
+- Cloudflare Workers
+- Docker
 
 ## License
 
-- [ShipAny AI SaaS Boilerplate License Agreement](LICENSE)
+基于 ShipAny AI SaaS Boilerplate License Agreement
