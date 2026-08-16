@@ -8,6 +8,19 @@ interface StorageConfig {
   secretKey: string;
 }
 
+/**
+ * 生成带前缀的存储 key（P-1.8 问题 7）
+ * 替代硬编码 "shipany/"：多项目共用 bucket 时按 STORAGE_PREFIX 隔离，
+ * 默认使用项目名，key 形如 `${prefix}/${filename}`
+ */
+export function getStorageKey(filename: string): string {
+  const prefix =
+    process.env.STORAGE_PREFIX ||
+    process.env.NEXT_PUBLIC_PROJECT_NAME ||
+    "default";
+  return `${prefix}/${filename}`;
+}
+
 export function newStorage(config?: StorageConfig) {
   return new Storage(config);
 }

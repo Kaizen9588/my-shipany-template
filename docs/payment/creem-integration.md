@@ -3,6 +3,10 @@
 > 文档来源：Creem 官方文档 (https://docs.creem.io)
 > SDK：creem (TypeScript) / @creem_io/nextjs (Next.js adapter)
 > 最后更新：2025-08-14
+>
+> ✅ **落地记录（2026-08）**：`lib/payment/providers/creem.ts`（checkout 创建 + HMAC 验签 + 归一化）、
+> `/api/creem-notify`、迁移 `0007` 建 creem_orders 表、payment_products.creem_product_id 映射。
+> ⚠️ 需在 Creem Dashboard 创建产品并回填 creem_product_id 后方可实际收款。
 
 ---
 

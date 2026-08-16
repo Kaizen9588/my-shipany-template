@@ -5,6 +5,10 @@ export enum OrderStatus {
   Created = "created",
   Paid = "paid",
   Deleted = "deleted",
+  Expired = "expired",
+  Refunded = "refunded",
+  /** 渠道实付金额/币种与订单不符（迁移 0010），待人工核查 */
+  Mismatch = "mismatch",
 }
 
 export async function insertOrder(order: Order) {
@@ -75,26 +79,6 @@ export async function getFirstPaidOrderByUserEmail(
   return data;
 }
 
-export async function updateOrderStatus(
-  order_no: string,
-  status: string,
-  paid_at: string,
-  paid_email: string,
-  paid_detail: string
-) {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from("orders")
-    .update({ status, paid_at, paid_detail, paid_email })
-    .eq("order_no", order_no);
-
-  if (error) {
-    throw error;
-  }
-
-  return data;
-}
-
 export async function updateOrderSession(
   order_no: string,
   stripe_session_id: string,
@@ -153,7 +137,6 @@ export async function updateOrderSubscription(
 export async function getOrdersByUserUuid(
   user_uuid: string
 ): Promise<Order[] | undefined> {
-  const now = new Date().toISOString();
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("orders")
@@ -161,7 +144,6 @@ export async function getOrdersByUserUuid(
     .eq("user_uuid", user_uuid)
     .eq("status", "paid")
     .order("created_at", { ascending: false });
-  // .gte("expired_at", now);
 
   if (error) {
     return undefined;
@@ -173,7 +155,6 @@ export async function getOrdersByUserUuid(
 export async function getOrdersByUserEmail(
   user_email: string
 ): Promise<Order[] | undefined> {
-  const now = new Date().toISOString();
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("orders")
@@ -181,7 +162,6 @@ export async function getOrdersByUserEmail(
     .eq("user_email", user_email)
     .eq("status", "paid")
     .order("created_at", { ascending: false });
-  // .gte("expired_at", now);
 
   if (error) {
     return undefined;
@@ -193,7 +173,6 @@ export async function getOrdersByUserEmail(
 export async function getOrdersByPaidEmail(
   paid_email: string
 ): Promise<Order[] | undefined> {
-  const now = new Date().toISOString();
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from("orders")
@@ -201,7 +180,6 @@ export async function getOrdersByPaidEmail(
     .eq("paid_email", paid_email)
     .eq("status", "paid")
     .order("created_at", { ascending: false });
-  // .gte("expired_at", now);
 
   if (error) {
     return undefined;
@@ -210,7 +188,7 @@ export async function getOrdersByPaidEmail(
   return data;
 }
 
-export async function getPaiedOrders(
+export async function getPaidOrders(
   page: number,
   limit: number
 ): Promise<Order[] | undefined> {
@@ -227,4 +205,47 @@ export async function getPaiedOrders(
   }
 
   return data;
+}
+
+// ---------- 6.8 后台订单管理 ----------
+
+export async function searchPaidOrders(
+  keyword: string = "",
+  page: number = 1,
+  limit: number = 20
+): Promise<Order[] | undefined> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("orders")
+    .select("*")
+    .eq("status", "paid")
+    .order("created_at", { ascending: false })
+    .range((page - 1) * limit, page * limit - 1);
+
+  if (keyword) {
+    query = query.or(
+      `order_no.ilike.%${keyword}%,user_email.ilike.%${keyword}%,paid_email.ilike.%${keyword}%,product_name.ilike.%${keyword}%`
+    );
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    return undefined;
+  }
+  return data;
+}
+
+export async function countOrders(status?: string): Promise<number> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("orders")
+    .select("id", { count: "exact", head: true });
+  if (status) {
+    query = query.eq("status", status);
+  }
+  const { count, error } = await query;
+  if (error) {
+    return 0;
+  }
+  return count || 0;
 }

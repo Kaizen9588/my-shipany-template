@@ -40,6 +40,24 @@ export default async function ({ children }: { children: ReactNode }) {
           icon: "RiKey2Line",
           is_active: false,
         },
+        {
+          title: "Notifications",
+          url: "/notifications",
+          icon: "RiNotification3Line",
+          is_active: false,
+        },
+        {
+          title: "Usage",
+          url: "/usage",
+          icon: "RiLineChartLine",
+          is_active: false,
+        },
+        {
+          title: "Settings",
+          url: "/settings",
+          icon: "RiSettingsLine",
+          is_active: false,
+        },
       ],
     },
   };

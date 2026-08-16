@@ -12,19 +12,19 @@ import { Card } from "@/components/ui/card";
 import Icon from "@/components/icon";
 import { Section as SectionType } from "@/types/blocks/section";
 import { Star } from "lucide-react";
-import { useRef } from "react";
+import { useState } from "react";
 
 export default function Testimonial({ section }: { section: SectionType }) {
-  if (section.disabled) {
-    return null;
-  }
-
-  const plugin = useRef(
+  const [plugin] = useState(() =>
     AutoScroll({
       startDelay: 500,
       speed: 0.7,
     })
   );
+
+  if (section.disabled) {
+    return null;
+  }
 
   return (
     <section id={section.name} className="py-16">
@@ -50,8 +50,8 @@ export default function Testimonial({ section }: { section: SectionType }) {
             opts={{
               loop: true,
             }}
-            plugins={[plugin.current]}
-            onMouseLeave={() => plugin.current.play()}
+            plugins={[plugin]}
+            onMouseLeave={() => plugin.play()}
             className="relative before:absolute before:bottom-0 before:left-0 before:top-0 before:z-10 before:w-36 before:bg-gradient-to-r before:from-background before:to-transparent after:absolute after:bottom-0 after:right-0 after:top-0 after:z-10 after:w-36 after:bg-gradient-to-l after:from-background after:to-transparent"
           >
             <CarouselContent>

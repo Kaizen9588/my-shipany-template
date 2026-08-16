@@ -2,12 +2,20 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import GitHubProvider from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
 import { NextAuthConfig } from "next-auth";
+import { OAuth2Client } from "google-auth-library";
 import { Provider } from "next-auth/providers/index";
 import { User } from "@/types/user";
 import { getClientIp } from "@/lib/ip";
 import { getIsoTimestr } from "@/lib/time";
 import { getUuid } from "@/lib/hash";
 import { saveUser } from "@/services/user";
+import { findUserByEmail } from "@/models/user";
+import {
+  clearLoginFailure,
+  isLoginLocked,
+  recordLoginFailure,
+} from "@/lib/login-guard";
+import { verifyPassword } from "@/lib/password";
 
 let providers: Provider[] = [];
 
@@ -32,44 +40,53 @@ if (
           return null;
         }
 
-        const token = credentials!.credential;
-
-        const response = await fetch(
-          "https://oauth2.googleapis.com/tokeninfo?id_token=" + token
-        );
-        if (!response.ok) {
-          console.log("Failed to verify token");
+        const token = String(credentials?.credential || "");
+        if (!token) {
           return null;
         }
 
-        const payload = await response.json();
-        if (!payload) {
-          console.log("invalid payload from token");
+        // P-1.11：改用 google-auth-library verifyIdToken，
+        // 内部校验 aud（必须等于本应用 Client ID）、iss、exp 与签名。
+        // 原实现不校验 aud，攻击者用任意应用的合法 Google token 即可伪造登录；
+        // 且 tokeninfo 端点已被 Google deprecated。
+        try {
+          const client = new OAuth2Client(googleClientId);
+          const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: googleClientId,
+          });
+          const payload = ticket.getPayload();
+          if (!payload) {
+            console.log("invalid payload from token");
+            return null;
+          }
+
+          const {
+            email,
+            sub,
+            given_name,
+            family_name,
+            email_verified,
+            picture: image,
+          } = payload;
+          if (!email) {
+            console.log("invalid email in payload");
+            return null;
+          }
+
+          const user = {
+            id: sub,
+            name: [given_name, family_name].join(" "),
+            email,
+            image,
+            emailVerified: email_verified ? new Date() : null,
+          };
+
+          return user;
+        } catch (e) {
+          console.log("Failed to verify token: ", e);
           return null;
         }
-
-        const {
-          email,
-          sub,
-          given_name,
-          family_name,
-          email_verified,
-          picture: image,
-        } = payload;
-        if (!email) {
-          console.log("invalid email in payload");
-          return null;
-        }
-
-        const user = {
-          id: sub,
-          name: [given_name, family_name].join(" "),
-          email,
-          image,
-          emailVerified: email_verified ? new Date() : null,
-        };
-
-        return user;
       },
     })
   );
@@ -88,6 +105,58 @@ if (
     })
   );
 }
+
+// Email & Password Auth（6.4）
+// 密码哈希存数据库（users.password_hash），绝不入 JWT；
+// 登录失败限制（同邮箱 5 次锁定 15 分钟 / 同 IP 10 次封禁 1 小时）见 lib/login-guard.ts
+providers.push(
+  CredentialsProvider({
+    id: "credentials",
+    name: "Email & Password",
+    credentials: {
+      email: { label: "Email", type: "email" },
+      password: { label: "Password", type: "password" },
+    },
+    async authorize(credentials) {
+      const email = String(credentials?.email || "")
+        .trim()
+        .toLowerCase();
+      const password = String(credentials?.password || "");
+      const ip = await getClientIp();
+
+      if (!email || !password) {
+        return null;
+      }
+
+      const lock = isLoginLocked(email, ip);
+      if (lock.locked) {
+        console.log("[credentials] login locked:", email);
+        return null;
+      }
+
+      const user = await findUserByEmail(email, "credentials");
+      if (!user?.password_hash) {
+        recordLoginFailure(email, ip);
+        return null;
+      }
+
+      const valid = await verifyPassword(password, user.password_hash);
+      if (!valid) {
+        recordLoginFailure(email, ip);
+        return null;
+      }
+
+      clearLoginFailure(email, ip);
+
+      return {
+        id: user.uuid || user.id?.toString() || email,
+        email: user.email,
+        name: user.nickname,
+        image: user.avatar_url,
+      };
+    },
+  })
+);
 
 // Github Auth
 if (

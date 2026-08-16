@@ -1,7 +1,7 @@
 import { respData, respErr, respJson } from "@/lib/resp";
 
 import { findUserByUuid } from "@/models/user";
-import { getUserUuid } from "@/services/user";
+import { getUserUuid, toSafeUser } from "@/services/user";
 
 export async function POST(req: Request) {
   try {
@@ -15,7 +15,8 @@ export async function POST(req: Request) {
       return respErr("user not exist");
     }
 
-    return respData(user);
+    // 2.8：白名单出口，password_hash/role/signin_ip 等不再离开服务端
+    return respData(toSafeUser(user));
   } catch (e) {
     console.log("get user info failed: ", e);
     return respErr("get user info failed");

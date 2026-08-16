@@ -10,10 +10,10 @@ export const AffiliateStatus = {
 
 export const AffiliateRewardPercent = {
   Invited: 0,
-  Paied: 20, // 20%
+  Paid: 20, // 20%（P-1.8 问题 4：原拼写 Paied 已修正为 Paid）
 };
 
 export const AffiliateRewardAmount = {
   Invited: 0,
-  Paied: 5000, // $50
+  Paid: 5000, // $50（分），奖励上限
 };

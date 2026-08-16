@@ -30,6 +30,10 @@ yarn-error.log*
 .env.development
 .env.production
 
+# local package manager caches (sandbox/offline dev)
+.npm-cache/
+.pnpm-store/
+
 # vercel
 .vercel
 .tmp

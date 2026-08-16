@@ -14,15 +14,16 @@ export async function insertUser(user: User) {
 }
 
 export async function findUserByEmail(
-  email: string
+  email: string,
+  provider?: string
 ): Promise<User | undefined> {
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("email", email)
-    .limit(1)
-    .single();
+  let query = supabase.from("users").select("*").eq("email", email).limit(1);
+  if (provider) {
+    // P-1.11：同邮箱多 provider 场景按 (email, provider) 匹配
+    query = query.eq("signin_provider", provider);
+  }
+  const { data, error } = await query.single();
 
   if (error) {
     return undefined;
@@ -144,4 +145,57 @@ export async function getUserUuidsByEmail(email: string) {
   }
 
   return data.map((user) => user.uuid);
+}
+
+// ---------- 6.7 后台用户管理 ----------
+
+export async function searchUsers(
+  keyword: string = "",
+  page: number = 1,
+  limit: number = 20
+): Promise<User[] | undefined> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("users")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .range((page - 1) * limit, page * limit - 1);
+
+  if (keyword) {
+    query = query.or(
+      `email.ilike.%${keyword}%,nickname.ilike.%${keyword}%,uuid.ilike.%${keyword}%`
+    );
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    return undefined;
+  }
+  return data;
+}
+
+export async function countUsers(): Promise<number> {
+  const supabase = getSupabaseClient();
+  const { count, error } = await supabase
+    .from("users")
+    .select("id", { count: "exact", head: true });
+  if (error) {
+    return 0;
+  }
+  return count || 0;
+}
+
+/** 管理员更新用户（角色/状态等） */
+export async function updateUserByAdmin(
+  uuid: string,
+  fields: Partial<Pick<User, "role" | "status" | "nickname">>
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from("users")
+    .update({ ...fields, updated_at: getIsoTimestr() })
+    .eq("uuid", uuid);
+  if (error) {
+    throw error;
+  }
 }

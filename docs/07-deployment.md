@@ -14,10 +14,10 @@
 
 - Vercel 账号
 - GitHub 仓库（已 Fork 到 Kaizen9588/my-shipany-template）
-- Supabase 项目（已执行 `data/install.sql` 建表）
+- Supabase 项目（已执行 `data/install.sql` 建表，迁移 0001-0011 部署时自动应用，见 §5.2.1）
 - Google OAuth 凭据（如需 Google 登录）
 - GitHub OAuth 凭据（如需 GitHub 登录）
-- Stripe 账号（如需支付）
+- 支付渠道账号（按需）：Stripe / Creem / Waffo（多渠道架构见 [payment/provider-abstraction.md](./payment/provider-abstraction.md)）
 
 ### 2.2 部署步骤
 
@@ -53,12 +53,17 @@
 
 ### 2.4 output: standalone 说明
 
-`next.config.mjs` 中配置了 `output: "standalone"`，这会生成独立的 Node.js 服务器。
+`next.config.mjs` 使用**条件 standalone**（P-1.6 修复）：仅当构建时设置 `NEXT_OUTPUT=standalone` 才启用 `output: "standalone"`。
+
+```bash
+NEXT_OUTPUT=standalone pnpm build   # 生成 standalone 输出（Docker 用）
+pnpm build                          # 默认不启用（Vercel / next start 兼容）
+```
 
 **影响**：
-- `next start` 会警告不兼容 standalone 模式
-- Vercel 部署不受影响（Vercel 自动处理）
-- Docker 部署使用 `node .next/standalone/server.js`
+- `next start` 与 Vercel 部署不再冲突（默认不启用 standalone）
+- Docker 构建命令已内置 `NEXT_OUTPUT=standalone`，使用 `node .next/standalone/server.js`
+- Dockerfile 中的 `RUN NEXT_OUTPUT=standalone pnpm build` 已处理
 
 ### 2.5 Stripe Webhook 配置
 
@@ -66,6 +71,22 @@
 2. URL: `https://your-domain.com/api/stripe-notify`
 3. Events: `checkout.session.completed`
 4. 复制 Signing Secret 到环境变量 `STRIPE_WEBHOOK_SECRET`
+
+### 2.6 Creem 配置
+
+1. 注册 Creem：https://creem.io，在 Dashboard 预建产品（获取 `product_id`）
+2. 获取 API Key（Dashboard > Developers）
+3. Webhook URL: `https://your-domain.com/api/creem-notify`
+4. 环境变量：`CREEM_API_KEY`、`CREEM_WEBHOOK_SECRET`；`payment_products` 表填 `creem_product_id`
+5. 详见 [creem-integration.md](./payment/creem-integration.md)
+
+### 2.7 Waffo 配置
+
+1. 注册 Waffo：https://pancake.waffo.ai/merchant/auth/signin，完成 KYC/KYB
+2. Integration 菜单：获取 API Key + merchantId；生成 RSA 密钥对（公钥上传 Waffo，私钥自己保存）
+3. Webhook URL: `https://your-domain.com/api/waffo-notify`
+4. 环境变量：`WAFFO_API_KEY`、`WAFFO_PRIVATE_KEY`、`WAFFO_PUBLIC_KEY`、`WAFFO_MERCHANT_ID`
+5. 详见 [waffo-integration.md](./payment/waffo-integration.md)（含 Sandbox 测试）
 
 ## 3. Cloudflare Workers 部署
 
@@ -137,14 +158,62 @@ pnpm dev
 # 或: npx next dev -p 3000
 ```
 
-### 5.2 Supabase 本地配置
+### 5.2 Supabase 数据库配置
+
+#### 5.2.1 云端项目（生产/联调）
 
 1. 创建 Supabase 项目：https://supabase.com
-2. 在 SQL Editor 中执行 `data/install.sql`
-3. 获取 URL 和 Key：
+2. **在 SQL Editor 中执行一次 `data/install.sql`**（创建基础 6 表；不可重复执行，无 IF NOT EXISTS）
+3. 获取连接信息填入 `.env.local`：
    - Settings -> API -> Project URL -> `SUPABASE_URL`
    - Settings -> API -> anon public -> `SUPABASE_ANON_KEY`
    - Settings -> API -> service_role -> `SUPABASE_SERVICE_ROLE_KEY`
+   - Settings -> Database -> Connection string（pooler/transaction 模式）-> `DATABASE_URL`
+4. **其余表/RPC 无需手动执行**：首次 `pnpm dev`（或部署）时 `instrumentation.ts`
+   自动按序执行 `data/migrations/0001-0011`（`schema_migrations` 版本表保证幂等，
+   重复启动只补漏不重跑）；也可手动 `pnpm migrate`
+
+> 顺序硬约束：必须先跑 `install.sql` 再让迁移跑起来--迁移 0004 的外键依赖基础表。
+
+#### 5.2.2 本地 Supabase（本地开发，Docker 或 CLI 二选一）
+
+**前置**：Docker Desktop（OrbStack 等兼容 runtime 均可），项目端口 54322(Postgres)/54323(Studio)。
+
+方式 A：**Supabase CLI**（推荐，一条命令起全套，自带 Studio 管理界面）：
+
+```bash
+brew install supabase/tap/supabase    # 或 npm i -g supabase
+supabase init                          # 项目根目录，生成 supabase/config.toml（已有则跳过）
+supabase start                         # 拉起本地全套（Postgres/Studio/Auth 等）
+# 完成后输出本地凭据，填入 .env.local：
+#   SUPABASE_URL=http://127.0.0.1:54321
+#   SUPABASE_ANON_KEY=<输出的 anon key>
+#   SUPABASE_SERVICE_ROLE_KEY=<输出的 service_role key>
+#   DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+supabase stop                          # 停止（数据保留在 ./supabase/）
+supabase stop --no-backup              # 停止并清空本地数据
+```
+
+方式 B：**纯 Docker**（serverless 模式，无 CLI 依赖）：
+
+```bash
+curl -o docker-compose.yml https://raw.githubusercontent.com/supabase/supabase/master/docker/docker-compose.yml
+curl -o .env.docker https://raw.githubusercontent.com/supabase/supabase/master/docker/.env.example
+# 编辑 .env.docker 生成 POSTGRES_PASSWORD/JWT_SECRET 等，然后：
+docker compose up -d
+# 凭据以 .env.docker 中实际值为准（默认 postgres/54322）
+```
+
+**选择建议**：日常开发用 CLI（`supabase start/stop` 简单、Studio 可视化看表）；
+仅想跑个 Postgres 验证迁移时，甚至可以 `docker run -d -p 54322:5432 -e POSTGRES_PASSWORD=postgres postgres:17`
+再用 `DATABASE_URL` 指过去执行 `pnpm migrate`（项目不依赖 Supabase 专属扩展，
+`install.sql` + 全部迁移在纯 Postgres 上可执行）。
+
+**建表**：本地库与云端一样，先在 Studio（http://localhost:54323）SQL Editor 执行
+`data/install.sql`，迁移 0001-0011 由 `pnpm dev` 自动补齐。
+
+**注意**：本地 Auth（邮件验证码/OAuth 回调）需要额外配置回调地址，本地开发通常只测
+数据库 + 支付链路，OAuth 登录用云端项目更省事。
 
 ### 5.3 Google OAuth 配置
 
@@ -184,6 +253,8 @@ stripe listen --forward-to localhost:3000/api/stripe-notify
 # 复制 webhook signing secret 到 .env.local
 # STRIPE_WEBHOOK_SECRET=whsec_...
 ```
+
+> Creem / Waffo 的本地测试：两者无官方 CLI 转发工具，用 ngrok 等内网穿透工具将本地端点暴露到公网后，在各自 Dashboard 配置测试 Webhook。Waffo Sandbox 测试步骤见 [waffo-integration.md](./payment/waffo-integration.md)。
 
 ### 5.6 已知问题
 

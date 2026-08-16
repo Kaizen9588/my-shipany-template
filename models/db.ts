@@ -1,6 +1,13 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-export function getSupabaseClient() {
+// P-1.8 问题 2：模块级单例，避免每次调用新建 HTTP 连接池
+let client: SupabaseClient | null = null;
+
+export function getSupabaseClient(): SupabaseClient {
+  if (client) {
+    return client;
+  }
+
   const supabaseUrl = process.env.SUPABASE_URL || "";
 
   let supabaseKey = process.env.SUPABASE_ANON_KEY || "";
@@ -12,7 +19,7 @@ export function getSupabaseClient() {
     throw new Error("Supabase URL or key is not set");
   }
 
-  const client = createClient(supabaseUrl, supabaseKey);
+  client = createClient(supabaseUrl, supabaseKey);
 
   return client;
 }

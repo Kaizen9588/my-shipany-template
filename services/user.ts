@@ -3,6 +3,7 @@ import { findUserByEmail, findUserByUuid, insertUser } from "@/models/user";
 
 import { User } from "@/types/user";
 import { auth } from "@/auth";
+import { fireAndForgetEmail } from "@/lib/email";
 import { getOneYearLaterTimestr } from "@/lib/time";
 import { getUserUuidByApiKey } from "@/models/apikey";
 import { headers } from "next/headers";
@@ -10,9 +11,27 @@ import { increaseCredits } from "./credit";
 
 export async function saveUser(user: User) {
   try {
-    const existUser = await findUserByEmail(user.email);
+    const provider = user.signin_provider || "";
+    const existUser = await findUserByEmail(user.email, provider);
     if (!existUser) {
-      await insertUser(user);
+      try {
+        await insertUser(user);
+      } catch (e: any) {
+        // P-1.11 问题 4：并发注册（两 tab 同时首次登录）→ 唯一约束冲突
+        // 捕获后重查，已存在则复用，避免 session 无 uuid
+        const isUniqueViolation =
+          e && (e.code === "23505" || String(e.message || "").includes("duplicate key"));
+        if (isUniqueViolation) {
+          const racedUser = await findUserByEmail(user.email, provider);
+          if (racedUser) {
+            user.id = racedUser.id;
+            user.uuid = racedUser.uuid;
+            user.created_at = racedUser.created_at;
+            return user;
+          }
+        }
+        throw e;
+      }
 
       // increase credits for new user, expire in one year
       await increaseCredits({
@@ -21,6 +40,19 @@ export async function saveUser(user: User) {
         credits: CreditsAmount.NewUserGet,
         expired_at: getOneYearLaterTimestr(),
       });
+
+      // 6.2：新用户欢迎邮件（fire-and-forget，不阻塞登录流程）
+      if (user.email) {
+        fireAndForgetEmail({
+          to: user.email,
+          template: "welcome",
+          variables: {
+            nickname: user.nickname || "",
+            credits: CreditsAmount.NewUserGet,
+          },
+          category: "transactional",
+        });
+      }
     } else {
       user.id = existUser.id;
       user.uuid = existUser.uuid;
@@ -87,4 +119,25 @@ export async function getUserInfo() {
   const user = await findUserByUuid(user_uuid);
 
   return user;
+}
+
+/**
+ * 用户数据安全出口（2.8）：API 响应只允许白名单字段。
+ * 此前 get-user-info / update-invite 整行返回（select(*)），password_hash /
+ * role / signin_ip / signin_openid 泄漏给客户端（持有 sk- API key 同样可达）。
+ * 新增出口一律走此函数；需要敏感字段的内部逻辑直接用 models 层。
+ */
+export function toSafeUser(user: User): Omit<
+  User,
+  "password_hash" | "password_updated_at" | "signin_ip" | "signin_openid" | "status"
+> {
+  const {
+    password_hash: _ph,
+    password_updated_at: _pu,
+    signin_ip: _si,
+    signin_openid: _so,
+    status: _st,
+    ...safe
+  } = user;
+  return safe;
 }

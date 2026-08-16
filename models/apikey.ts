@@ -1,5 +1,6 @@
 import { Apikey } from "@/types/apikey";
 import { getSupabaseClient } from "@/models/db";
+import { hashString } from "@/lib/hash";
 
 export enum ApikeyStatus {
   Created = "created",
@@ -42,10 +43,12 @@ export async function getUserUuidByApiKey(
   apiKey: string
 ): Promise<string | undefined> {
   const supabase = getSupabaseClient();
+  // P-1.5：按哈希匹配，DB 泄露也不泄露明文 key
+  const keyHash = hashString(apiKey);
   const { data, error } = await supabase
     .from("apikeys")
     .select("user_uuid")
-    .eq("api_key", apiKey)
+    .eq("api_key", keyHash)
     .eq("status", ApikeyStatus.Created)
     .limit(1)
     .single();

@@ -40,7 +40,8 @@ export default async function () {
         name: "api_key",
         type: "copy",
         callback: (item: any) => {
-          return item.api_key.slice(0, 4) + "..." + item.api_key.slice(-4);
+          // P-1.5：只展示明文前缀，数据库存的是哈希
+          return item.key_prefix ? `${item.key_prefix}...` : "sk-...";
         },
       },
       {

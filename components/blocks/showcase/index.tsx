@@ -14,10 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Section as SectionType } from "@/types/blocks/section";
 
 export default function Showcase({ section }: { section: SectionType }) {
-  if (section.disabled) {
-    return null;
-  }
-
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
@@ -36,6 +32,10 @@ export default function Showcase({ section }: { section: SectionType }) {
       carouselApi.off("select", updateSelection);
     };
   }, [carouselApi]);
+
+  if (section.disabled) {
+    return null;
+  }
 
   return (
     <section id={section.name} className="py-16">

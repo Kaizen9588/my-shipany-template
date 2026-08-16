@@ -2,7 +2,7 @@ import DashboardLayout from "@/components/dashboard/layout";
 import Empty from "@/components/blocks/empty";
 import { ReactNode } from "react";
 import { Sidebar } from "@/types/blocks/sidebar";
-import { getUserInfo } from "@/services/user";
+import { getAdminUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
 export default async function AdminLayout({
@@ -10,14 +10,10 @@ export default async function AdminLayout({
 }: {
   children: ReactNode;
 }) {
-  const userInfo = await getUserInfo();
-  if (!userInfo || !userInfo.email) {
+  // 6.10 RBAC：super_admin / admin / operator（ADMIN_EMAILS 白名单过渡保留）
+  const admin = await getAdminUser();
+  if (!admin) {
     redirect("/auth/signin");
-  }
-
-  const adminEmails = process.env.ADMIN_EMAILS?.split(",");
-  if (!adminEmails?.includes(userInfo?.email)) {
-    return <Empty message="No access" />;
   }
 
   const sidebar: Sidebar = {
@@ -31,6 +27,11 @@ export default async function AdminLayout({
     },
     nav: {
       items: [
+        {
+          title: "Dashboard",
+          url: "/admin",
+          icon: "RiDashboardLine",
+        },
         {
           title: "Users",
           url: "/admin/users",
@@ -46,6 +47,16 @@ export default async function AdminLayout({
               url: "/admin/paid-orders",
             },
           ],
+        },
+        {
+          title: "Credits",
+          url: "/admin/credits",
+          icon: "RiCoinsLine",
+        },
+        {
+          title: "Audit Logs",
+          url: "/admin/audit-logs",
+          icon: "RiFileList3Line",
         },
         {
           title: "Posts",
@@ -67,18 +78,6 @@ export default async function AdminLayout({
           url: "https://github.com/Kaizen9588/my-shipany-template",
           target: "_blank",
           icon: "RiGithubLine",
-        },
-        {
-          title: "Discord",
-          url: "https://discord.gg/HQNnrzjZQS",
-          target: "_blank",
-          icon: "RiDiscordLine",
-        },
-        {
-          title: "X",
-          url: "https://x.com/shipanyai",
-          target: "_blank",
-          icon: "RiTwitterLine",
         },
       ],
     },

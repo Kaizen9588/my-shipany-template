@@ -53,12 +53,14 @@ export async function getUserValidCredits(
 ): Promise<Credit[] | undefined> {
   const now = new Date().toISOString();
   const supabase = getSupabaseClient();
+  // P-1.2：负数扣减记录 expired_at 为 NULL，永不过期，不参与 expired_at 过滤；
+  // 正数记录需未过期。净余额 = 正负记录累加。
   const { data, error } = await supabase
     .from("credits")
     .select("*")
     .eq("user_uuid", user_uuid)
-    .gte("expired_at", now)
-    .order("expired_at", { ascending: true });
+    .or(`and(credits.gt.0,expired_at.gte.${now}),credits.lte.0`)
+    .order("expired_at", { ascending: true, nullsFirst: false });
 
   if (error) {
     return undefined;

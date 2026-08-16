@@ -6,19 +6,11 @@ export function respOk() {
   return respJson(0, "ok");
 }
 
-export function respErr(message: string) {
-  return respJson(-1, message);
+export function respErr(message: string, status: number = 200) {
+  return Response.json({ code: -1, message }, { status });
 }
 
 export function respJson(code: number, message: string, data?: any) {
-  let json = {
-    code: code,
-    message: message,
-    data: data,
-  };
-  if (data) {
-    json["data"] = data;
-  }
-
-  return Response.json(json);
+  // P-1.8 问题 6：JSON.stringify 会丢弃 undefined 属性，无需手动条件赋值
+  return Response.json({ code, message, data });
 }

@@ -24,7 +24,6 @@ export interface PricingItem {
   product_id: string;
   product_name?: string;
   amount: number;
-  cn_amount?: number;
   currency: string;
   credits?: number;
   valid_months?: number;

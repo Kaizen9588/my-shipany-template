@@ -22,10 +22,6 @@ import { Section as SectionType } from "@/types/blocks/section";
 const DURATION = 5000;
 
 export default function Feature2({ section }: { section: SectionType }) {
-  if (section.disabled) {
-    return null;
-  }
-
   const [api, setApi] = useState<CarouselApi>();
   const [currentAccordion, setCurrentAccordion] = useState("1");
 
@@ -40,6 +36,10 @@ export default function Feature2({ section }: { section: SectionType }) {
 
     return () => clearInterval(interval);
   }, [api, currentAccordion]);
+
+  if (section.disabled) {
+    return null;
+  }
 
   return (
     <section id={section.name} className="py-32">

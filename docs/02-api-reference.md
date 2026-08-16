@@ -49,6 +49,8 @@
 └─────────────────────────────────────────────────────┘
 ```
 
+> ⚠️ **同一账户语义**：API Key 认证与 Session 认证都映射到**同一个 user_uuid**。第三方用 API Key 调用 AI 时，积分从该账户余额扣减，与浏览器 session 调用共享同一积分池。API Key 是账户的授权凭证，不是独立计费单元。
+
 ---
 
 ## 接口清单
@@ -78,32 +80,29 @@ NextAuth.js 自动处理的认证端点，不是自定义 API。
 
 ### 2. POST /api/checkout
 
-创建 Stripe Checkout Session，发起支付。
+创建支付订单并发起支付（多渠道统一入口）。
+
+> ⚠️ 本文档描述的是 **P-1.1 + 6.1 修复后的目标形态**。当前实现仍信任客户端金额，修复前存在 0 成本攻击风险，见 DEVELOPMENT_PLAN.md P-1.1。
 
 | 项 | 说明 |
 |----|------|
 | 认证 | ✅ 必须登录 |
-| 实现 | `app/api/checkout/route.ts` |
+| 实现 | `app/api/checkout/route.ts`（统一入口，内部按 payment_settings 路由到渠道） |
 
 **请求体**：
 
 ```typescript
 {
-  credits: number,        // 购买积分数
-  currency: string,       // "USD" | "CNY" | "EUR" 等
-  amount: number,         // 金额（分），如 9900 = $99.00
-  interval: string,       // "one-time" | "month" | "year"
-  product_id: string,     // 产品 ID（如 "starter"）
-  product_name: string,   // 产品名称
-  valid_months: number,   // 积分有效月数（1/3/12）
+  product_id: string,     // 产品 ID（如 "starter"），服务端据此查真实价格
+  method: string,         // 支付方式："card" | "alipay" | "wechat_pay"（前端只传方式，不传渠道）
   cancel_url?: string     // 取消支付跳转 URL（可选）
 }
 ```
 
-**校验规则**：
-- `amount`、`interval`、`currency`、`product_id` 必填
-- `interval` 必须是 `year` / `month` / `one-time` 之一
-- `year` 对应 `valid_months=12`，`month` 对应 `valid_months=1`
+**关键原则**：
+- **不信任客户端金额**：`amount`/`credits`/`currency` 由服务端从 `payment_products` 表查询
+- **前端只传 `method`，不传 `provider`**：渠道选择是服务端的事，按 `payment_settings.priority` 路由
+- 可用支付方式由 `GET /api/payment-methods` 提供（见下文）
 
 **成功响应** (code=0)：
 
@@ -112,24 +111,49 @@ NextAuth.js 自动处理的认证端点，不是自定义 API。
   code: 0,
   message: "ok",
   data: {
-    public_key: string,    // Stripe 公钥
-    order_no: string,      // 内部订单号
-    session_id: string     // Stripe Session ID
+    checkout_url: string,  // 重定向用户到渠道托管支付页
+    order_no: string       // 内部订单号
   }
 }
 ```
 
 **业务流程**：
-1. 获取 user_uuid + user_email
-2. 生成 order_no (Snowflake ID)
-3. 计算过期时间（valid_months + 订阅延迟 24h）
-4. INSERT orders (status="created")
-5. 创建 Stripe Checkout Session
-6. UPDATE orders (stripe_session_id, order_detail)
-7. 返回 session_id 给前端跳转
+1. 鉴权获取 user_uuid + user_email
+2. 查 `payment_products` 表获取真实金额/积分/有效期
+3. 按 method 路由到渠道（`getEnabledProviders()`）
+4. 生成 order_no，INSERT orders（status="created", payment_provider=渠道）
+5. 调渠道 Provider `createCheckout()`（Stripe 传 price_data、Creem 传 product_id、Waffo 传动态金额）
+6. 写入渠道专属表（stripe_orders/creem_orders/waffo_orders）
+7. 返回 checkout_url 给前端跳转
 
-**CNY 特殊处理**：
-- `currency === "cny"` 时，启用 `wechat_pay` + `alipay` + `card` 三种支付方式
+---
+
+### 2.1 GET /api/payment-methods
+
+返回可用支付方式列表（前端渲染用，不暴露渠道名）。
+
+| 项 | 说明 |
+|----|------|
+| 认证 | 无需 |
+| 实现 | `app/api/payment-methods/route.ts` |
+| 缓存 | 60s TTL（避免高频查库） |
+
+**响应**：
+
+```typescript
+{
+  code: 0,
+  data: {
+    methods: [
+      { method: "card",       available: true, providers: ["creem", "waffo"] },
+      { method: "alipay",     available: true, providers: ["creem", "waffo"] },
+      { method: "wechat_pay", available: true, providers: ["waffo"] }
+    ]
+  }
+}
+```
+
+`available=false` 时前端隐藏该按钮而非报错。
 
 ---
 
@@ -193,6 +217,10 @@ Stripe Webhook 回调端点，处理支付完成事件。
   }
 }
 ```
+
+> ✅ **2.8 已修复**：响应经 `toSafeUser()` 白名单出口（services/user.ts），
+> `password_hash` / `role` / `signin_ip` / `signin_openid` / `status` 不再离开服务端。
+> 上表即实际字段。注意：本接口同时接受 session 与 sk- API key。
 
 **未认证响应** (code=-2)：
 
@@ -270,176 +298,76 @@ Stripe Webhook 回调端点，处理支付完成事件。
 
 绑定邀请关系（被邀请用户调用）。
 
+> ✅ **P-1.4 已落地**：user_uuid 一律从 NextAuth session 获取，请求体不再接受 user_uuid。
+
 | 项 | 说明 |
 |----|------|
-| 认证 | ❌ 无需认证（但需要 user_uuid 参数） |
+| 认证 | ✅ 必须登录（从 NextAuth session 获取 user_uuid） |
 | 实现 | `app/api/update-invite/route.ts` |
 
 **请求体**：
 
 ```typescript
 {
-  invite_code: string,   // 邀请人的邀请码
-  user_uuid: string      // 被邀请人的 UUID
+  invite_code: string    // 邀请人的邀请码
 }
 ```
 
-**校验规则**：
+**校验规则**（P-1.4 下放服务端）：
 - 邀请人必须存在
 - 不能邀请自己
 - 被邀请人不能已有邀请人
+- 注册 2 小时内才可绑定（服务端校验，非前端）
 
 **业务流程**：
-1. 查找邀请人 (findUserByInviteCode)
-2. 查找被邀请人 (findUserByUuid)
-3. 校验（不能自邀、不能重复）
+1. 从 session 获取被邀请人 user_uuid（**不接受客户端传入**）
+2. 查找邀请人 (findUserByInviteCode)
+3. 校验（不能自邀、不能重复、2 小时时效）
 4. UPDATE users.invited_by
 5. INSERT affiliates (status="pending")
 
-> ⚠️ 此接口不需要认证，仅依赖请求体中的 user_uuid。存在被伪造的风险。
-
 ---
 
-### 8. POST /api/demo/gen-text
+### 8~10. POST /api/demo/*（已废弃）
 
-AI 文本生成 Demo。
-
-| 项 | 说明 |
-|----|------|
-| 认证 | ❌ 无需认证 |
-| 积分消耗 | ❌ 不消耗 |
-| 实现 | `app/api/demo/gen-text/route.ts` |
-
-**请求体**：
-
-```typescript
-{
-  prompt: string,     // 提示词
-  provider: string,   // "openai" | "deepseek" | "openrouter" | "siliconflow"
-  model: string       // 模型名，如 "gpt-4o"
-}
-```
-
-**支持的 Provider**：
-
-| Provider | 环境变量 | 特殊处理 |
-|----------|----------|----------|
-| openai | `OPENAI_API_KEY` | - |
-| deepseek | `DEEPSEEK_API_KEY` | - |
-| openrouter | `OPENROUTER_API_KEY` | deepseek-r1 模型启用 reasoning 提取 |
-| siliconflow | `SILICONFLOW_API_KEY` + `SILICONFLOW_BASE_URL` | DeepSeek-R1 模型启用 reasoning 提取 |
-
-**成功响应** (code=0)：
-
-```typescript
-{
-  code: 0,
-  message: "ok",
-  data: {
-    text: string,       // 生成文本
-    reasoning: string   // 推理过程（如有）
-  }
-}
-```
-
----
-
-### 9. POST /api/demo/gen-stream-text
-
-AI 流式文本生成 Demo。
-
-| 项 | 说明 |
-|----|------|
-| 认证 | ❌ 无需认证 |
-| 积分消耗 | ❌ 不消耗 |
-| 响应格式 | AI SDK Data Stream（非标准 JSON） |
-| 实现 | `app/api/demo/gen-stream-text/route.ts` |
-
-**请求体**：同 `/api/demo/gen-text`
-
-**响应**：`result.toDataStreamResponse({ sendReasoning: true })`，返回 Vercel AI SDK 流式协议。
-
----
-
-### 10. POST /api/demo/gen-image
-
-AI 图片生成 Demo。
-
-| 项 | 说明 |
-|----|------|
-| 认证 | ❌ 无需认证 |
-| 积分消耗 | ❌ 不消耗 |
-| 实现 | `app/api/demo/gen-image/route.ts` |
-
-**请求体**：
-
-```typescript
-{
-  prompt: string,     // 图片描述
-  provider: string,   // "openai" | "replicate" | "kling"
-  model: string       // 模型名
-}
-```
-
-**支持的 Provider**：
-
-| Provider | 模型示例 | 环境变量 |
-|----------|----------|----------|
-| openai | dall-e-3 | `OPENAI_API_KEY` |
-| replicate | stability-ai/sdxl | `REPLICATE_API_TOKEN` |
-| kling | kling-v1 | `KLING_API_KEY` + `KLING_BASE_URL` |
-
-**业务流程**：
-1. 调用 AI SDK 生成图片
-2. 将图片上传到 S3 存储 (`storage.uploadFile`)
-3. 返回图片 URL
-
-**成功响应** (code=0)：
-
-```typescript
-{
-  code: 0,
-  message: "ok",
-  data: [{
-    location: string,    // S3 原始 URL
-    bucket: string,
-    key: string,
-    filename: string,
-    url: string,         // 通过 STORAGE_DOMAIN 拼接的 CDN URL
-    provider: string
-  }]
-}
-```
+> ❌ **P-1.4 已废弃**：`/api/demo/gen-text`、`/api/demo/gen-stream-text`、`/api/demo/gen-image`
+> 三个未认证、无限流的 AI 端点已删除。由 P0 的正式端点替代：
+> - `/api/v1/ai/generate` — 登录 + 积分收费（见 [docs/13-ai-gateway.md](./13-ai-gateway.md)）
+> - `/api/v1/ai/demo` — 匿名演示限流（见 [docs/14-anonymous-trial.md](./14-anonymous-trial.md)）
 
 ---
 
 ## 接口认证总结
 
+> 阶段 1.5（P-1 安全修复）已全部落地，下表为当前状态。
+
 | 接口 | 认证 | 积分消耗 | 风险点 |
 |------|------|----------|--------|
-| /api/auth/[...nextauth] | - | - | - |
-| /api/checkout | ✅ Session | - | - |
-| /api/stripe-notify | Stripe签名 | - | 仅处理1种事件 |
+| /api/auth/[...nextauth] | - | - | One-Tap aud 已校验（P-1.11 ✅） |
+| /api/checkout | ✅ Session | - | 金额服务端定价表决定（P-1.1 ✅）；按 payment_settings 路由渠道并写入 payment_provider |
+| /api/payment-methods | - | - | ✅ 已实现（可用支付方式聚合） |
+| /api/{stripe,creem,waffo}-notify | 渠道签名 | - | 验签后归一化 PaymentEvent 统一处理；金额/币种比对（0010）；refund 事件原子扣积分（0011） |
 | /api/get-user-info | ✅ Session/ApiKey | - | - |
-| /api/ping | ✅ Session/ApiKey | 1 积分 | - |
+| /api/ping | ✅ Session/ApiKey | 1 积分 | 余额不足返回明确错误（P-1.2 ✅） |
 | /api/update-invite-code | ✅ Session | - | - |
-| /api/update-invite | ❌ 无 | - | ⚠️ 无认证，依赖参数 |
-| /api/demo/gen-text | ❌ 无 | - | ⚠️ 可被滥用 |
-| /api/demo/gen-stream-text | ❌ 无 | - | ⚠️ 可被滥用 |
-| /api/demo/gen-image | ❌ 无 | - | ⚠️ 可被滥用 |
+| /api/update-invite | ✅ Session（P-1.4 ✅） | - | - |
+| /api/send-verification | 限流 | - | 60s/邮箱冷却 + 10 次/天/IP + 生产环境必须有 RESEND_API_KEY（S2 ✅） |
+| /api/verify-code | 限流 | - | 5 次/分/邮箱 + 20 次/分/IP（防验证码爆破，S2 ✅） |
+| /api/demo/* | ❌ 已废弃删除（P-1.4 ✅） | - | 由 /api/v1/ai/* 替代（P0） |
+| /api/v1/ai/generate | ✅ Session/ApiKey | 按模型扣费 | 鉴权->余额->一次扣清->失败退款（见 docs/13） |
+| /api/v1/ai/demo | 匿名（IP 限流） | 免费 | 模型服务端固定、额度按纯 IP（S3 ✅，见 docs/14） |
+| /api/admin/* | ✅ requireAdmin | - | stats / user / user/credits / refund（RBAC，见后台管理） |
+| /api/user/profile,avatar,delete-account | ✅ Session | - | 个人资料 / 头像 / GDPR 注销 |
+| /api/notifications(+/read) | ✅ Session | - | 站内通知中心（6.14） |
+| /api/search | ✅ | - | 全站搜索（6.15） |
+| /api/health, /api/cron/daily | - | - | 健康检查 / 定时任务（订单过期等） |
 
 ## 待新增接口（规划中）
 
 | 接口 | 方法 | 用途 | 优先级 |
 |------|------|------|--------|
-| /api/creem-checkout | POST | Creem 支付创建订单 | P0 |
-| /api/creem-notify | POST | Creem Webhook 回调 | P0 |
-| /api/send-verification | POST | 发送邮箱验证码 | P0 |
-| /api/admin/user | PUT | 更新用户信息/状态 | P1 |
-| /api/admin/user/credits | POST | 管理员手动调整积分 | P1 |
-| /api/admin/refund | POST | Stripe 退款 | P1 |
-| /api/admin/stats | GET | 后台数据统计 | P1 |
-| /api/user/profile | PUT | 用户修改个人资料 | P2 |
-| /api/stripe-portal | POST | Stripe Customer Portal | P2 |
-| /api/search | GET | 全站搜索 | P2 |
-| /api/notifications | GET | 站内通知列表 | P2 |
+| /api/admin/payment-settings | GET/PUT | 后台查看/切换支付渠道启用状态与优先级（热切换 UI 缺失，API 待建） | P1 |
+| /api/unsubscribe | GET | 营销邮件退订 | P2 |
+| /api/admin/op-events | GET | 运营事件日志查询（日志采集/告警底座，见 docs/16） | P1（6.23） |
+
+> 已废弃：`/api/creem-checkout`（多渠道后 checkout 统一入口，渠道不设独立 checkout 端点）。

@@ -1,11 +1,13 @@
 # 组件文档
 
+> 本文档描述**现状组件**，规划中的新组件见 §10。
+
 ## 1. 组件体系总览
 
 ```
 components/
-├── ui/               # shadcn/ui 基础组件 (28 个)
-├── blocks/           # Landing Page 区块组件 (14 个区块)
+├── ui/               # shadcn/ui 基础组件 (29 个)
+├── blocks/           # Landing Page 区块组件 (23 个区块)
 ├── console/          # 用户控制台组件
 ├── dashboard/        # 后台管理组件
 ├── sign/             # 登录/注册组件
@@ -291,7 +293,7 @@ export const providerMap = providers
 | 组件 | 文件 | 用途 |
 |------|------|------|
 | GoogleAnalytics | `analytics/google-analytics.tsx` | GA 追踪 |
-| OpenPanel | `analytics/open-panel.tsx` | OpenPanel 追踪 |
+| OpenPanel | `analytics/open-panel.tsx` | OpenPanel 追踪（⚠️ 待 PostHog 接入后移除，见 docs/11） |
 | AnalyticsIndex | `analytics/index.tsx` | 分析组件统一入口 |
 | ThemeToggle | `theme/toggle.tsx` | 亮/暗色切换 |
 | LocaleToggle | `locale/toggle.tsx` | 语言切换 |
@@ -319,7 +321,7 @@ interface ContextValue {
 
 **核心行为**：
 - 监听 NextAuth session 变化，session 有值时自动调用 `/api/get-user-info`
-- 登录后自动检查 localStorage 中的邀请码，2 小时内自动绑定邀请关系
+- 登录后自动检查 localStorage 中的邀请码，2 小时内自动绑定邀请关系（⚠️ 2 小时限制当前仅前端检查，可绕过，P-1.4 下放服务端）
 - Google One-Tap 启用时自动触发 `useOneTapLogin`
 
 ### 9.2 Hooks
@@ -329,3 +331,16 @@ interface ContextValue {
 | `useOneTapLogin` | `hooks/useOneTapLogin.tsx` | Google One-Tap 登录触发 |
 | `useMediaQuery` | `hooks/useMediaQuery.tsx` | 响应式断点检测 |
 | `useMobile` | `hooks/use-mobile.tsx` | 移动端检测 |
+
+---
+
+## 10. 规划中的组件（待实现）
+
+| 组件 | 归属 | 关联设计 |
+|------|------|----------|
+| 设备指纹加载 | `hooks/useFingerprint.ts`（FingerprintJS 客户端集成，生成 X-Device-Id） | [14-anonymous-trial.md](./14-anonymous-trial.md) §2.2 |
+| Cookie 同意横幅 | `components/cookie-consent/` | 6.17 GDPR |
+| 通知中心 | `components/notifications/` + `(console)/notifications/page.tsx` | 6.14（轮询 + SSE） |
+| AI 试用弹窗 | `components/trial/`（「用完提示登录」弹窗） | 6.0.1 / 14 §2.4 |
+| 支付方式选择 | `components/blocks/pricing/` 改造（Buy 按钮 + 支付方式） | payment/provider-abstraction §4 |
+| 反馈/客服按钮 | `components/feedback/crisp.tsx` | 6.3 |

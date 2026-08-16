@@ -1,4 +1,5 @@
 import Blog from "@/components/blocks/blog";
+import BlogSearchBox from "@/components/blocks/blog/search-box";
 import { Blog as BlogType } from "@/types/blocks/blog";
 import { getPostsByLocale } from "@/models/post";
 import { getTranslations } from "next-intl/server";
@@ -43,5 +44,11 @@ export default async function ({
     read_more_text: t("blog.read_more_text"),
   };
 
-  return <Blog blog={blog} />;
+  // 6.15：博客搜索
+  return (
+    <>
+      <BlogSearchBox locale={locale} />
+      <Blog blog={blog} />
+    </>
+  );
 }

@@ -1,4 +1,5 @@
-FROM node:18-alpine AS base
+# Next.js 16.3.1 要求 Node >= 20.9.0（见 next/package.json engines），node:18 会构建失败
+FROM node:22-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -17,7 +18,8 @@ WORKDIR /app
 
 # Install dependencies based on the preferred package manager
 COPY . .
-RUN pnpm build
+# NEXT_OUTPUT=standalone：仅 Docker 构建启用 standalone 输出（P-1.6）
+RUN NEXT_OUTPUT=standalone pnpm build
 
 # Production image, copy all the files and run next
 FROM base AS runner

@@ -2,10 +2,13 @@
 
 ## 概述
 
-- **数据库类型**：PostgreSQL（Supabase 托管）
-- **客户端**：@supabase/supabase-js（无 ORM，直接调用 Supabase Client）
-- **建表脚本**：`data/install.sql`
-- **数据库数量**：6 张表
+- **数据库类型**：PostgreSQL（Supabase 托管；本地开发可用 Supabase CLI，见 [07-deployment.md §5.2](./07-deployment.md)）
+- **客户端**：@supabase/supabase-js（无 ORM，直接调用 Supabase Client）；迁移执行用 `pg` 直连 `DATABASE_URL`
+- **建表脚本**：`data/install.sql`（基础 6 表，一次性执行）；其余表全部由迁移增量创建
+- **迁移机制**：`data/migrations/*.sql` 按文件名序号执行，`schema_migrations` 版本表保证幂等；服务启动时 `instrumentation.ts` 自动执行，手动 `pnpm migrate`（见 `lib/migrate.ts`）
+- **迁移清单**（0001-0011）：支付配置表 / 积分原子扣减 / 支付事务化 / 外键索引 / 匿名额度 / 密码登录 / 多渠道 / RBAC+审计 / 站内通知 / 金额比对 / 退款原子化
+- **表数量**：14 张（基础 6 张 + 迁移新增 8 张）
+- **存储过程**：资金与额度相关写操作全部下沉数据库原子执行（见文末「存储过程」一节），应用层不做 check-then-write
 
 ## ER 关系图
 
@@ -153,13 +156,19 @@ CREATE TABLE orders (
 );
 ```
 
-**状态流转**：
+**状态流转**（refunded/mismatch 已落地）：
 
 ```
-created ──(支付成功 webhook)──> paid
+created ──(支付成功 webhook)──> paid ──(退款)──> refunded
    │
-   └──(手动删除/过期)──> deleted
+   ├──(webhook 实付金额/币种与订单不符, 0010)──> mismatch（不充值、不发奖励，人工核查后可改回 created 重新处理）
+   ├──(超时未支付，定时任务)──> expired
+   └──(手动删除)──> deleted
 ```
+
+> `mismatch` 是 R1 资金安全修复（迁移 0010）引入的状态：`handle_order_payment` 收到
+> `p_amount_cents`/`p_currency` 后与订单金额精确比对，不符时置 `mismatch` 而非充值。
+> 该状态不会被 expire 定时任务触碰（任务只扫 `status='created'`）。
 
 **字段说明**：
 
@@ -168,7 +177,7 @@ created ──(支付成功 webhook)──> paid
 | order_no | VARCHAR(255) | Snowflake ID，业务主键 |
 | amount | INT | 金额，单位：分（9900 = $99.00） |
 | interval | VARCHAR(50) | 付款类型：one-time / month / year |
-| status | VARCHAR(50) | 订单状态：created / paid / deleted |
+| status | VARCHAR(50) | 订单状态：created / paid / expired / refunded / mismatch / deleted |
 | credits | INT | 该订单对应的积分数 |
 | sub_id | VARCHAR(255) | Stripe 订阅 ID（仅订阅模式） |
 | sub_period_end | INT | 订阅周期结束时间（Unix 秒） |
@@ -182,9 +191,10 @@ created ──(支付成功 webhook)──> paid
 - `status` - 按状态筛选（`getPaiedOrders`），中频
 - `payment_provider` - 按支付渠道筛选（多渠道后），中频
 
-> ⚠️ **表结构变更预告**：当前 orders 表包含 Stripe 专属字段（stripe_session_id, sub_id 等）。
-> 多支付渠道集成时将拆分为：orders（共享）+ stripe_orders + creem_orders（渠道专属）。
-> 详见 DEVELOPMENT_PLAN.md 第 4.2 节。
+> ✅ **多渠道已落地（迁移 0007）**：orders 已有 `payment_provider` 列（checkout 写入即冻结，
+> 切换渠道不影响存量订单），渠道专属表 `creem_orders` / `waffo_orders` 已建。
+> Stripe 专属字段（stripe_session_id, sub_id 等）仍留在 orders 表，未做物理拆分——
+> v1 评估认为拆表收益不抵迁移成本，见 [payment/provider-abstraction.md](./payment/provider-abstraction.md)。
 
 ---
 
@@ -211,42 +221,41 @@ CREATE TABLE credits (
 | `order_pay` | 订单支付充值 | 正 (+N) |
 | `system_add` | 系统手动增加 | 正 (+N) |
 | `ping` | API 调用消耗 | 负 (-1) |
+| `ai_generate` | AI 调用扣费（规划，见 [AI 网关](./13-ai-gateway.md)） | 负 |
+| `ai_refund` | AI 失败退款（规划） | 正 |
 
-**积分计算逻辑**：
+**积分计算逻辑**（P-1.2 落地后）：
 
 ```
 用户有效积分 = SUM(credits.credits)
   WHERE user_uuid = ?
-    AND expired_at >= now()    -- 未过期
+    AND ( (credits > 0 AND expired_at >= now())   -- 正数记录需未过期
+          OR credits <= 0 )                        -- 负数记录永不过期（expired_at 为 NULL）
     （正负记录都包含，净余额 = 正数之和 + 负数之和）
 
 实际查询: getUserValidCredits()
   -> SELECT * FROM credits
-     WHERE user_uuid = ? AND expired_at >= now()
-     ORDER BY expired_at ASC   -- FIFO: 先扣最早过期的
+     WHERE user_uuid = ? AND (credits > 0 AND expired_at >= now() OR credits <= 0)
+     ORDER BY expired_at ASC NULLS LAST   -- FIFO: 先扣最早过期的，负数记录排最后
 ```
 
-> ⚠️ **文档修正**：此前文档写有 `AND credits > 0` 过滤条件，但实际代码无此过滤。
-> 代码返回所有未过期记录（正数+负数），在 `getUserCredits()` 中累加计算净余额，这是正确的。
-> 但负数记录的 `expired_at` 存在设计缺陷，见下方说明。
+> ✅ **P-1.2 已落地**：此前文档写有 `AND credits > 0` 过滤条件（实际代码无此过滤，已修正）。
+> 负数扣减记录 `expired_at` 为 NULL（扣减是永久消费，不随原始积分过期消失），
+> 查询时负数记录不做 `expired_at` 过滤，杜绝"积分复活"。
 
-> ⚠️ **FIFO 扣减 expired_at 缺陷**：`decreaseCredits` 将原始积分的 `expired_at` 复制到负数扣减记录上。
-> 当原始积分过期后，对应的负数记录也过期被查询排除，导致已消耗的积分"复活"，余额凭空增加。
-> 修复方案：负数扣减记录不设 `expired_at`（NULL），查询时对 NULL 不过滤。
-
-**积分扣减算法** (`decreaseCredits`)：
+**积分扣减算法**（P-1.2 起由存储过程 `decrease_credits` 原子执行，见迁移 `0002_credits_safe_decrease.sql`）：
 
 ```
-1. 查询所有有效积分记录，按 expired_at 升序
-2. 累加 credits 直到 >= 需要扣减的量
-3. 记录对应的 order_no 和 expired_at
-4. INSERT 一条负数 credits 记录
+1. 行锁锁定该用户全部积分记录（串行化并发扣减）
+2. 校验净余额 >= 需扣减量，不足抛 'insufficient credits' 异常
+3. FIFO：从最早过期的正数记录开始消耗，记录首个被消耗积分的 order_no
+4. INSERT 一条负数 credits 记录（expired_at 为 NULL，order_no 指向 FIFO 首笔来源）
 ```
 
-**缺失索引**：
-- `user_uuid` - 按用户查积分流水，高频
-- `order_no` - 按订单查积分记录（防重复充值），中频
-- `(user_uuid, expired_at)` - 复合索引优化有效积分查询
+**缺失索引**（P-1.8 已补齐，见迁移 `0004_fk_indexes.sql`）：
+- `user_uuid` - 按用户查积分流水，高频 ✅
+- `order_no` - 按订单查积分记录（防重复充值），中频 ✅
+- `(user_uuid, expired_at)` - 复合索引优化有效积分查询 ✅（另加 `expired_at` 单列索引）
 
 ---
 
@@ -347,6 +356,95 @@ CREATE TABLE affiliates (
 
 ---
 
+## 多渠道支付表结构（✅ 已落地，迁移 0007）
+
+orders 表通过 `payment_provider` 列区分渠道（不物理拆共享字段）；渠道专属字段放各自表中：
+
+```sql
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_provider VARCHAR(50) DEFAULT 'stripe';
+
+-- Creem 专属表
+CREATE TABLE IF NOT EXISTS creem_orders (
+    id SERIAL PRIMARY KEY,
+    order_no VARCHAR(255) UNIQUE NOT NULL,      -- 关联 orders.order_no
+    creem_checkout_id VARCHAR(255),
+    creem_subscription_id VARCHAR(255),
+    creem_payment_method VARCHAR(100),
+    created_at timestamptz
+);
+
+-- Waffo 专属表
+CREATE TABLE IF NOT EXISTS waffo_orders (
+    id SERIAL PRIMARY KEY,
+    order_no VARCHAR(255) UNIQUE NOT NULL,      -- 关联 orders.order_no
+    acquiring_order_id VARCHAR(255),            -- Waffo 订单 ID
+    payment_request_id VARCHAR(64),             -- 幂等键
+    sub_id VARCHAR(255),                        -- 订阅 ID
+    created_at timestamptz
+);
+
+-- 未来新增渠道只需加对应的 xxx_orders 表
+```
+
+### 支付配置表（✅ 已落地，迁移 0001 + 0007 种子）
+
+```sql
+-- 渠道启用状态（热切换的根基：配置数据库化，不依赖环境变量）
+CREATE TABLE payment_settings (
+    id SERIAL PRIMARY KEY,
+    provider VARCHAR(50) UNIQUE NOT NULL,       -- 'creem' / 'waffo' / 'stripe' / 'paypal'
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    priority INT NOT NULL DEFAULT 100,          -- 路由优先级（小者优先，priority 最小 = 默认渠道）
+    updated_at timestamptz
+);
+
+-- 定价映射（兼容预建产品 Creem 与动态金额 Waffo/Stripe 两种模式）
+-- ⚠️ v1 保持单表；阶段 2 加 Stripe/PayPal 时拆为 payment_products + channel_products（见 docs/12 遗留项跟踪表）
+CREATE TABLE payment_products (
+    id SERIAL PRIMARY KEY,
+    product_id VARCHAR(50) UNIQUE NOT NULL,     -- 'starter' / 'standard' / 'premium'
+    amount INT NOT NULL,                         -- 分（含税价）
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+    credits INT NOT NULL,
+    valid_months INT NOT NULL,
+    creem_product_id VARCHAR(255),               -- Creem 预建产品 ID（可空）
+    stripe_price_id VARCHAR(255),                -- Stripe 预建 price（可空）
+    created_at timestamptz
+);
+```
+
+## 待新增表（规划中）
+
+```sql
+-- 邮箱验证码 ✅ 已落地（迁移 0006）
+verification_codes (id, email, code, expired_at, used, created_at)
+
+-- 匿名演示用量 ✅ 已落地（迁移 0005，见 docs/14-anonymous-trial.md）
+anonymous_usage (id, anonymous_key VARCHAR(64), usage_date DATE,
+                 count INT, updated_at timestamptz,
+                 UNIQUE (anonymous_key, usage_date))
+
+-- users 表字段补充 ✅ 已落地（迁移 0006/0008）
+ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT 'user';                    -- RBAC（0008）
+ALTER TABLE users ADD COLUMN password_hash VARCHAR(255);                         -- 密码登录（0006，OAuth 用户为 NULL）
+ALTER TABLE users ADD COLUMN password_updated_at timestamptz;                    -- （0006）
+ALTER TABLE users ADD COLUMN email_marketing_opt_in BOOLEAN DEFAULT true;        -- 营销邮件退订（待落地）
+
+-- 操作审计日志 ✅ 已落地（迁移 0008）
+audit_logs (id, admin_uuid, action, target_type, target_uuid,
+            detail, ip, created_at)
+
+-- 站内通知 ✅ 已落地（迁移 0009）
+notifications (id, uuid, user_uuid, type, title, content,
+               is_read, created_at)
+
+-- 运营事件日志（规划，见 docs/16-observability-alerting.md）
+-- 日志采集 + 飞书/企微机器人告警的数据底座
+op_events (id, event_type, severity, source, subject_uuid, detail JSONB, created_at)
+```
+
+---
+
 ## 数据库设计问题清单
 
 | # | 问题 | 严重程度 | 建议 |
@@ -357,5 +455,50 @@ CREATE TABLE affiliates (
 | 4 | 无 updated_at 自动更新 | 低 | 建议加 trigger 自动更新 |
 | 5 | email 字段无唯一约束 | 低 | 当前 (email, provider) 组合唯一，同一邮箱可多 provider |
 | 6 | 无软删除机制（除 posts/apikeys） | 中 | users/orders/credits/affiliates 无软删除 |
-| 7 | 无数据库迁移工具 | 中 | 建议引入 Drizzle Migration 或 Supabase Migration |
+| 7 | ~~无数据库迁移工具~~ | ~~中~~ | ✅ 已落地：`data/migrations/` + `schema_migrations` 最小迁移机制（P-1.12） |
 | 8 | 直接用 Service Role Key | 高 | 生产环境应限制 RLS，用 Anon Key + RLS Policy |
+
+---
+
+## 存储过程（资金与额度的原子操作）
+
+> 设计原则：**凡是「读状态 -> 判断 -> 写」的资金/额度操作，全部下沉为存储过程单事务执行**，
+> 应用层禁止 check-then-write（多实例并发下必然出双花/透支窗口）。这是历轮安全审查
+> （P-1.2/P-1.3/R1/R3）沉淀下来的硬约定。
+
+### 1. decrease_credits（迁移 0002）—— 积分原子扣减
+
+```
+参数：p_user_uuid, p_trans_type, p_credits（正数）
+行为：FOR UPDATE 锁定该用户全部积分记录 -> 净余额 < p_credits 抛 'insufficient credits'
+     -> FIFO 插入负数记录（expired_at=NULL，order_no 指向首个被消耗来源）
+```
+
+### 2. handle_order_payment（迁移 0003，0010 增强）—— 支付成功落账
+
+```
+参数：p_order_no, p_paid_at, p_paid_email, p_paid_detail,
+     p_amount_cents（渠道实付，分）, p_currency, p_reward_percent, p_max_reward
+行为：行锁订单 -> 幂等（已 paid 直接返回）-> 【0010】金额/币种与订单精确比对，
+     不符置 status='mismatch' 返回 'mismatch'（不充值、不发联盟奖励、不抛错——
+     抛错会引发渠道无限重试）-> 订单置 paid + INSERT credits + INSERT affiliates
+     单事务完成
+返回：'ok' / 'mismatch' / 已处理时的原状态
+```
+
+### 3. process_order_refund（迁移 0011）—— 退款原子化
+
+```
+参数：p_order_no, p_refund_note
+行为：行锁订单 -> 非 paid 抛错（或已 refunded 幂等返回 0）-> 扣回积分
+     （min(订单积分, 用户当前余额)，负数记录 expired_at=NULL）-> 订单置 refunded
+返回：实际扣回的积分数
+调用方：services/refund.ts（管理后台退款 + refund.created webhook 共用）
+```
+
+### 4. increment / decrement_anonymous_usage（迁移 0005）—— 匿名额度
+
+```
+原子递增/回退每日匿名演示额度（ON CONFLICT + WHERE count < p_limit 单语句原子），
+只存 sha256 hash，不存明文 IP/指纹。见 docs/14-anonymous-trial.md。
+```

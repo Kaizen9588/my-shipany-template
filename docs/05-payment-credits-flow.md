@@ -1,41 +1,44 @@
 # 支付与积分流程文档
 
+> 本文档描述**现状实现**：多渠道（Stripe/Creem/Waffo，Provider 抽象 + 健康检测自动降级）、
+> Webhook 金额/币种精确比对（迁移 0010）、退款原子化（迁移 0011）。
+> 渠道架构设计见 [payment/provider-abstraction.md](./payment/provider-abstraction.md)；
+> 各渠道对接细节见 docs/payment/ 专题文档。
+
 ## 1. 支付系统
 
 ### 1.1 技术选型
 
 | 项 | 选型 | 版本 |
 |----|------|------|
-| 支付网关 | Stripe | 17.5.0 |
+| 支付网关 | Stripe + Creem + Waffo（Provider 抽象，`lib/payment/`） | stripe 17.5.0 |
 | 前端 SDK | @stripe/stripe-js | 5.4.0 |
-| 支付模式 | Checkout Session（托管支付页） | - |
-| 支付类型 | 一次性付款 + 订阅（月/年） | - |
+| 支付模式 | Checkout / 托管支付页（各渠道统一抽象为 createCheckout） | - |
+| 支付类型 | 一次性付款（v1 启用）；订阅代码存在但不启用（跨渠道订阅迁移是行业难题） | - |
+| 渠道路由 | `payment_settings`（数据库热切换）+ 健康检测自动降级（`lib/payment/health.ts`） | - |
 
 ### 1.2 定价方案配置
 
-定价方案通过 i18n JSON 配置，位于 `i18n/pages/landing/{locale}.json` 的 `pricing` 节点：
+**现状**：定价方案 i18n JSON 仅做文案展示；**金额/积分/有效期以服务端 `data/pricing.ts` 为单一真相源**。
 
-> ⚠️ **安全问题**：定价数据存储在 i18n JSON 中，Checkout API 信任客户端传入的 `amount`/`credits`。
-> 恶意用户可构造低价请求获取大量积分。`cn_amount` 字段定义了但从未使用。
-> 修复方案见 DEVELOPMENT_PLAN.md P-1.1（定价架构修复）。
+> ✅ **P-1.1 已修复**：Checkout API 只接收 `product_id`，从服务端 `data/pricing.ts` 查价，
+> 忽略客户端传入的 `amount`/`credits`/`currency`/`valid_months`，杜绝 0 成本攻击。
+> `cn_amount` 字段已从 i18n JSON 与类型定义删除，v1 单一 USD 价。
 
 ```typescript
-// PricingItem 结构 (types/blocks/pricing.d.ts)
+// PricingItem 结构 (types/blocks/pricing.d.ts) —— 展示字段
 interface PricingItem {
   title: string;           // "Starter"
   price: string;           // "$99"（展示用）
   original_price: string;  // "$199"（划线价）
   currency: string;        // "USD"
-  amount: number;          // 9900（分，传给 Stripe）
-  cn_amount: number;       // 69900（人民币分）
   interval: "one-time" | "month" | "year";
   product_id: string;      // "starter"
   product_name: string;    // "ShipAny Boilerplate Starter"
-  credits: number;         // 100
-  valid_months: number;    // 1
   is_featured: boolean;    // 是否高亮
   features: string[];      // 功能列表
 }
+// 金额/积分等收费字段由服务端 data/pricing.ts 决定（P-1.1）
 ```
 
 **当前方案**：
@@ -101,51 +104,46 @@ interface PricingItem {
      │<──────────────│               │                 │
 ```
 
-### 1.4 Webhook 处理
+### 1.4 Webhook 处理（多渠道统一）
+
+各渠道 webhook（`/api/stripe-notify`、`/api/creem-notify`、`/api/waffo-notify`）
+验签方式不同（Stripe HMAC / Creem HMAC / Waffo RSA），但验签后都归一化为
+`PaymentEvent`，统一交给 `handlePaymentEvent`（`lib/payment/index.ts`）：
 
 ```
-Stripe 服务器                API Route              Supabase
-     │                         │                      │
-     │ 1.POST /api/stripe-notify                     │
-     │   (带 stripe-signature header)                 │
-     │────────────────────────>│                      │
-     │                         │ 2.验证签名            │
-     │                         │   constructEventAsync│
-     │                         │                      │
-     │                         │ 3.判断 event.type    │
-     │                         │   = checkout.session │
-     │                         │   .completed         │
-     │                         │                      │
-     │                         │ 4.handleOrderSession │
-     │                         │   (session)          │
-     │                         │                      │
-     │                         │   4a.findOrderByOrderNo
-     │                         │─────────────────────>│
-     │                         │   4b.UPDATE orders   │
-     │                         │      status=paid     │
-     │                         │      paid_at, paid_email
-     │                         │      paid_detail     │
-     │                         │─────────────────────>│
-     │                         │                      │
-     │                         │   4c.updateCreditForOrder
-     │                         │      findCreditByOrderNo
-     │                         │      (防重复充值)     │
-     │                         │      increaseCredits  │
-     │                         │─────────────────────>│
-     │                         │      INSERT credits  │
-     │                         │      trans_type=order_pay
-     │                         │                      │
-     │                         │   4d.updateAffiliateForOrder
-     │                         │      findUserByUuid  │
-     │                         │      (检查 invited_by)│
-     │                         │      insertAffiliate  │
-     │                         │      status=completed │
-     │                         │      reward 20% (max $50)
-     │                         │─────────────────────>│
-     │                         │                      │
-     │ 5.返回 200              │                      │
-     │<────────────────────────│                      │
+渠道服务器            API Route（验签）        handlePaymentEvent         Supabase
+     │                    │                        │                      │
+     │ POST /api/xxx-notify                        │                      │
+     │───────────────────>│ 验签 + parseWebhook    │                      │
+     │                    │──归一化 PaymentEvent──>│                      │
+     │                    │                        │ payment_succeeded:   │
+     │                    │                        │ RPC handle_order_    │
+     │                    │                        │ payment（含金额比对）│
+     │                    │                        │─────────────────────>│
+     │                    │                        │ 'mismatch'? -> 告警  │
+     │                    │                        │  人工核查，不充值     │
+     │                    │                        │ 'ok'? -> 站内通知 +  │
+     │                    │                        │  埋点 + 邮件         │
+     │                    │                        │ refund_succeeded:    │
+     │                    │                        │ RPC process_order_   │
+     │                    │                        │ refund（原子扣积分） │
+     │                    │                        │─────────────────────>│
+     │ 5.返回 200          │                        │                      │
+     │<───────────────────│                        │                      │
 ```
+
+**金额/币种比对（R1，迁移 0010）**：适配器从渠道原始事件提取实付 `amount`（分）与
+`currency`，传入 `handle_order_payment` 与本地订单精确比对。不符时订单置
+`status='mismatch'`：不充值、不发联盟奖励、不抛错（抛错会引发渠道无限重试），
+应用层 `console.error` + 埋点 `payment.amount_mismatch` 告警，人工核查后可把订单
+改回 `created` 重新处理。关联决策：Stripe `allow_promotion_codes` 已禁用
+（打折后实付 < 订单额，与精确比对互斥）。
+
+**退款（R3，迁移 0011）**：`process_order_refund` 存储过程单事务完成
+「状态检查 + 扣回积分 + 置 refunded」（行锁 + 已退款幂等返回 0）。
+两个入口共用：管理后台 `/api/admin/refund`（Stripe/Waffo 走渠道退款 API；
+Creem 无退款 API，提示去 Dashboard 手动退）和 `refund.created` webhook
+（渠道侧退款完成后回调同步扣积分）。
 
 ### 1.5 CNY 支付特殊处理
 
@@ -191,10 +189,13 @@ if (currency === "cny") {
 ```
 用户当前积分 = SUM(credits.credits)
   WHERE user_uuid = ?
-    AND expired_at >= now()
+    AND ( (credits > 0 AND expired_at >= now()) OR credits <= 0 )
+    -- 负数记录 expired_at 为 NULL 永不过期（P-1.2）
 ```
 
-> 这意味着积分可以为负（透支），但 `getUserCredits` 中做了 `Math.max(0, left_credits)` 保护。
+> ✅ **P-1.2 已修复**：扣减由存储过程 `decrease_credits` 原子执行（行锁 + 余额校验 + FIFO），
+> 余额不足抛 `InsufficientCreditsError`，不再透支；负数扣减记录 `expired_at` 为 NULL，
+> 杜绝"积分复活"；`getUserCredits` 保留 `Math.max(0)` 仅作展示兜底。
 
 ### 2.2 积分交易类型
 
@@ -204,6 +205,8 @@ if (currency === "cny") {
 | 订单充值 | `order_pay` | +增加 | N（按定价方案） | Stripe 支付成功 |
 | 系统增加 | `system_add` | +增加 | N | 管理员手动（代码有定义，无 UI） |
 | API 消耗 | `ping` | -扣减 | 1 | 调用 /api/ping |
+| AI 调用扣费 | `ai_generate` | -扣减 | 预估一次扣清 | 调用 /api/v1/ai/generate（规划，见 [AI 网关](./13-ai-gateway.md)） |
+| AI 失败退款 | `ai_refund` | +回补 | 全额 | AI 服务端异常时（规划） |
 
 ### 2.3 积分增加流程
 
@@ -417,9 +420,10 @@ interface UserCredits {
    │                        │ 10.首次付费           │
    │                        │─────────────────────>│
    │                        │                      │ 11.Webhook 触发
-   │                        │                      │ updateAffiliateForOrder
-   │                        │                      │ INSERT affiliates (completed)
-   │                        │                      │ reward 20% (max $50)
+   │                        │                      │ handle_order_payment（存储过程，P-1.3）
+   │                        │                      │ UPDATE orders paid + INSERT credits
+   │                        │                      │ + INSERT affiliates (completed)
+   │                        │                      │ reward = min(20% of amount, $50)
 ```
 
 ### 3.2 奖励规则
@@ -430,19 +434,22 @@ interface UserCredits {
 | 被邀请人首次付费 | 20% | $50 | completed |
 
 ```typescript
-// services/constant.ts
+// services/constant.ts（P-1.8 后）
 AffiliateRewardPercent = {
   Invited: 0,    // 注册时
-  Paied: 20,     // 付费时（20%）
+  Paid: 20,      // 付费时（20%）
 };
 
 AffiliateRewardAmount = {
   Invited: 0,     // 注册时
-  Paied: 5000,    // 付费时（$50 = 5000 分）
+  Paid: 5000,     // 付费时（$50 = 5000 分，上限）
 };
+// reward_amount = min(order.amount * reward_percent / 100, max_reward)
 ```
 
-> ⚠️ 注意：`reward_amount` 固定为 5000（$50），而非 `order.amount * 0.2`。实际逻辑中 `reward_percent=20` 和 `reward_amount=5000` 同时写入，但 `reward_amount` 是固定值而非按比例计算。
+> ✅ **P-1.8 已修复**：`reward_amount = min(order.amount * reward_percent / 100, 5000)`，
+> 按比例计算并封顶；`Paied` 拼写已改 `Paid`（`services/constant.ts`）。
+> 支付成功路径由存储过程 `handle_order_payment`（迁移 0003）原子写入联盟奖励（LEAST(amount*percent/100, max)）。
 
 ### 3.3 邀请码限制
 
@@ -450,7 +457,30 @@ AffiliateRewardAmount = {
 - 唯一性：不能与已有邀请码重复
 - 自邀限制：不能邀请自己
 - 重复限制：被邀请人已有 invited_by 时不可再次绑定
-- 时效限制：注册 2 小时内才可绑定邀请关系（前端 `contexts/app.tsx` 检查）
+- 时效限制：注册 2 小时内才可绑定邀请关系
+
+> ⚠️ **待补（P-1.4 已部分落地）**：时效限制（注册 2 小时内）目前仍仅在前端 `contexts/app.tsx` 检查。
+> P-1.4 已把 user_uuid 从请求体改为 session 获取（防伪造），但 2 小时时效的服务端校验
+> 尚未下放 —— 待 6.0/联盟相关改造时一并补上。
+
+### 3.4 奖励发放闭环（⚠️ 待设计）
+
+> **现状缺口**：联盟奖励只写到 affiliates 表（记录 `reward_amount`），流程到「INSERT affiliates (completed)」就结束。邀请人如何拿到奖励、如何查看收益，全无设计。这是「记录完成、发放缺失」的半成品。
+
+**发放方式决策**（二选一，建议方案 A）：
+
+| 方案 | 做法 | 适用 |
+|------|------|------|
+| A（推荐） | 奖励自动**转积分**：webhook 记录 completed 时，同步 `increaseCredits(inviter_uuid, trans_type="affiliate_reward", credits=折算积分)` | v1 简单闭环，无需提现/法务 |
+| B | 记录金额 + 邀请人后台**申请提现**（接 Payout） | 涉及 KYC、税务、跨境提现，重 |
+
+**方案 A 落地要点**：
+- 新增积分交易类型 `affiliate_reward`（正数，与 order_pay 区分，便于「我的邀请」页统计）
+- 折算规则：`reward_amount`（分）按固定汇率转积分（如 1 元 = 10 积分），或直接按订单积分的 20% 计（更简单：`reward_credits = ceil(order.credits * 20%)`）
+- 幂等：与 `updateCreditForOrder` 同款 `findCreditByOrderNo` 防重（复用 affiliates.paid_order_no 唯一性）
+- 通知：发放时发邮件 `affiliate_reward`（模板加入 docs/10 触发点表）
+
+**「我的邀请」页补充**：显示「累计邀请 N 人 / 累计奖励 X 积分」，数据来自 affiliates 表 + credits 流水（trans_type=affiliate_reward）。
 
 ---
 
@@ -458,13 +488,14 @@ AffiliateRewardAmount = {
 
 | # | 问题 | 严重程度 | 说明 |
 |---|------|----------|------|
-| 1 | Webhook 仅处理 1 种事件 | 高 | 缺少 subscription.deleted/updated, refund.created |
-| 2 | 无 Creem 支付 | 高 | 用户无海外卡，需要 Creem |
-| 3 | 无退款流程 | 中 | 后台无法发起退款 |
-| 4 | 无订阅取消流程 | 中 | 用户无法自助取消订阅 |
-| 5 | 联盟奖励金额固定 | 低 | reward_amount 固定 $50，非按比例计算 |
-| 6 | 积分可为负 + FIFO expired_at 余额复活 | **高** | 扣减不检查余额可透支；负数记录继承 expired_at 导致过期后余额复活。已纳入 P-1.2 修复 |
-| 7 | UserCredits 字段未赋值 | 低 | one_time_credits 等字段始终 undefined |
-| 8 | /api/update-invite 无认证 | 高 | 依赖参数 user_uuid，可被伪造 |
-| 9 | 无交易事务 | 高 | 订单更新+积分充值+联盟记录非原子操作 |
-| 10 | 无防重复支付 | 中 | findCreditByOrderNo 做了幂等，但无分布式锁 |
+| 1 | Webhook 事件覆盖仍偏窄 | 中 | payment_succeeded / refund_succeeded 已统一处理；subscription.deleted/updated 等订阅事件待 v2 启用订阅时补 |
+| 2 | ~~单渠道（仅 Stripe）~~ | ~~高~~ | ✅ 已落地：Provider 抽象（Stripe/Creem/Waffo）+ payment_settings 热切换 + 健康检测自动降级 |
+| 3 | ~~无退款流程~~ | ~~中~~ | ✅ 已落地：`/api/admin/refund` + `process_order_refund` 存储过程原子扣积分（迁移 0011）；Creem 走 Dashboard 手动退 + webhook 同步 |
+| 4 | 无订阅取消流程 | 中 | 用户无法自助取消订阅（6.12 待落地；v1 不启用订阅） |
+| 5 | ~~联盟奖励金额固定~~ | ~~低~~ | ✅ P-1.8 已修复：按比例计算并封顶 |
+| 6 | ~~积分可为负 + FIFO 余额复活~~ | ~~高~~ | ✅ P-1.2 已修复：decrease_credits 存储过程（行锁+余额校验+负数 expired_at=NULL） |
+| 7 | ~~UserCredits 幽灵字段~~ | ~~低~~ | ✅ P-1.8 已修复：删除未实现字段 |
+| 8 | ~~/api/update-invite 无认证~~ | ~~高~~ | ✅ P-1.4 已修复：user_uuid 从 session 获取 |
+| 9 | ~~无交易事务~~ | ~~高~~ | ✅ P-1.3 已修复：handle_order_payment 存储过程事务化 + 幂等 |
+| 10 | 无防重复支付 | 中 | 存储过程行锁 + order 状态幂等已落地（P-1.3），跨实例分布式锁仍需评估 |
+| 11 | ~~Webhook 无金额校验~~ | ~~高~~ | ✅ R1 已修复（2026-08）：迁移 0010 金额/币种精确比对，不匹配置 mismatch 状态 + 告警 |

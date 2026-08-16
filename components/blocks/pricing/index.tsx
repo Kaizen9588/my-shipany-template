@@ -9,36 +9,53 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Icon from "@/components/icon";
 import { Label } from "@/components/ui/label";
-import { loadStripe } from "@stripe/stripe-js";
 import { toast } from "sonner";
 import { useAppContext } from "@/contexts/app";
+import { TelemetryEvents, track } from "@/lib/telemetry";
 
 export default function Pricing({ pricing }: { pricing: PricingType }) {
-  if (pricing.disabled) {
-    return null;
-  }
-
   const { user, setShowSignModal } = useAppContext();
 
   const [group, setGroup] = useState(pricing.groups?.[0]?.name);
   const [isLoading, setIsLoading] = useState(false);
   const [productId, setProductId] = useState<string | null>(null);
 
-  const handleCheckout = async (item: PricingItem, cn_pay: boolean = false) => {
+  useEffect(() => {
+    if (pricing.items) {
+      setGroup(pricing.items[0].group);
+      setProductId(pricing.items[0].product_id);
+      setIsLoading(false);
+
+      // 6.5：进入定价区埋点
+      track({ name: TelemetryEvents.PricingViewed });
+    }
+  }, [pricing.items]);
+
+  if (pricing.disabled) {
+    return null;
+  }
+
+  const handleCheckout = async (item: PricingItem) => {
     try {
       if (!user) {
         setShowSignModal(true);
         return;
       }
 
+      // 6.5：支付漏斗埋点 t1 + 套餐选中
+      track({
+        name: TelemetryEvents.PlanSelected,
+        properties: { plan: item.product_id },
+      });
+      track({
+        name: TelemetryEvents.CheckoutStarted,
+        properties: { plan: item.product_id },
+      });
+
+      // P-1.1：客户端只传 product_id，金额/积分/币种由服务端定价表决定
       const params = {
         product_id: item.product_id,
-        product_name: item.product_name,
-        credits: item.credits,
         interval: item.interval,
-        amount: cn_pay ? item.cn_amount : item.amount,
-        currency: cn_pay ? "cny" : item.currency,
-        valid_months: item.valid_months,
       };
 
       setIsLoading(true);
@@ -66,21 +83,20 @@ export default function Pricing({ pricing }: { pricing: PricingType }) {
         return;
       }
 
-      const { public_key, session_id } = data;
-
-      const stripe = await loadStripe(public_key);
-      if (!stripe) {
+      const { checkout_url } = data;
+      if (!checkout_url) {
         toast.error("checkout failed");
         return;
       }
 
-      const result = await stripe.redirectToCheckout({
-        sessionId: session_id,
+      // 6.5：支付漏斗埋点 t2（拿到托管页 URL，停留时长 = t3 - t2 间接计算）
+      track({
+        name: TelemetryEvents.CheckoutUrlRedirected,
+        properties: { plan: item.product_id },
       });
 
-      if (result.error) {
-        toast.error(result.error.message);
-      }
+      // 6.1：多渠道统一跳转（stripe/creem/waffo 都是 checkout_url，渠道对前端透明）
+      window.location.href = checkout_url;
     } catch (e) {
       console.log("checkout failed: ", e);
 
@@ -90,14 +106,6 @@ export default function Pricing({ pricing }: { pricing: PricingType }) {
       setProductId(null);
     }
   };
-
-  useEffect(() => {
-    if (pricing.items) {
-      setGroup(pricing.items[0].group);
-      setProductId(pricing.items[0].product_id);
-      setIsLoading(false);
-    }
-  }, [pricing.items]);
 
   return (
     <section id={pricing.name} className="py-16">
@@ -231,26 +239,6 @@ export default function Pricing({ pricing }: { pricing: PricingType }) {
                       )}
                     </div>
                     <div className="flex flex-col gap-2">
-                      {item.cn_amount && item.cn_amount > 0 ? (
-                        <div className="flex items-center gap-x-2 mt-2">
-                          <span className="text-sm">人民币支付 👉</span>
-                          <div
-                            className="inline-block p-2 hover:cursor-pointer hover:bg-base-200 rounded-md"
-                            onClick={() => {
-                              if (isLoading) {
-                                return;
-                              }
-                              handleCheckout(item, true);
-                            }}
-                          >
-                            <img
-                              src="/imgs/cnpay.png"
-                              alt="cnpay"
-                              className="w-20 h-10 rounded-lg"
-                            />
-                          </div>
-                        </div>
-                      ) : null}
                       {item.button && (
                         <Button
                           className="w-full flex items-center justify-center gap-2 font-semibold"

@@ -7,6 +7,8 @@ export interface Order {
   interval: string;
   expired_at: string;
   status: string;
+  /** 6.1：支付渠道（stripe/creem/waffo），写入即冻结 */
+  payment_provider?: string;
   stripe_session_id?: string;
   credits: number;
   currency: string;

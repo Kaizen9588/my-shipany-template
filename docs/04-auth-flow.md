@@ -118,6 +118,10 @@ pages: {
 
 ### 3.2 Google One-Tap 登录
 
+> ✅ **P-1.11 已修复**：改用 `google-auth-library` 的 `verifyIdToken({ idToken, audience: googleClientId })`，
+> 内部校验 aud（必须等于本应用 Client ID）/iss/exp 与签名。原 `tokeninfo` 端点实现不校验 aud，
+> 攻击者可用任意应用的合法 Google token 伪造任意 email 登录，且该端点已被 Google deprecated。
+
 ```
 浏览器                    Google One-Tap SDK        NextAuth              Google API
  │                       │                         │                     │
@@ -133,7 +137,9 @@ pages: {
  │───────────────────────────────────────────────>│                     │
  │                       │                         │ 6.CredentialsProvider│
  │                       │                         │   authorize()       │
- │                       │                         │   fetch tokeninfo   │
+ │                       │                         │   ✅ verifyIdToken  │
+ │                       │                         │   （校验 aud/iss/   │
+ │                       │                         │    exp/签名，P-1.11）│
  │                       │                         │────────────────────>│
  │                       │                         │   payload (email,   │
  │                       │                         │    sub, name, pic)  │
@@ -289,11 +295,13 @@ export async function getUserUuid() {
 
 | # | 问题 | 严重程度 | 说明 |
 |---|------|----------|------|
-| 1 | ADMIN_EMAILS 为明文环境变量 | 低 | 管理员邮箱列表明文存储 |
-| 2 | 无 RBAC 角色系统 | 中 | 仅 email 白名单，无角色层级 |
-| 3 | One-Tap 的 Credentials Provider | 中 | 自定义实现，需确保 tokeninfo 验证可靠 |
-| 4 | /api/update-invite 无认证 | 高 | 依赖请求体参数 user_uuid，可被伪造 |
-| 5 | API Key 无速率限制 | 中 | sk- 密钥可被暴力使用 |
-| 6 | 无 Session 过期配置 | 低 | 使用 NextAuth 默认 30 天 |
-| 7 | 无刷新 Token 机制 | 低 | JWT 过期后需重新登录 |
-| 8 | next-auth beta 版本 | 中 | 5.0.0-beta.25 可能有 breaking change |
+| 1 | ~~One-Tap 不校验 aud~~ | ~~致命~~ | ✅ P-1.11 已修复：verifyIdToken 校验 aud/iss/exp |
+| 2 | ~~findUserByEmail 无 provider 维度~~ | ~~高~~ | ✅ P-1.11 已修复：findUserByEmail(email, provider)，saveUser 传 signin_provider |
+| 3 | ~~并发注册无幂等~~ | ~~高~~ | ✅ P-1.11 已修复：insertUser 捕获唯一约束冲突后重查复用 |
+| 4 | ~~/api/update-invite 无认证~~ | ~~高~~ | ✅ P-1.4 已修复：user_uuid 从 session 获取 |
+| 5 | ~~无 RBAC 角色系统~~ | ~~中~~ | ✅ RBAC 已落地且分级（2.7 修复）：operator（看板/查询）/ admin（退款/调积分/封禁）/ super_admin（角色授予，唯一可授予 super_admin）；getAdminUser 拦截 banned 账号；ADMIN_EMAILS 白名单等价 super_admin |
+| 6 | API Key 无速率限制 | 中 | sk- 密钥可被暴力使用（6.18 待落地） |
+| 7 | ADMIN_EMAILS 为明文环境变量 | 低 | 管理员邮箱列表明文存储 |
+| 8 | 无 Session 过期配置 | 低 | 使用 NextAuth 默认 30 天 |
+| 9 | 无刷新 Token 机制 | 低 | JWT 过期后需重新登录 |
+| 10 | next-auth beta 版本 | 中 | 5.0.0-beta.25 可能有 breaking change |

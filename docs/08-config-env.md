@@ -137,6 +137,7 @@ export const config = {
 | `SUPABASE_URL` | ✅ | Supabase 项目 URL |
 | `SUPABASE_ANON_KEY` | ✅ | Supabase Anon Key |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Supabase Service Role Key（绕过 RLS） |
+| `DATABASE_URL` | ❌* | PostgreSQL 连接串，迁移机制（P-1.12）使用；推荐 Supabase 连接池事务模式（`?pgbouncer=true`）。*设置后服务启动自动执行未应用迁移 |
 
 > ⚠️ 代码中优先使用 `SUPABASE_SERVICE_ROLE_KEY`，仅在未设置时 fallback 到 `SUPABASE_ANON_KEY`。生产环境应谨慎使用 Service Role Key。
 
@@ -144,7 +145,7 @@ export const config = {
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `AUTH_SECRET` | ✅ | JWT 加密密钥（`openssl rand -base64 32`） |
+| `AUTH_SECRET` | ✅ | JWT 会话签名密钥（`openssl rand -base64 32`）。**禁止留空或复用示例值**（2.14：.env.example 已置空，启动校验强制填写） |
 | `AUTH_GOOGLE_ID` | ❌ | Google OAuth Client ID |
 | `AUTH_GOOGLE_SECRET` | ❌ | Google OAuth Client Secret |
 | `NEXT_PUBLIC_AUTH_GOOGLE_ID` | ❌ | Google OAuth Client ID（前端用） |
@@ -154,7 +155,9 @@ export const config = {
 | `AUTH_GITHUB_SECRET` | ❌ | GitHub OAuth Client Secret |
 | `NEXT_PUBLIC_AUTH_GITHUB_ENABLED` | ❌ | 启用 GitHub 登录：`true`/`false` |
 
-### 5.4 支付 (Stripe)
+### 5.4 支付 (Stripe，多渠道后待重构)
+
+> 多渠道（Creem/Waffo）环境变量见 §5.8 待新增；渠道启用状态由 `payment_settings` 表管理，不靠环境变量。架构见 [payment/provider-abstraction.md](./payment/provider-abstraction.md)。
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
@@ -188,6 +191,7 @@ export const config = {
 | `STORAGE_SECRET_KEY` | ❌ | S3 Secret Key |
 | `STORAGE_BUCKET` | ❌ | S3 Bucket 名称 |
 | `STORAGE_DOMAIN` | ❌ | CDN 域名（用于拼接文件 URL） |
+| `STORAGE_PREFIX` | ❌ | 文件 key 前缀（默认项目名，替代硬编码 "shipany/"，P-1.8） |
 
 ### 5.7 分析
 
@@ -198,19 +202,38 @@ export const config = {
 
 ### 5.8 待新增环境变量
 
+> ⚠️ 本清单是环境变量的**单一真相源**。DEVELOPMENT_PLAN.md 及各方案文档引用此处，新增变量时须在此同步登记，避免多源漂移。
+
 | 变量 | 用途 | 阶段 |
 |------|------|------|
-| `CREEM_API_KEY` | Creem 支付 | P0 |
-| `CREEM_WEBHOOK_SECRET` | Creem Webhook 验证 | P0 |
-| `NEXT_PUBLIC_PAYMENT_PROVIDER` | 支付渠道选择 | P0 |
-| `RESEND_API_KEY` | Resend 邮件发送 | P0 |
-| `EMAIL_FROM` | 发件人地址 | P0 |
-| `NEXT_PUBLIC_CRISP_WEBSITE_ID` | Crisp 客服 | P0 |
-| `BCRYPT_SALT_ROUNDS` | 密码哈希成本因子 | P0 |
-| `CORS_ALLOWED_ORIGINS` | CORS 允许的域名 | P-1 |
-| `UPSTASH_REDIS_REST_URL` | 限流 Redis | P3 |
-| `UPSTASH_REDIS_REST_TOKEN` | 限流 Redis Token | P3 |
-| `SENTRY_DSN` | Sentry 错误监控 | P3 |
+| `CREEM_API_KEY` | Creem 支付 | ✅ 6.1 已落地 |
+| `CREEM_WEBHOOK_SECRET` | Creem Webhook 验证 | ✅ 6.1 已落地 |
+| `WAFFO_API_KEY` | Waffo 支付 | ✅ 6.1 已落地 |
+| `WAFFO_PRIVATE_KEY` | Waffo 商户 RSA 私钥 | ✅ 6.1 已落地 |
+| `WAFFO_PUBLIC_KEY` | Waffo 公钥（webhook 验签） | ✅ 6.1 已落地 |
+| `WAFFO_MERCHANT_ID` | Waffo 商户 ID | ✅ 6.1 已落地 |
+| `RESEND_API_KEY` | Resend 邮件发送 | ✅ 6.2 已落地 |
+| `EMAIL_FROM` | 发件人地址 | ✅ 6.2 已落地 |
+| `CREDIT_LOW_THRESHOLD` | 积分低余额提醒阈值 | ✅ 6.2 已落地 |
+| `NEXT_PUBLIC_CRISP_WEBSITE_ID` | Crisp 客服 | ✅ 6.3 已落地 |
+| `NEXT_PUBLIC_POSTHOG_KEY` | PostHog 埋点 | ✅ 6.5 已落地 |
+| `NEXT_PUBLIC_POSTHOG_HOST` | PostHog 节点（EU/自托管） | ✅ 6.5 已落地 |
+| `CRON_SECRET` | Vercel Cron 校验（Authorization Bearer）。**生产必填**：未设置时 /api/cron/daily 拒绝执行（2.13） | ✅ 第五轮 2.13 fail-fast |
+| `ANONYMOUS_DAILY_LIMIT` | 未登录每日免费演示次数（默认 3） | ✅ 6.0.1 已落地 |
+| `ANONYMOUS_FINGERPRINT_ENABLED` | ~~是否启用设备指纹~~ 已废弃：x-device-id 头客户端可伪造，额度键改纯 IP（第四轮审查 S3） | ⚠️ 废弃（不再读取） |
+| `DEMO_MODEL` | 演示使用的模型（默认 deepseek-chat） | ✅ 6.0.1 已落地 |
+| `DEMO_MAX_TOKENS` | 演示输出上限（默认 1024） | ✅ 6.0.1 已落地 |
+| `BCRYPT_SALT_ROUNDS` | 密码哈希成本因子 | ✅ 6.4 已落地 |
+| `CORS_ALLOWED_ORIGINS` | CORS 允许的域名列表 | ✅ P-1.10 已落地 |
+| `TRUSTED_PROXY` | IP 信任拓扑：`none`（默认，不信任任何代理头）/ `vercel`（只信 x-forwarded-for 首跳）/ `cloudflare`（只信 cf-connecting-ip）。**Vercel 部署必须显式设 vercel；Docker/自托管保持 none 或声明真实拓扑** | ✅ 第五轮 2.16 默认值收敛 |
+| `SNOWFLAKE_WORKER_ID` | Snowflake workerId（多实例唯一） | ✅ P-1.11 已落地 |
+| `NEXT_OUTPUT` | `standalone` 时启用 standalone 输出（Docker 构建用，P-1.6） | ✅ P-1.6 已落地 |
+| `UPSTASH_REDIS_REST_URL` | 限流 Redis | ✅ 6.18 已落地 |
+| `UPSTASH_REDIS_REST_TOKEN` | 限流 Redis Token | ✅ 6.18 已落地 |
+
+> 已废弃：
+> - `NEXT_PUBLIC_PAYMENT_PROVIDER` — 渠道启用状态改由 `payment_settings` 表管理（见 [支付架构](./payment/provider-abstraction.md)）
+> - `SENTRY_DSN` — 错误监控改由 PostHog 承担（见 [埋点方案](./11-telemetry-analytics.md)）
 
 ## 6. 环境变量配置检查清单
 
