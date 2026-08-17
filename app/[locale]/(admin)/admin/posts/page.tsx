@@ -10,11 +10,11 @@ export default async function () {
   const posts = await getAllPosts();
 
   const table: TableSlotType = {
-    title: "Posts",
+    title: "文章管理",
     toolbar: {
       items: [
         {
-          title: "Add Post",
+          title: "新增文章",
           icon: "RiAddLine",
           url: "/admin/posts/add",
         },
@@ -23,27 +23,27 @@ export default async function () {
     columns: [
       {
         name: "title",
-        title: "Title",
+        title: "标题",
       },
       {
         name: "description",
-        title: "Description",
+        title: "描述",
       },
       {
         name: "slug",
-        title: "Slug",
+        title: "路径",
       },
       {
         name: "locale",
-        title: "Locale",
+        title: "语言",
       },
       {
         name: "status",
-        title: "Status",
+        title: "状态",
       },
       {
         name: "created_at",
-        title: "Created At",
+        title: "创建时间",
         callback: (item: Post) => {
           return moment(item.created_at).format("YYYY-MM-DD HH:mm:ss");
         },
@@ -52,12 +52,12 @@ export default async function () {
         callback: (item: Post) => {
           const items: NavItem[] = [
             {
-              title: "Edit",
+              title: "编辑",
               icon: "RiEditLine",
               url: `/admin/posts/${item.uuid}/edit`,
             },
             {
-              title: "View",
+              title: "查看",
               icon: "RiEyeLine",
               url: `/${item.locale}/posts/${item.slug}`,
               target: "_blank",

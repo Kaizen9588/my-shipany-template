@@ -5,7 +5,7 @@ import moment from "moment";
 /**
  * 后台积分流水列表（6.9）
  */
-export default async function CreditsPage({
+export default async function 积分Page({
   searchParams,
 }: {
   searchParams: Promise<{ page?: string }>;
@@ -27,12 +27,12 @@ export default async function CreditsPage({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-medium">Credit Transactions</h3>
+        <h3 className="text-lg font-medium">积分流水</h3>
         <a
           href="/admin/credits/adjust"
           className="rounded-md border px-3 py-1.5 text-sm"
         >
-          Adjust Credits
+          调整积分
         </a>
       </div>
 
@@ -40,20 +40,20 @@ export default async function CreditsPage({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b text-left text-muted-foreground">
-              <th className="p-3">Trans No</th>
-              <th>User</th>
-              <th>Type</th>
-              <th>Credits</th>
-              <th>Order No</th>
-              <th>Expires</th>
-              <th>Time</th>
+              <th className="p-3">流水号</th>
+              <th>用户</th>
+              <th>类型</th>
+              <th>积分</th>
+              <th>订单号</th>
+              <th>过期时间</th>
+              <th>时间</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="p-6 text-center text-muted-foreground">
-                  No credit transactions
+                  暂无积分流水
                 </td>
               </tr>
             )}
@@ -70,7 +70,7 @@ export default async function CreditsPage({
                   {c.credits > 0 ? `+${c.credits}` : c.credits}
                 </td>
                 <td className="font-mono text-xs">{c.order_no || "-"}</td>
-                <td>{c.expired_at ? c.expired_at.slice(0, 10) : "never"}</td>
+                <td>{c.expired_at ? c.expired_at.slice(0, 10) : "永久"}</td>
                 <td>{moment(c.created_at).format("YYYY-MM-DD HH:mm")}</td>
               </tr>
             ))}
@@ -84,7 +84,7 @@ export default async function CreditsPage({
             href={`/admin/credits?page=${pageNum - 1}`}
             className="rounded border px-3 py-1"
           >
-            ← Prev
+            ← 上一页
           </a>
         )}
         <span className="px-2 py-1">Page {pageNum}</span>
@@ -93,7 +93,7 @@ export default async function CreditsPage({
             href={`/admin/credits?page=${pageNum + 1}`}
             className="rounded border px-3 py-1"
           >
-            Next →
+            下一页 →
           </a>
         )}
       </div>

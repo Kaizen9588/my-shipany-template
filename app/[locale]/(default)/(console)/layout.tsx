@@ -11,6 +11,11 @@ export default async function ({ children }: { children: ReactNode }) {
     redirect("/auth/signin");
   }
 
+  // 默认管理员首次登录强制改密（0012_default_admin.sql）
+  if (userInfo.must_change_password) {
+    redirect("/change-password");
+  }
+
   const t = await getTranslations();
 
   const sidebar: Sidebar = {

@@ -20,22 +20,22 @@ export default async function PaidOrdersPage({
   const orders = (await searchPaidOrders(q, pageNum, 20)) || [];
 
   const columns: TableColumn[] = [
-    { name: "order_no", title: "Order No" },
-    { name: "paid_email", title: "Paid Email" },
-    { name: "product_name", title: "Product Name" },
+    { name: "order_no", title: "订单号" },
+    { name: "paid_email", title: "支付邮箱" },
+    { name: "product_name", title: "产品" },
     {
       name: "amount",
-      title: "Amount",
+      title: "金额",
       callback: (row) => `$${(row.amount / 100).toFixed(2)}`,
     },
     {
       name: "payment_provider",
-      title: "Provider",
+      title: "渠道",
       callback: (row) => row.payment_provider || "stripe",
     },
     {
       name: "created_at",
-      title: "Created At",
+      title: "下单时间",
       callback: (row) => moment(row.created_at).format("YYYY-MM-DD HH:mm:ss"),
     },
     {
@@ -46,7 +46,7 @@ export default async function PaidOrdersPage({
   ];
 
   const table: TableSlotType = {
-    title: "Paid Orders",
+    title: "已支付订单",
     columns,
     data: orders,
   };
@@ -62,14 +62,14 @@ export default async function PaidOrdersPage({
             type="text"
             name="q"
             defaultValue={q}
-            placeholder="Search order/email/product..."
+            placeholder="搜索订单/邮箱/产品…"
             className="rounded-md border px-3 py-1.5 text-sm"
           />
           <button
             type="submit"
             className="rounded-md border px-3 py-1.5 text-sm"
           >
-            Search
+            搜索
           </button>
         </form>
         <OrderActions
@@ -85,7 +85,7 @@ export default async function PaidOrdersPage({
             href={`/admin/paid-orders?q=${encodeURIComponent(q)}&page=${prevPage}`}
             className="rounded border px-3 py-1"
           >
-            ← Prev
+            ← 上一页
           </a>
         )}
         <span className="px-2 py-1">Page {pageNum}</span>
@@ -94,7 +94,7 @@ export default async function PaidOrdersPage({
             href={`/admin/paid-orders?q=${encodeURIComponent(q)}&page=${nextPage}`}
             className="rounded border px-3 py-1"
           >
-            Next →
+            下一页 →
           </a>
         )}
       </div>

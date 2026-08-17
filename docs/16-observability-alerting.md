@@ -1,6 +1,10 @@
 # 可观测性与告警设计（Observability & Alerting）
 
-> 版本：v1 设计稿（6.23，待落地）
+> 版本：v1（2026-08 落地）
+> - `/admin/payment` 支付渠道管理（启用/优先级 + 健康状态 + 24h 成败统计）
+> - `/admin/pricing` 定价映射（金额/积分/有效期/渠道产品 ID，独立菜单）
+> - `lib/notify` 飞书/企微告警 + 健康摘除接入
+> - `op_events` 运营事件底座 + `/admin/logs` 事件检索 + `/api/admin/op-events`
 > 三个诉求一张图：① 日志采集 -> 自有图表，用户动向/支付情况自己掌控；② 支付渠道可扩展 + 异常实时告警 + 自动切换；③ 飞书/企微机器人实时推送异常。
 > 前置事实：项目已有多渠道支付抽象（`lib/payment/*`，三渠道适配器 + `payment_settings` 热切换 +
 > `health.ts` 失败计数自动降级）、统一日志封装（`lib/logger.ts`）、服务端埋点（`lib/telemetry/*`）、
@@ -171,8 +175,12 @@ recordProviderFailure 达阈值
 | 元素 | 说明 |
 |------|------|
 | 渠道卡片 x3 | 启用开关（写 payment_settings）、priority 编辑、当前健康状态（unhealthy 剩余时间）、最近 24h 成功/失败计数（op_events 聚合） |
-| 产品映射表 | payment_products 编辑（金额/积分/creem_product_id/stripe_price_id 回填） |
+| 定价映射 | 独立菜单 `/admin/pricing`，编辑 payment_products（金额/积分/creem_product_id/stripe_price_id 回填） |
 | 操作审计 | 开关/改价全部走 `fireAndForgetAudit`（已有机制） |
+
+> **健康状态说明**：/admin/payment 里的“健康状态”是**基于最近 24h checkout 落库成败的
+> 内存/日志统计**，不是真实的外部探活。没有调用数据的渠道显示“暂无调用数据”，
+> 不代表不可用。真实探活需要接入各渠道健康检查接口（当前模板未内置，列为升级项）。
 
 **c) 渠道被封的完整处置 SOP**（沉淀为文档，配合告警消息引用）
 
@@ -210,6 +218,7 @@ export interface NotifyMessage {
   body: string;                         // markdown（飞书/企微都支持）
   severity: 'info' | 'warn' | 'error' | 'critical';
   subject_uuid?: string;                // 订单号/渠道 id，用于去重抑制
+  event_type?: string;                  // 对应 NOTIFY_EVENTS，事件级开关/级别过滤用
 }
 
 // lib/notify/index.ts
@@ -247,14 +256,33 @@ export async function notifyChannel(message: NotifyMessage): Promise<void>;
 
 ### 5.3 环境变量（新增 4 个，全可选）
 
-| 变量 | 说明 | 缺省 |
+| 变量 / system_settings key | 说明 | 缺省 |
 |------|------|------|
 | FEISHU_WEBHOOK_URL | 飞书机器人 webhook（含 token） | 未配置则该渠道静默禁用 |
 | FEISHU_SECRET | 飞书签名校验（群设置开启「签名校验」时必填） | - |
 | WECOM_WEBHOOK_URL | 企微机器人 webhook（含 key） | 未配置则该渠道静默禁用 |
 | NOTIFY_MIN_SEVERITY | 最低通知级别 info/warn/error/critical | warn |
 
-### 5.4 触发点（v1 = critical/error 级支付与安全事件）
+### 5.3b 事件级开关与最低级别（/admin/notify）
+
+后台 `system_settings.notify_event_rules` 保存 JSON，格式为：
+
+```json
+{
+  "payment.provider_unhealthy": { "enabled": true, "severity": "critical" },
+  "payment.amount_mismatch": { "enabled": true, "severity": "critical" }
+}
+```
+
+- `enabled=false`：该事件即使达到全局最低级别也**不推送**。
+- `severity`：该事件独立的最低通知级别；与全局 `notify_min_severity` 取更严格者。
+- 页面 /admin/notify 会展示完整事件清单及每条的**接入状态**（已接入 / 仅日志 / 预留），未设置为默认全开。
+  “已接入”表示当前代码已真实触发该通知；“仅日志”只落 op_events 不推送；“预留”为下一批接入点。
+
+> 测试发送：`POST /api/admin/notify-settings` 会在**没有配置任何 Webhook 时明确返回错误**；
+> 飞书/企微发送后会解析 JSON 校验业务成功码（飞书 `code=0`，企微 `errcode=0`），响应码非 0 视为失败并向上回显。
+
+### 5.4 可通知事件（v1 = 支付与安全事件，后台 /admin/notify 已列出并可开关）
 
 | 事件 | severity | 消息要点 |
 |------|----------|----------|

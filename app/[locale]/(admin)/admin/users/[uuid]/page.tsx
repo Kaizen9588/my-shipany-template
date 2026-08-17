@@ -47,7 +47,7 @@ export default async function UserDetailPage({
   async function toggleStatus() {
     "use server";
     const adminUser = await requireAdmin();
-    const next = currentUser.status === "banned" ? "active" : "banned";
+    const next = currentUser.status === "已封禁" ? "正常" : "已封禁";
     await updateUserByAdmin(uuid, { status: next });
     fireAndForgetAudit({
       admin_uuid: adminUser.uuid || "",
@@ -85,7 +85,7 @@ export default async function UserDetailPage({
   return (
     <div className="space-y-6">
       <a href="/admin/users" className="text-sm underline underline-offset-4">
-        ← Back to users
+        ← 返回用户列表
       </a>
 
       <div className="rounded-lg border p-4">
@@ -93,21 +93,21 @@ export default async function UserDetailPage({
         <p className="text-sm text-muted-foreground">{user.email}</p>
         <div className="mt-2 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
           <div>UUID: {user.uuid?.slice(0, 12)}...</div>
-          <div>Role: {user.role || "user"}</div>
-          <div>Status: {user.status === "banned" ? "banned" : "active"}</div>
-          <div>Joined: {moment(user.created_at).format("YYYY-MM-DD")}</div>
+          <div>角色：{user.role || "user"}</div>
+          <div>状态：{user.status === "已封禁" ? "已封禁" : "正常"}</div>
+          <div>注册：{moment(user.created_at).format("YYYY-MM-DD")}</div>
         </div>
       </div>
 
       <div className="rounded-lg border p-4">
-        <h4 className="mb-3 font-medium">Credits</h4>
+        <h4 className="mb-3 font-medium">积分</h4>
         <p className="mb-4 text-2xl font-semibold">
           {credits.left_credits}
         </p>
 
         <form action={adjustCredits} className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
-            <Label htmlFor="credits">Adjust (可正可负)</Label>
+            <Label htmlFor="credits">调整（可正可负）</Label>
             <Input
               id="credits"
               name="credits"
@@ -117,15 +117,15 @@ export default async function UserDetailPage({
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="remark">Remark</Label>
+            <Label htmlFor="remark">备注</Label>
             <Input id="remark" name="remark" placeholder="备注" />
           </div>
-          <Button type="submit">Apply</Button>
+          <Button type="submit">应用</Button>
         </form>
       </div>
 
       <div className="rounded-lg border p-4">
-        <h4 className="mb-3 font-medium">Admin Actions</h4>
+        <h4 className="mb-3 font-medium">管理员操作</h4>
         <div className="flex flex-wrap gap-2">
           <form action={updateRole}>
             <select
@@ -144,7 +144,7 @@ export default async function UserDetailPage({
           </form>
           <form action={toggleStatus}>
             <Button type="submit" variant="destructive" size="sm">
-              {user.status === "banned" ? "Unban" : "Ban"}
+              {user.status === "已封禁" ? "Unban" : "Ban"}
             </Button>
           </form>
         </div>

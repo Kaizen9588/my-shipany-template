@@ -46,3 +46,7 @@ Makefile
 .wrangler
 wrangler.toml
 supabase
+# local agent skills install (npx skills add ...) + Supabase CLI cache
+.agents/
+.supabase-home/
+skills-lock.json

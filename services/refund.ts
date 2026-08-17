@@ -1,6 +1,7 @@
 import { getSupabaseClient } from "@/models/db";
 import { getIsoTimestr } from "@/lib/time";
 import { fireAndForgetAudit } from "@/lib/audit";
+import { trackCriticalEvent } from "@/lib/oplog";
 
 /**
  * 退款扣回积分 + 订单标记 refunded（6.21，webhook 与后台退款共用）
@@ -36,6 +37,15 @@ export async function processRefund({
   }
 
   const deducted = typeof data === "number" ? data : 0;
+
+  // 退款是资金流出：落库 + 服务端埋点 + 飞书/企微告警（warn 级默认会推送）
+  trackCriticalEvent({
+    event_type: "payment.refund_processed",
+    severity: "warn",
+    source: "app",
+    subject_uuid: order_no,
+    detail: { amount, deducted_credits: deducted, admin_uuid },
+  });
 
   if (admin_uuid) {
     fireAndForgetAudit({

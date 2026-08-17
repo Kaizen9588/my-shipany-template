@@ -16,6 +16,11 @@ export default async function AdminLayout({
     redirect("/auth/signin");
   }
 
+  // 默认管理员首次登录/未改密时，先完成改密再进入后台
+  if (admin.must_change_password) {
+    redirect("/change-password");
+  }
+
   const sidebar: Sidebar = {
     brand: {
       title: "ShipAny",
@@ -28,38 +33,58 @@ export default async function AdminLayout({
     nav: {
       items: [
         {
-          title: "Dashboard",
+          title: "控制台",
           url: "/admin",
           icon: "RiDashboardLine",
         },
         {
-          title: "Users",
+          title: "用户管理",
           url: "/admin/users",
           icon: "RiUserLine",
         },
         {
-          title: "Orders",
+          title: "订单",
           icon: "RiOrderPlayLine",
           is_expand: true,
           children: [
             {
-              title: "Paid Orders",
+              title: "已支付订单",
               url: "/admin/paid-orders",
             },
           ],
         },
         {
-          title: "Credits",
+          title: "积分管理",
           url: "/admin/credits",
           icon: "RiCoinsLine",
         },
         {
-          title: "Audit Logs",
+          title: "操作审计",
           url: "/admin/audit-logs",
           icon: "RiFileList3Line",
         },
+          {
+            title: "支付渠道",
+            url: "/admin/payment",
+            icon: "RiBankCardLine",
+          },
+          {
+            title: "定价映射",
+            url: "/admin/pricing",
+            icon: "RiPriceTag3Line",
+          },
+          {
+            title: "告警通知",
+            url: "/admin/notify",
+            icon: "RiNotification3Line",
+          },
+          {
+            title: "运营日志",
+            url: "/admin/logs",
+            icon: "RiFileList3Line",
+          },
         {
-          title: "Posts",
+          title: "文章管理",
           url: "/admin/posts",
           icon: "RiArticleLine",
         },
@@ -68,7 +93,7 @@ export default async function AdminLayout({
     social: {
       items: [
         {
-          title: "Home",
+          title: "前台首页",
           url: "/",
           target: "_blank",
           icon: "RiHomeLine",

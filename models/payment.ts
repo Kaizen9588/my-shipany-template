@@ -89,3 +89,42 @@ export async function updatePaymentSetting(
     throw error;
   }
 }
+
+/** 更新渠道：启用状态 + 优先级（后台 /admin/payment 热切换） */
+export async function updatePaymentSettingDetail(
+  provider: string,
+  fields: Partial<Pick<PaymentSetting, "enabled" | "priority">>
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from("payment_settings")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("provider", provider);
+  if (error) {
+    throw error;
+  }
+}
+
+/** 更新定价映射（金额/积分/有效期/渠道产品 ID 回填） */
+export async function updatePaymentProduct(
+  productId: string,
+  fields: Partial<
+    Pick<
+      PaymentProduct,
+      | "amount"
+      | "credits"
+      | "valid_months"
+      | "creem_product_id"
+      | "stripe_price_id"
+    >
+  >
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from("payment_products")
+    .update(fields)
+    .eq("product_id", productId);
+  if (error) {
+    throw error;
+  }
+}

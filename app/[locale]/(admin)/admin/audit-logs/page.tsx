@@ -27,17 +27,17 @@ export default async function AuditLogsPage({
 
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-medium">Audit Logs</h3>
+      <h3 className="text-lg font-medium">操作审计</h3>
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b text-left text-muted-foreground">
-              <th className="p-3">Time</th>
-              <th>Admin</th>
-              <th>Action</th>
-              <th>Target</th>
-              <th>Detail</th>
+              <th className="p-3">时间</th>
+              <th>操作人</th>
+              <th>动作</th>
+              <th>对象</th>
+              <th>详情</th>
               <th>IP</th>
             </tr>
           </thead>
@@ -45,7 +45,7 @@ export default async function AuditLogsPage({
             {rows.length === 0 && (
               <tr>
                 <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                  No audit logs
+                  暂无审计日志
                 </td>
               </tr>
             )}
@@ -75,7 +75,7 @@ export default async function AuditLogsPage({
             href={`/admin/audit-logs?page=${pageNum - 1}`}
             className="rounded border px-3 py-1"
           >
-            ← Prev
+            ← 上一页
           </a>
         )}
         <span className="px-2 py-1">Page {pageNum}</span>
@@ -84,7 +84,7 @@ export default async function AuditLogsPage({
             href={`/admin/audit-logs?page=${pageNum + 1}`}
             className="rounded border px-3 py-1"
           >
-            Next →
+            下一页 →
           </a>
         )}
       </div>

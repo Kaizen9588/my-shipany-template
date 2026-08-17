@@ -11,6 +11,7 @@
 
 ### 认证与用户
 - **NextAuth.js v5**：Google / GitHub OAuth + Google One-Tap
+- **默认管理员**：首次初始化会创建 `admin@shipany.local / 123456`（`super_admin`），首次登录强制改密
 - **邮箱密码登录**（Credentials Provider + bcrypt，含登录失败锁定）
 - 邮箱验证码（注册验证 / 密码重置复用）
 - JWT Session，OAuth 登录自动建号并赠送 10 积分
@@ -40,6 +41,10 @@
 
 ### 后台管理（Admin）
 - 数据看板：总用户 / 今日新增 / 总收入 / 今日订单 / 积分消耗 / 活跃用户 + 30 天趋势
+- 支付渠道管理：/admin/payment，一键启用/停用 Stripe/Creem/Waffo + 优先级 + 健康状态 / 24h 成败统计（数据库热切换，无需重部署）
+- 告警通知：/admin/notify，配置飞书/企业微信机器人；支持事件级开关与最低级别，支付渠道摘除、金额不匹配等事件实时推送到群
+- 定价映射：/admin/pricing，独立管理 product_id → 金额 / 积分 / 有效期 / 渠道产品 ID
+- 运营日志：/admin/logs，检索 payment.* 等结构化运营事件；/admin/payment 展示渠道健康状态与 24h 成败统计
 - 用户管理：搜索 / 分页 / 详情 / 角色修改 / 封禁/解封 / 手动调整积分
 - 订单管理：搜索 / 筛选 / 按渠道退款 / CSV 导出
 - 文章（博客）管理：Markdown 编辑器、多语言、上下架
@@ -60,7 +65,7 @@
 - 法律页（隐私政策 / 服务条款）
 
 ### 工程化与运维
-- 单元测试：Vitest，119 个用例覆盖核心业务逻辑
+- 单元测试：Vitest，147 个用例覆盖核心业务逻辑
 - ESLint（Next.js flat config）
 - 数据库迁移：`data/migrations/*.sql` 自动执行（幂等）
 - 健康检查 `/api/health`、每日备份 Cron、CSRF/CORS 防护
@@ -156,17 +161,38 @@ DATABASE_URL = "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.sup
 ### 3. 初始化数据库
 
 ```bash
-# 方式一：自动迁移（服务启动时 instrumentation.ts 自动执行 data/migrations/*.sql）
+# 方式一：启动时自动迁移（instrumentation.ts 自动执行 data/migrations/*.sql 与基线表 0000_install_base.sql）
 pnpm dev
 
-# 方式二：手动执行迁移
+# 方式二：手动执行迁移（脚本会自动读取 .env.local 中的 DATABASE_URL）
 pnpm migrate
 
-# 方式三：直接用 SQL 初始化
-# 在 Supabase SQL Editor 依次执行 data/install.sql 与 data/migrations/*.sql
+# 方式三：直接在 Supabase SQL Editor 执行（仅空库推荐，需按序粘贴）
+# 1) data/migrations/0000_install_base.sql（基线表）
+# 2) data/migrations/0001_payment_products.sql
+# 3) ... 依序执行 data/migrations/*.sql
 ```
 
 > 迁移仅在 `DATABASE_URL` 配置后执行；仅预览 Landing Page 时可不配置数据库。
+
+### 🧑‍💻 第一次运行：用默认管理员登录
+初始化完成（迁移 0012）后会自动生成一条**默认超级管理员**：
+
+| 项 | 值 |
+|---|---|
+| 邮箱 | `admin@shipany.local` |
+| 密码 | `123456` |
+| 角色 | `super_admin` |
+| 首次登录 | 会强制跳转到 `/change-password`，必须先改密码 |
+
+操作步骤：
+1. 打开 `http://localhost:3000/auth/signin`
+2. 选择 **Email & Password**，输入 `admin@shipany.local` / `123456`
+3. 系统自动跳转到改密页，设置新密码（至少 8 位，含字母和数字）
+4. 保存后重新登录，访问 `http://localhost:3000/admin` 进入后台
+
+> ⚠️ **生产环境必须第一时间改掉默认密码**；本地 dev 使用 `pnpm dev` 即可，
+> 自托管 `next start` 时需在环境变量里额外设置 `AUTH_TRUST_HOST=true`。
 
 ### 4. 启动开发服务器
 
@@ -179,7 +205,7 @@ pnpm dev
 ### 5. 运行测试
 
 ```bash
-pnpm test        # 运行全部单元测试（119 个用例）
+pnpm test        # 运行全部单元测试（147 个用例）
 pnpm lint        # ESLint 检查
 pnpm build       # 生产构建
 ```
@@ -216,6 +242,9 @@ pnpm build       # 生产构建
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | 可选 | Upstash 限流 |
 | `STORAGE_ENDPOINT` / `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` / `STORAGE_BUCKET` | 可选 | S3 存储 |
 | `CRON_SECRET` | 可选 | Cron 鉴权 |
+| `FEISHU_WEBHOOK_URL` / `FEISHU_SECRET` | 可选 | 飞书机器人告警（后台 /admin/notify 可替代） |
+| `WECOM_WEBHOOK_URL` | 可选 | 企业微信机器人告警（后台 /admin/notify 可替代） |
+| `NOTIFY_MIN_SEVERITY` | 可选 | 通知最低级别 info/warn/error/critical（默认 warn） |
 | `SNOWFLAKE_WORKER_ID` | 可选 | 多实例部署时唯一，避免订单号重复 |
 | `CORS_ALLOWED_ORIGINS` | 可选 | 跨域来源 |
 
@@ -317,7 +346,7 @@ docker run -p 3000:3000 my-shipany-template:latest
 
 1. **Fork / Copy** 本仓库，改项目名与 `package.json`
 2. **配置环境变量**：`.env.local` 填入你的 Supabase / OAuth / 支付 / AI 凭据
-3. **初始化数据库**：执行 `data/install.sql` 与 `data/migrations/*.sql`
+3. **初始化数据库**：配置 `DATABASE_URL` 后执行 `pnpm migrate`（迁移集合已包含基线表）
 4. **修改 Landing 文案**：编辑 `i18n/pages/landing/{en,zh}.json`
 5. **新增 AI 能力**：在 `services/` 加业务逻辑，在 `data/model-pricing.ts` 注册模型定价
 6. **调整定价**：修改 `data/pricing.ts`（服务端单一真相源）

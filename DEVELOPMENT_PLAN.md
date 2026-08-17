@@ -241,8 +241,8 @@ my-shipany-template/
 | 审计日志查看 | ✅ | `admin/audit-logs/` | 操作记录列表检索 |
 | RBAC 角色管理 | ✅ 基础 | users.role + `lib/auth.ts` | super_admin/admin/operator/user（6.10） |
 | 系统设置 | ❌ 未实现 | - | P3 后续 |
-| 支付渠道管理页 | ❌ 未实现 | - | 6.23：`/admin/payment` 渠道开关/priority/健康状态（现只能改数据库） |
-| 事件日志/告警 | ❌ 未实现 | - | 6.23：`/admin/logs` + 飞书/企微机器人（见 docs/16） |
+| 支付渠道管理页 | ✅ 已实现 | `/admin/payment` + `/api/admin/payment-settings` | 渠道开关/priority/定价映射（健康状态与 op_events 待 6.23 后半） |
+| 事件日志/告警 | ✅ 已实现 | `op_events` + `/admin/logs` + `/api/admin/op-events` | 日志检索、支付健康统计、飞书/企微告警均已落地 |
 | 操作日志 | ⚠️ 最小版 | `lib/audit.ts` + audit_logs 表 | 后台写操作已记录；完整审计（6.20）P3 |
 | 数据导出 | ✅ 订单 CSV | `lib/csv.ts` | 用户导出 P3 |
 

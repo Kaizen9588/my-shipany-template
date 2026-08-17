@@ -2,6 +2,7 @@ import { getIsoTimestr } from "@/lib/time";
 import { getSupabaseClient } from "@/models/db";
 import { findOrderByOrderNo } from "@/models/order";
 import { fireAndForgetEmail } from "@/lib/email";
+import { trackCriticalEvent } from "@/lib/oplog";
 
 import Stripe from "stripe";
 
@@ -47,6 +48,13 @@ export async function handleOrderSession(session: Stripe.Checkout.Session) {
     if (data === "mismatch") {
       // R1：金额/币种不匹配，订单已置 mismatch（不充值）。不抛错——
       // 重试不可能修复金额差异，只会引发渠道无限重试（与 handlePaymentEvent 一致）
+      trackCriticalEvent({
+        event_type: "payment.amount_mismatch",
+        severity: "critical",
+        source: "webhook",
+        subject_uuid: order_no,
+        detail: { amount_cents: session.amount_total, currency: session.currency },
+      });
       console.error(
         "[order] payment amount mismatch: order_no=",
         order_no,

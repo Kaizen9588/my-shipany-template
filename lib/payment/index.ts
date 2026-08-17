@@ -9,6 +9,7 @@ import { fireAndForgetEmail } from "@/lib/email";
 import { createNotification } from "@/models/notification";
 import { processRefund } from "@/services/refund";
 import { TelemetryEvents, trackServer } from "@/lib/telemetry/server";
+import { trackCriticalEvent } from "@/lib/oplog";
 
 export * from "./types";
 export * from "./registry";
@@ -49,6 +50,13 @@ export async function handlePaymentEvent(event: PaymentEvent): Promise<void> {
       // 金额/币种不匹配：订单已置 mismatch，不充值不发奖励，告警人工核查
       // （不抛错——渠道重试不可能修复金额差异，只会无限重试）
       if (data === "mismatch") {
+        trackCriticalEvent({
+          event_type: "payment.amount_mismatch",
+          severity: "critical",
+          source: "webhook",
+          subject_uuid: event.order_no,
+          detail: { amount_cents: event.amount, currency: event.currency || "" },
+        });
         console.error(
           "[payment] AMOUNT MISMATCH: order_no=",
           event.order_no,

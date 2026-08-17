@@ -1,21 +1,18 @@
-import "next-auth";
+import { DefaultSession } from "next-auth";
+
+interface SessionUserFields {
+  uuid?: string;
+  nickname?: string;
+  avatar_url?: string;
+  created_at?: string;
+  email?: string;
+  mustChangePassword?: boolean;
+  role?: string;
+  status?: string;
+}
 
 declare module "next-auth" {
-  interface JWT {
-    user?: {
-      uuid?: string;
-      nickname?: string;
-      avatar_url?: string;
-      created_at?: string;
-    };
-  }
-
   interface Session {
-    user: {
-      uuid?: string;
-      nickname?: string;
-      avatar_url?: string;
-      created_at?: string;
-    } & DefaultSession["user"];
+    user: SessionUserFields & DefaultSession["user"];
   }
 }

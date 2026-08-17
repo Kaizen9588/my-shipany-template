@@ -21,11 +21,11 @@ export default async function UsersPage({
 
   const columns: TableColumn[] = [
     { name: "uuid", title: "UUID", callback: (row) => row.uuid?.slice(0, 8) + "..." },
-    { name: "email", title: "Email" },
-    { name: "nickname", title: "Name" },
+    { name: "email", title: "邮箱" },
+    { name: "nickname", title: "昵称" },
     {
       name: "role",
-      title: "Role",
+      title: "角色",
       callback: (row) => (
         <Badge variant={row.role === "user" ? "outline" : "default"}>
           {row.role || "user"}
@@ -34,12 +34,12 @@ export default async function UsersPage({
     },
     {
       name: "status",
-      title: "Status",
-      callback: (row) => (row.status === "banned" ? "🚫 banned" : "active"),
+      title: "状态",
+      callback: (row) => (row.status === "banned" ? "🚫 已封禁" : "正常"),
     },
     {
       name: "created_at",
-      title: "Created At",
+      title: "注册时间",
       callback: (row) => moment(row.created_at).format("YYYY-MM-DD"),
     },
     {
@@ -50,14 +50,14 @@ export default async function UsersPage({
           href={`/admin/users/${row.uuid}`}
           className="text-sm text-primary underline underline-offset-4"
         >
-          Manage
+          管理
         </a>
       ),
     },
   ];
 
   const table: TableSlotType = {
-    title: "All Users",
+    title: "全部用户",
     columns,
     data: users,
   };
@@ -72,11 +72,11 @@ export default async function UsersPage({
           type="text"
           name="q"
           defaultValue={q}
-          placeholder="Search email/name/uuid..."
+          placeholder="搜索邮箱/昵称/UUID…"
           className="rounded-md border px-3 py-1.5 text-sm"
         />
         <button type="submit" className="rounded-md border px-3 py-1.5 text-sm">
-          Search
+          搜索
         </button>
       </form>
 
@@ -88,7 +88,7 @@ export default async function UsersPage({
             href={`/admin/users?q=${encodeURIComponent(q)}&page=${prevPage}`}
             className="rounded border px-3 py-1"
           >
-            ← Prev
+            ← 上一页
           </a>
         )}
         <span className="px-2 py-1">Page {pageNum}</span>
@@ -97,7 +97,7 @@ export default async function UsersPage({
             href={`/admin/users?q=${encodeURIComponent(q)}&page=${nextPage}`}
             className="rounded border px-3 py-1"
           >
-            Next →
+            下一页 →
           </a>
         )}
       </div>

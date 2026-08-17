@@ -9,13 +9,25 @@ import { getClientIp } from "@/lib/ip";
 import { getIsoTimestr } from "@/lib/time";
 import { getUuid } from "@/lib/hash";
 import { saveUser } from "@/services/user";
-import { findUserByEmail } from "@/models/user";
+import { findUserByEmail, findUserByUuid } from "@/models/user";
 import {
   clearLoginFailure,
   isLoginLocked,
   recordLoginFailure,
 } from "@/lib/login-guard";
 import { verifyPassword } from "@/lib/password";
+
+/** jwt 回调中暂存的用户字段（避免 NextAuth v5 JWT 类型增强不稳定） */
+type SessionJwtUser = {
+  uuid?: string;
+  email?: string;
+  nickname?: string;
+  avatar_url?: string;
+  created_at?: string;
+  mustChangePassword?: boolean;
+  role?: string;
+  status?: string;
+};
 
 let providers: Provider[] = [];
 
@@ -207,9 +219,10 @@ export const authOptions: NextAuthConfig = {
       else if (new URL(url).origin === baseUrl) return url;
       return baseUrl;
     },
-    async session({ session, token, user }) {
-      if (token && token.user && token.user) {
-        session.user = token.user;
+    async session({ session, token }) {
+      const jwtUser = (token as { user?: SessionJwtUser }).user;
+      if (jwtUser) {
+        session.user = { ...session.user, ...jwtUser };
       }
       return session;
     },
@@ -231,16 +244,34 @@ export const authOptions: NextAuthConfig = {
 
           try {
             const savedUser = await saveUser(dbUser);
-
-            token.user = {
+            // 从数据库读取完整资料（含 role/status/must_change_password），
+            // 确保默认管理员首次登录能命中强制改密流程。
+            const persisted = await findUserByUuid(savedUser.uuid || "");
+            const jwtUser = token as { user?: SessionJwtUser };
+            jwtUser.user = {
               uuid: savedUser.uuid,
               email: savedUser.email,
               nickname: savedUser.nickname,
               avatar_url: savedUser.avatar_url,
               created_at: savedUser.created_at,
+              mustChangePassword: !!persisted?.must_change_password,
+              role: persisted?.role,
+              status: persisted?.status,
             };
           } catch (e) {
             console.error("save user failed:", e);
+          }
+        } else if ((token as { user?: SessionJwtUser }).user?.uuid) {
+          // 每次会话校验时刷新关键属性（封禁 / 角色 / 强制改密即时生效）
+          const jwtUser = token as { user?: SessionJwtUser };
+          const persisted = await findUserByUuid(jwtUser.user?.uuid || "");
+          if (persisted) {
+            jwtUser.user = {
+              ...(jwtUser.user || {}),
+              role: persisted.role,
+              status: persisted.status,
+              mustChangePassword: !!persisted.must_change_password,
+            };
           }
         }
         return token;

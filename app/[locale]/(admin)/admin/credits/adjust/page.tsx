@@ -57,9 +57,9 @@ export default function AdjustCreditsPage() {
   return (
     <div className="space-y-4">
       <a href="/admin/credits" className="text-sm underline underline-offset-4">
-        ← Back to credits
+        ← 返回积分管理
       </a>
-      <h3 className="text-lg font-medium">Adjust Credits</h3>
+      <h3 className="text-lg font-medium">调整积分</h3>
 
       <form action={adjust} className="max-w-md space-y-4">
         <div className="space-y-1">
@@ -71,14 +71,14 @@ export default function AdjustCreditsPage() {
           <Input id="email" name="email" type="email" placeholder="user@example.com" />
         </div>
         <div className="space-y-1">
-          <Label htmlFor="credits">Credits（可正可负）</Label>
-          <Input id="credits" name="credits" type="number" required placeholder="e.g. 100 / -50" />
+          <Label htmlFor="credits">积分数（可正可负）</Label>
+          <Input id="credits" name="credits" type="number" required placeholder="例如 100 / -50" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="remark">Remark（备注）</Label>
           <Input id="remark" name="remark" placeholder="原因/说明" />
         </div>
-        <Button type="submit">Apply Adjustment</Button>
+        <Button type="submit">应用调整</Button>
       </form>
     </div>
   );

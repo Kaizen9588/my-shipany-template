@@ -17,6 +17,8 @@ export interface User {
   role?: string;
   /** 账号状态：active / banned（6.7 用户管理） */
   status?: string;
+  /** 默认管理员首次登录强制改密（0012_default_admin.sql） */
+  must_change_password?: boolean;
   credits?: UserCredits;
   invite_code?: string;
   invited_by?: string;

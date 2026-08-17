@@ -19,6 +19,9 @@ interface ProviderHealth {
 
 const healthMap = new Map<string, ProviderHealth>();
 
+import { notifyChannel } from "@/lib/notify";
+import { fireAndForgetOpEvent } from "@/lib/oplog";
+
 export function isProviderHealthy(providerId: string): boolean {
   const h = healthMap.get(providerId);
   if (!h) {
@@ -49,15 +52,82 @@ export function recordProviderFailure(providerId: string): void {
   }
 
   h.fails += 1;
+  // 失败事件落库（24h 成败统计底座）
+  fireAndForgetOpEvent({
+    event_type: "payment.provider_failure",
+    severity: "warn",
+    subject_uuid: providerId,
+    detail: { provider: providerId, fail_counts: h.fails },
+  });
+
   if (h.fails >= FAIL_THRESHOLD) {
     h.unhealthyUntil = now + UNHEALTHY_TTL_MS;
     h.fails = 0;
     console.warn(
       `[payment] provider ${providerId} marked unhealthy for 30min (${FAIL_THRESHOLD} consecutive failures)`
     );
+    // 6.23：渠道摘除即时告警（飞书/企微；fire-and-forget，不阻塞路由）
+    fireAndForgetOpEvent({
+      event_type: "payment.provider_unhealthy",
+      severity: "critical",
+      subject_uuid: providerId,
+      detail: { provider: providerId, threshold: FAIL_THRESHOLD, ttl_minutes: 30 },
+    });
+    void notifyChannel({
+      title: `🚨 支付渠道 [${providerId}] 已自动摘除`,
+      body: `连续 ${FAIL_THRESHOLD} 次失败，自动设为 unhealthy 30 分钟。\n`
+        + `处置：先到渠道后台确认是否风控/封禁；若短期无法恢复，`
+        + `建议在后台「支付渠道」中将 ${providerId} 设为禁用。`,
+      severity: "critical",
+      subject: providerId,
+      eventType: "payment.provider_unhealthy",
+    });
   }
 }
 
 export function recordProviderSuccess(providerId: string): void {
+  const wasUnhealthy = healthMap.get(providerId)?.unhealthyUntil || 0;
   healthMap.delete(providerId);
+
+  // 成功事件落库（24h 成败统计底座）
+  fireAndForgetOpEvent({
+    event_type: "payment.provider_success",
+    severity: "info",
+    subject_uuid: providerId,
+    detail: { provider: providerId },
+  });
+
+  if (wasUnhealthy > Date.now()) {
+    console.log(`[payment] provider ${providerId} recovered`);
+    fireAndForgetOpEvent({
+      event_type: "payment.provider_recovered",
+      severity: "info",
+      subject_uuid: providerId,
+      detail: { provider: providerId },
+    });
+    // 6.23：恢复通知（info 级别，低于默认 warn 会被过滤器跳过）
+    void notifyChannel({
+      title: `✅ 支付渠道 [${providerId}] 已恢复`,
+      body: `渠道健康检测已恢复，路由重新启用该渠道。`,
+      severity: "info",
+      subject: providerId,
+      eventType: "payment.provider_recovered",
+    });
+  }
+}
+
+
+/** 后台 /admin/payment 展示：渠道健康状态快照（内存级，单实例） */
+export function getProviderHealthSnapshot(): Record<
+  string,
+  { fails: number; firstFailAt: number; unhealthyUntil: number }
+> {
+  const out: Record<
+    string,
+    { fails: number; firstFailAt: number; unhealthyUntil: number }
+  > = {};
+  healthMap.forEach((h, providerId) => {
+    out[providerId] = { ...h };
+  });
+  return out;
 }

@@ -18,22 +18,22 @@ export default async function AdminDashboard() {
       <h3 className="text-lg font-medium">Dashboard</h3>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
-        <StatCard title="Total Users" value={stats.total_users} />
-        <StatCard title="New Today" value={stats.today_new_users} />
+        <StatCard title="总用户数" value={stats.total_users} />
+        <StatCard title="今日新增" value={stats.today_new_users} />
         <StatCard
-          title="Total Revenue"
+          title="总收入"
           value={`$${(stats.total_revenue / 100).toFixed(2)}`}
         />
-        <StatCard title="Orders Today" value={stats.today_orders} />
-        <StatCard title="Credits Used" value={stats.credits_consumed} />
-        <StatCard title="Active (7d)" value={stats.active_users} />
+        <StatCard title="今日订单" value={stats.today_orders} />
+        <StatCard title="积分消耗" value={stats.credits_consumed} />
+        <StatCard title="7天活跃" value={stats.active_users} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <ChartCard title="User Growth (30d)">
+        <ChartCard title="新增用户趋势（30天）">
           <SimpleLineChart data={stats.user_growth_30d} dataKey="count" />
         </ChartCard>
-        <ChartCard title="Revenue (30d, USD)">
+        <ChartCard title="收入趋势（30天，USD）">
           <SimpleBarChart
             data={stats.revenue_30d.map((r) => ({
               ...r,
@@ -43,7 +43,7 @@ export default async function AdminDashboard() {
             color="#10b981"
           />
         </ChartCard>
-        <ChartCard title="Credit Usage (30d)">
+        <ChartCard title="积分消耗趋势（30天）">
           <SimpleBarChart
             data={stats.credit_usage_30d}
             dataKey="credits"

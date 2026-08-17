@@ -9,6 +9,7 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from "@/lib/payment/health";
+import { fireAndForgetOpEvent } from "@/lib/oplog";
 
 import { Order } from "@/types/order";
 
@@ -124,6 +125,14 @@ export async function POST(req: Request) {
       return respErr("checkout failed: no checkout url");
     }
 
+    fireAndForgetOpEvent({
+      event_type: "payment.checkout_succeeded",
+      severity: "info",
+      source: "app",
+      subject_uuid: order_no,
+      detail: { provider: provider.id, amount: product.amount, currency: product.currency },
+    });
+
     return respData({
       checkout_url: result.checkout_url,
       order_no,
@@ -131,6 +140,13 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     console.log("checkout failed: ", e);
+    fireAndForgetOpEvent({
+      event_type: "payment.checkout_failed",
+      severity: "error",
+      source: "app",
+      subject_uuid: "",
+      detail: { message: String(e?.message || e) },
+    });
     return respErr("checkout failed: " + e.message);
   }
 }
