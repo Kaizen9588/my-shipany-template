@@ -11,6 +11,12 @@ export default async function ({ children }: { children: ReactNode }) {
     redirect("/auth/signin");
   }
 
+  // M2（对抗性测试）：被封禁/已删除账号禁止进入控制台（此前仅校验 email 存在，
+  // banned/deleted 用户持旧会话仍可浏览控制台与消耗积分）
+  if (userInfo.status && userInfo.status !== "active") {
+    redirect("/auth/signin");
+  }
+
   // 默认管理员首次登录强制改密（0012_default_admin.sql）
   if (userInfo.must_change_password) {
     redirect("/change-password");

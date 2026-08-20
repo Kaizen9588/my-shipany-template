@@ -259,16 +259,16 @@ CREATE TABLE waffo_orders (
 
 ---
 
-## 8. 本项目实现计划
+## 8. 本项目实现状态
 
 | 功能 | 文件 | 状态 | 优先级 |
 |------|------|------|--------|
-| Waffo SDK 安装 | package.json | ❌ | P0 |
-| WaffoProvider | `lib/payment/providers/waffo.ts` | ❌ | P0 |
-| Waffo Webhook | `app/api/waffo-notify/route.ts` | ❌ | P0 |
-| waffo_orders 表 | SQL 迁移 | ❌ | P0 |
-| 退款 | `services/order.ts` | ❌ | P1 |
-| 订阅 | `services/order.ts` | ❌ | P1 |
+| Waffo SDK 安装 | package.json | ✅ 已落地 | - |
+| WaffoProvider | `lib/payment/providers/waffo.ts` | ✅ 已落地 | - |
+| Waffo Webhook | `app/api/waffo-notify/route.ts` | ✅ 已落地（RSA 验签 + 失败告警） | - |
+| waffo_orders 表 | 迁移 0007 | ✅ 已落地 | - |
+| 退款 | `services/order.ts` + webhook | ✅ 已落地（6.21，与 Stripe/Creem 共用 processRefund） | - |
+| 订阅 | `services/order.ts` | ❌ 未实现（本模板无订阅产品） | P2 |
 | Auth & Capture | 待评估 | ❌ | P3 |
 
 ---

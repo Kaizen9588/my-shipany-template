@@ -1,6 +1,7 @@
 # 架构设计文档
 
 > 本文档描述**目标架构**（含规划中的多渠道支付、AI 网关、免费试用）。现状实现与目标有差距处均标注「⚠️ 待实现」。
+> ✅ **状态（2026-08 对抗式审查后同步）**：AI 网关、匿名演示、多渠道支付均已落地，文中相关标记已更新；`lib/integrations/` 目录从未创建，Provider 抽象层实际位于 `lib/` 子目录（payment/email/telemetry/notify/ai）。
 > 详细的演进路线见根目录 [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md)，本文档是架构全貌的入口。
 
 ## 1. 总体架构
@@ -36,7 +37,7 @@
                      │                    │
              ┌───────▼───────┐    ┌───────▼────────┐    ┌───────────────┐
              │   NextAuth    │    │    Supabase     │    │  Provider 抽象层│
-             │  (Auth.js v5) │    │  (PostgreSQL)   │    │  lib/integrations│
+             │  (Auth.js v5) │    │  (PostgreSQL)   │    │  lib/ 子目录抽象层│
              │               │    │                 │    │                │
              │ • Google      │    │ Tables:         │    │ • payment      │
              │ • GitHub      │    │  users          │    │ • email        │
@@ -66,7 +67,9 @@
 
 ## 2. 分层架构
 
-项目采用四层分离架构。**关键变更**（相对早期三层设计）：Provider 抽象层从 `lib/` 独立为 `lib/integrations/` 分区，因为它会调用第三方 SDK 和 models 层，不再满足「纯工具函数」约束。
+项目采用四层分离架构。**关键变更**（相对早期三层设计）：Provider 抽象层以 `lib/` 子目录（`payment/email/telemetry/notify/ai`）分区管理，因为它会调用第三方 SDK 和 models 层，不再满足「纯工具函数」约束。
+
+> ⚠️ 早期版本曾计划把抽象层集中到 `lib/integrations/` 目录，该迁移从未发生；实际落地形态即 lib 子目录（见 docs/12 待落地表 aisdk 项）。
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -117,18 +120,18 @@
 - **路由层** → 可调用 services、models、lib 子目录抽象层
 - **services 层** → 可调用 models、lib 子目录抽象层、lib 根目录工具
 - **models 层** → 仅调用 lib 根目录工具和 db.ts
-- **lib 根目录 *.ts** → 纯工具函数，无外部依赖、不调 models
-- **lib 子目录（payment/email/telemetry/ai）** → 可调用第三方 SDK、models（如 payment 查 payment_settings）、lib 根目录工具
+- **lib 根目录 *.ts** → 工具函数，无第三方 SDK 依赖。⚠️ 现状例外：`audit/auth/backup/oplog` 会调 models（业务向工具），新增需调 models 的代码应优先放子目录或 services
+- **lib 子目录（payment/email/telemetry/notify/ai）** → 可调用第三方 SDK、models（如 payment 查 payment_settings）、lib 根目录工具
 - **types/** → 被所有层引用，无依赖
 
-> ⚠️ 这是对早期「lib 无外部依赖」规则的修正：Provider 抽象层（payment/email/telemetry/ai 四个子目录）必然依赖第三方 SDK，与根目录纯工具分区管理，避免规则被事实打破。
+> ⚠️ 这是对早期「lib 无外部依赖」规则的修正：Provider 抽象层（payment/email/telemetry/notify/ai 子目录）必然依赖第三方 SDK，与根目录纯工具分区管理，避免规则被事实打破。
 
 ### 2.2 aisdk 目录归属
 
 | 目录 | 现状 | 归宿 |
 |------|------|------|
-| `aisdk/` | Kling 自定义 Provider（kling-provider、kling-image-model 等） | 迁入 `lib/ai/providers/kling/` |
-| demo API 内联 switch-case | openai/deepseek/openrouter/siliconflow 路由 | 迁入 `lib/ai/registry.ts` + 各 provider 适配器 |
+| `aisdk/` | Kling 自定义 Provider（kling-provider、kling-image-model 等），⚠️ 仍在仓库根目录，迁移未发生（见 docs/12 待落地表） | 迁入 `lib/ai/providers/kling/` |
+| demo API 内联 switch-case | ✅ 已收敛：openai/deepseek/openrouter/siliconflow 路由已迁入 `lib/ai/registry.ts` + 各 provider 适配器 | — |
 
 **分层区分**：
 - `lib/ai/providers/*`：AI SDK 自定义 Provider（低层，模型能力封装，如 Kling）
@@ -156,7 +159,7 @@ app/[locale]/(default)/page.tsx
 浏览器接收 HTML + Client JS hydration
 ```
 
-### 3.2 对外 AI API 请求（核心收费闭环，⚠️ 待实现）
+### 3.2 对外 AI API 请求（核心收费闭环，✅ 已实现，见 docs/13）
 
 ```
 浏览器/第三方 POST /api/v1/ai/generate
@@ -168,7 +171,7 @@ app/api/v1/ai/generate/route.ts
   │ 2. 余额校验：预估费用 = (输入 token + 输出上限) × 单价
   │    └─ 余额不足 → 402 {required, balance}
   │ 3. decreaseCredits() → 原子扣减（P-1.2 RPC）
-  │ 4. lib/integrations/ai/registry → 模型路由（白名单）
+  │ 4. lib/ai/registry → 模型路由（白名单）
   │ 5. generateText() → 生成
   │    └─ 失败 → ai_refund 全额退款
   │ 6. trackServer("ai.generated") → 埋点（吞错不阻塞）
@@ -176,14 +179,14 @@ app/api/v1/ai/generate/route.ts
 返回 { text, reasoning, usage, credits_charged }
 ```
 
-### 3.3 匿名演示请求（免费试用，⚠️ 待实现）
+### 3.3 匿名演示请求（免费试用，✅ 已实现，见 docs/14）
 
 ```
 浏览器 POST /api/v1/ai/demo
   │
   ▼
 app/api/v1/ai/demo/route.ts
-  │ 1. 匿名识别：device_id（FingerprintJS）+ IP → sha256
+  │ 1. 匿名识别：纯 IP → sha256（指纹方案已废弃，见 docs/14 修订）
   │ 2. increment_anonymous_usage(key, date, limit) → RPC 原子递增
   │    └─ 超过每日上限 → 429「登录送 10 积分」
   │ 3. 只用便宜模型 + 低输出上限
@@ -192,7 +195,7 @@ app/api/v1/ai/demo/route.ts
 （详见 docs/14-anonymous-trial.md）
 ```
 
-### 3.4 支付 Webhook（⚠️ 待重构为多渠道）
+### 3.4 支付 Webhook（✅ 已为多渠道统一形态，handle_order_payment RPC，见 docs/05）
 
 ```
 渠道服务器 → POST /api/{provider}-notify
@@ -243,7 +246,7 @@ app/api/{provider}-notify/route.ts
      │ session token │                │                 │
 ```
 
-> ⚠️ Google One-Tap 存在不校验 aud 的致命漏洞（P-1.11），详见 docs/04-auth-flow.md §3.2。
+> ✅ Google One-Tap 不校验 aud 的致命漏洞已修复（P-1.11，verifyIdToken 校验 aud），历史分析见 docs/04-auth-flow.md §3.2。
 
 ### 4.2 双模式认证（同一账户语义）
 
@@ -270,14 +273,14 @@ export async function getUserUuid() {
 
 > ⚠️ **语义声明**：两种认证方式都映射到**同一个 user_uuid 账户**。第三方用 API Key 调用 AI 时，积分从该账户余额扣减，与浏览器 session 调用共享同一积分池。这是有意的设计（第三方代调用 = 账户授权），不是独立计费单元。
 
-### 4.3 管理员鉴权（过渡方案，⚠️ 待 RBAC 替换）
+### 4.3 管理员鉴权（RBAC，已落地）
 
 | 阶段 | 鉴权方式 |
 |------|----------|
-| P-1 阶段（现状） | `ADMIN_EMAILS` 环境变量白名单 + session email 校验 |
-| P1（6.10 RBAC） | users.role 字段（super_admin/admin/operator/user） |
+| P-1 阶段（早期） | `ADMIN_EMAILS` 环境变量白名单 + session email 校验 |
+| P1（6.10 RBAC，现状） | users.role 字段（super_admin/admin/operator/user）+ requireAdmin(level) / hasAdminLevel，status='active' 实时拦截（迁移 0008） |
 
-> P-1 阶段涉及的管理员操作（payment_settings 切换、积分补偿）沿用现状 `ADMIN_EMAILS` 白名单，RBAC 落地后替换。
+> RBAC 已落地（lib/auth.ts：requireAdmin/hasAdminLevel 实时查库），`ADMIN_EMAILS` 仅作兜底保留。
 
 ---
 
@@ -373,8 +376,8 @@ interface FormSlot {
 | 查看积分 | fetch /api/get-user-info | getUserCredits | SELECT credits WHERE expired_at > now |
 | 购买积分 | POST /api/checkout | 查 payment_products → 渠道 createCheckout | INSERT orders (status=created) |
 | 支付成功 | 渠道 Webhook | handleOrderPayment（事务化） | UPDATE orders + INSERT credits + INSERT affiliates |
-| **调用 AI（正式）** | POST /api/v1/ai/generate | 鉴权 → 余额校验 → 原子扣减 → 模型路由（⚠️ 待实现 6.0） | INSERT credits (负数 ai_generate) |
-| **匿名演示** | POST /api/v1/ai/demo | 设备指纹+IP 限次（⚠️ 待实现 6.0.1） | INSERT/UPSERT anonymous_usage |
+| **调用 AI（正式）** | POST /api/v1/ai/generate | 鉴权 → 余额校验 → 原子扣减 → 模型路由（✅ 已实现，docs/13） | INSERT credits (负数 ai_generate) |
+| **匿名演示** | POST /api/v1/ai/demo | 纯 IP 限次（✅ 已实现） | INSERT/UPSERT anonymous_usage |
 | 调用 Ping | POST /api/ping | decreaseCredits | INSERT credits (负数) |
 | 创建 API Key | 控制台表单 | insertApikey | INSERT apikeys |
 | 写博文 | 后台表单 | insertPost | INSERT posts |

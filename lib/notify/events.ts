@@ -47,7 +47,7 @@ export const NOTIFY_EVENTS: NotifyEventDefinition[] = [
     label: "Webhook 签名校验失败",
     description: "收到签名无效的 webhook 请求，疑似伪造/配置错误",
     defaultSeverity: "critical",
-    status: "预留",
+    status: "已接入",
   },
   {
     eventType: "payment.refund_processed",

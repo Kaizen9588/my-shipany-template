@@ -20,13 +20,14 @@
 | **事务性 Transactional** | ❌ 不可退订 | 必须送达（否则用户因未收到续费通知而投诉/退款） | 支付成功、续费提醒、积分变动、密码重置 |
 | **营销性 Marketing** | ✅ 必须可退订 | CAN-SPAM / GDPR，需 unsubscribe 链接 + 退订即时生效 | 产品更新、促销 |
 
-**数据库字段**（users 表加）：
+**数据库字段**（users 表加，⚠️ **未落地**：v1 无营销邮件，该字段当前不存在于 schema）：
 
 ```sql
+-- 仅在做营销邮件（v2）时添加
 ALTER TABLE users ADD COLUMN email_marketing_opt_in BOOLEAN NOT NULL DEFAULT true;
 ```
 
-事务性邮件**不检查**此字段，营销性邮件**必须检查**。
+事务性邮件**不检查**此字段，营销性邮件**必须检查**（届时才需要该字段）。
 
 ### 1.2 续费提醒的合规要求（虽然 v1 不做订阅，设计必须预留）
 
@@ -51,6 +52,7 @@ ALTER TABLE users ADD COLUMN email_marketing_opt_in BOOLEAN NOT NULL DEFAULT tru
 
 export type EmailTemplate =
   | "welcome"
+  | "verification_code"               // ✅ 已落地：邮箱验证码
   | "payment_success"
   | "credit_low"
   | "credit_exhausted"
@@ -134,6 +136,7 @@ export async function sendEmail(message: EmailMessage): Promise<EmailResult> {
 emails/
 ├── templates/
 │   ├── welcome.tsx
+│   ├── verification-code.tsx          # ✅ 邮箱验证码
 │   ├── payment-success.tsx
 │   ├── credit-low.tsx
 │   ├── credit-exhausted.tsx
@@ -176,6 +179,7 @@ export function renderTemplate(message: EmailMessage) {
 | 触发场景 | 邮件模板 | 类别 | 触发位置 | 阶段 |
 |----------|----------|------|----------|------|
 | 新用户注册（OAuth 首次登录） | welcome | transactional | `services/user.ts` saveUser 后 | v1 |
+| 邮箱验证码 | verification_code | transactional | `/api/user/send-verification`（仅存 hash + 原子消费） | v1 |
 | 支付成功（积分充值） | payment_success | transactional | `services/order.ts` handleOrderPayment 后 | v1 |
 | 积分低于阈值（如 <10） | credit_low | transactional | `services/credit.ts` decreaseCredits 后检查 | v1 |
 | 积分耗尽 | credit_exhausted | transactional | 同上（余额 == 0） | v1 |
@@ -237,7 +241,7 @@ if (left.left_credits === 0) {
 
 | 阶段 | 内容 |
 |------|------|
-| v1（现在） | Provider 抽象 + Resend + welcome/payment_success/credit_low/credit_exhausted 四个模板 + 触发点接入 |
+| v1（现在） | Provider 抽象 + Resend + welcome/verification_code/payment_success/credit_low/credit_exhausted 五个模板 + 触发点接入 |
 | v2 | email_logs 表 + Resend webhook 追踪 + 退订页 + 营销邮件 |
 | 预留 | subscription_renewal_reminder（合规必须，做订阅时同步实现） + password_reset |
 

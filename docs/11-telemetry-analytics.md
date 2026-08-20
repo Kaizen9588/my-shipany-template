@@ -128,6 +128,7 @@ signup.completed        # 登录成功
 credits.purchased       # 积分充值成功（= payment.succeeded 的业务别名）
 credits.exhausted       # 积分耗尽
 api_key.created         # 创建 API Key
+ai.generated            # AI 生成成功（✅ 服务端 trackServer，含 model/credits_charged/tokens）
 ```
 
 **规范**：
@@ -194,8 +195,8 @@ landing.visited
 
 | 项 | 处理 |
 |----|------|
-| Cookie 同意 | GDPR 地区：同意前**只发匿名 pageview，不开回放**；同意后开完整追踪（配合 6.16 Cookie 横幅） |
-| 回放遮盖 | 输入框、邮箱、金额字段默认 mask |
+| Cookie 同意 | ✅ 已落地：PostHog / GA4 / OpenPanel 均在 consent 接受后才初始化（`components/analytics/*` + `components/cookie-consent`），同意前不采集；回放同样仅同意后开启 |
+| 回放遮盖 | ✅ 已落地：`session_recording.maskAllInputs: true`（posthog.tsx） |
 | 数据保留 | 回放 30 天，事件 13 个月（PostHog 免费版默认），文档写明 |
 | 欧盟用户 | 优先用 PostHog 欧盟节点（`api.eu.posthog.com`） |
 | 与 GDPR 方案整合 | 用户删除账号时同步删 PostHog 个人数据（`posthog.deleteUser`） |
@@ -217,8 +218,8 @@ landing.visited
 
 | 阶段 | 内容 |
 |------|------|
-| v1 | `lib/telemetry/` 抽象层 + PostHog Provider + 身份缝合（匿名→user_uuid）+ §6 漏斗埋点 + 支付停留时长（t1/t2/t3） |
-| v2 | 会话回放全量开 + 错误追踪 + bug 复现链路 + 输入遮盖 |
+| v1（✅ 已落地） | `lib/telemetry/` 抽象层 + PostHog Provider + 身份缝合（匿名→user_uuid）+ §6 漏斗埋点 + 支付停留时长（t1/t2/t3）+ 会话录制默认开启（maskAllInputs）+ 三 SDK consent 门控 + `ai.generated` 服务端埋点 |
+| v2 | 错误追踪 + bug 复现链路（PostHog Error Tracking / Sentry 评估） |
 | v3 | feature flag（灰度/开关）+ 移除 OpenPanel 评估 + GDPR 删除联动 |
 
 ---
@@ -229,7 +230,9 @@ landing.visited
 |------|------|------|
 | `NEXT_PUBLIC_POSTHOG_KEY` | ❌（配置后启用） | PostHog Project API Key |
 | `NEXT_PUBLIC_POSTHOG_HOST` | ❌（默认 US） | 自托管/EU 节点地址 |
-| `NEXT_PUBLIC_TELEMETRY_ENABLED` | ❌（默认 true） | 全局开关，dev 默认关 |
+
+> ⚠️ 本文档早期版本列过 `NEXT_PUBLIC_TELEMETRY_ENABLED` 全局开关，代码中从未读取，已移除；
+> 实际开关由各 SDK 的 key 是否配置 + consent 门控决定。
 
 ---
 

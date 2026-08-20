@@ -75,13 +75,26 @@ export async function getUserUuid() {
     // api key
     if (token.startsWith("sk-")) {
       const user_uuid = await getUserUuidByApiKey(token);
-
-      return user_uuid || "";
+      if (!user_uuid) {
+        return "";
+      }
+      // M2（对抗性测试）：API Key 路径校验账号状态 —— banned/deleted 用户的
+      // key 立即失效，不能继续消耗积分/调用 API
+      const user = await findUserByUuid(user_uuid);
+      if (user && user.status && user.status !== "active") {
+        return "";
+      }
+      return user_uuid;
     }
   }
 
   const session = await auth();
   if (session && session.user && session.user.uuid) {
+    // M2：session 路径 —— jwt 回调每次校验都从数据库刷新 status，
+    // banned/deleted 用户会话立即失效（此前仅 admin 面板拦截，普通 API 不拦）
+    if (session.user.status && session.user.status !== "active") {
+      return "";
+    }
     user_uuid = session.user.uuid;
   }
 

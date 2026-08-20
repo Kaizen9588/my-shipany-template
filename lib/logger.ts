@@ -2,7 +2,9 @@
  * 统一日志封装（P-1.7）
  *
  * 替代散落的 console.log，为后续结构化日志 / PostHog 错误追踪做准备。
- * 业务代码统一使用 logger，错误统一走 logger.error（未来可接入上报）。
+ * 目标：业务代码统一使用 logger，错误统一走 logger.error（未来可接入上报）。
+ * 当前已接入：支付 checkout 入口与三个支付 webhook 路由的失败路径；
+ * 其余模块仍在渐进收敛中，新增代码请优先用本封装而不是 console.*。
  */
 
 type LogContext = Record<string, unknown>;

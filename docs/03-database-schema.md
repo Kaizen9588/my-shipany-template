@@ -4,10 +4,10 @@
 
 - **数据库类型**：PostgreSQL（Supabase 托管；本地开发可用 Supabase CLI，见 [07-deployment.md §5.2](./07-deployment.md)）
 - **客户端**：@supabase/supabase-js（无 ORM，直接调用 Supabase Client）；迁移执行用 `pg` 直连 `DATABASE_URL`
-- **建表脚本**：`data/install.sql`（基础 6 表，一次性执行）；其余表全部由迁移增量创建
+- **建表脚本**：`data/migrations/0000_install_base.sql`（基础 7 表：users/orders/credits/affiliates/apikeys/posts/notifications，一次性执行）；其余表全部由迁移增量创建（data/install.sql 为旧版全能脚本，与迁移基线存在出入，勿再参考）
 - **迁移机制**：`data/migrations/*.sql` 按文件名序号执行，`schema_migrations` 版本表保证幂等；服务启动时 `instrumentation.ts` 自动执行，手动 `pnpm migrate`（见 `lib/migrate.ts`）
-- **迁移清单**（0001-0011）：支付配置表 / 积分原子扣减 / 支付事务化 / 外键索引 / 匿名额度 / 密码登录 / 多渠道 / RBAC+审计 / 站内通知 / 金额比对 / 退款原子化
-- **表数量**：14 张（基础 6 张 + 迁移新增 8 张）
+- **迁移清单**（0000-0017）：基础建表 / 支付配置表 / 积分原子扣减 / 支付事务化 / 外键索引 / 匿名额度 / 密码登录 / 多渠道 / RBAC+审计 / 站内通知 / 金额比对 / 退款原子化 / 默认管理员 / system_settings / op_events / apikeys 前缀 / 匿名额度 off-by-one / 迟付恢复+联盟首付
+- **表数量**：16 张（迁移 0000 基础 7 张 + 迁移新增 9 张，含 system_settings、op_events）
 - **存储过程**：资金与额度相关写操作全部下沉数据库原子执行（见文末「存储过程」一节），应用层不做 check-then-write
 
 ## ER 关系图
@@ -136,20 +136,16 @@ CREATE TABLE orders (
     amount              INT NOT NULL,                  -- 金额（分）
     interval            VARCHAR(50),                   -- "one-time"/"month"/"year"
     expired_at          timestamptz,                   -- 积分过期时间
-    status              VARCHAR(50) NOT NULL,          -- "created"/"paid"/"deleted"
+    status              VARCHAR(50) NOT NULL,          -- "created"/"paid"/"expired"/"refunded"/"mismatch"/"deleted"
+    payment_provider    VARCHAR(50) DEFAULT 'stripe',  -- 多渠道（0007）：checkout 时冻结
     stripe_session_id   VARCHAR(255),                  -- Stripe Checkout Session ID
     credits             INT NOT NULL,                  -- 购买积分数
     currency            VARCHAR(50),                   -- "USD"/"CNY"
-    sub_id              VARCHAR(255),                  -- Stripe Subscription ID
-    sub_interval_count  INT,                           -- 订阅间隔数
-    sub_cycle_anchor    INT,                           -- 订阅周期锚点（Unix时间戳）
-    sub_period_end      INT,                           -- 订阅周期结束（Unix时间戳）
-    sub_period_start    INT,                           -- 订阅周期开始（Unix时间戳）
-    sub_times           INT,                           -- 订阅扣款次数
+    sub_id              VARCHAR(255),                  -- Stripe 订阅 ID（预留，无订阅产品）
     product_id          VARCHAR(255),                  -- 产品 ID
     product_name        VARCHAR(255),                  -- 产品名称
     valid_months        INT,                           -- 积分有效月数
-    order_detail        TEXT,                          -- Stripe Session JSON
+    order_detail        TEXT,                          -- Session/SDK 参数 JSON
     paid_at             timestamptz,                   -- 支付时间
     paid_email          VARCHAR(255),                  -- 支付邮箱
     paid_detail         TEXT                           -- 支付详情 JSON
@@ -162,7 +158,7 @@ CREATE TABLE orders (
 created ──(支付成功 webhook)──> paid ──(退款)──> refunded
    │
    ├──(webhook 实付金额/币种与订单不符, 0010)──> mismatch（不充值、不发奖励，人工核查后可改回 created 重新处理）
-   ├──(超时未支付，定时任务)──> expired
+   ├──(超时未支付，定时任务)──> expired ──(迟到支付 webhook, 0017)──> paid（钱已实收必须落账，order_detail 留恢复痕迹）
    └──(手动删除)──> deleted
 ```
 
@@ -179,9 +175,7 @@ created ──(支付成功 webhook)──> paid ──(退款)──> refunded
 | interval | VARCHAR(50) | 付款类型：one-time / month / year |
 | status | VARCHAR(50) | 订单状态：created / paid / expired / refunded / mismatch / deleted |
 | credits | INT | 该订单对应的积分数 |
-| sub_id | VARCHAR(255) | Stripe 订阅 ID（仅订阅模式） |
-| sub_period_end | INT | 订阅周期结束时间（Unix 秒） |
-| sub_times | INT | 订阅已扣款次数 |
+| sub_id | VARCHAR(255) | Stripe 订阅 ID（预留，无订阅产品；sub_interval_count 等扩展字段未建） |
 | valid_months | INT | 积分有效月数 |
 | order_detail | TEXT | 创建时的 Stripe Session 参数 JSON |
 | paid_detail | TEXT | 支付完成时的 Stripe Session 对象 JSON |
@@ -221,21 +215,21 @@ CREATE TABLE credits (
 | `order_pay` | 订单支付充值 | 正 (+N) |
 | `system_add` | 系统手动增加 | 正 (+N) |
 | `ping` | API 调用消耗 | 负 (-1) |
-| `ai_generate` | AI 调用扣费（规划，见 [AI 网关](./13-ai-gateway.md)） | 负 |
-| `ai_refund` | AI 失败退款（规划） | 正 |
+| `ai_generate` | AI 调用扣费（已落地，见 [AI 网关](./13-ai-gateway.md)） | 负 |
+| `ai_refund` | AI 失败退款（已落地） | 正 |
 
 **积分计算逻辑**（P-1.2 落地后）：
 
 ```
 用户有效积分 = SUM(credits.credits)
   WHERE user_uuid = ?
-    AND ( (credits > 0 AND expired_at >= now())   -- 正数记录需未过期
+    AND ( (credits > 0 AND (expired_at IS NULL OR expired_at >= now()))  -- 正数记录需未过期；NULL = 长期有效（管理员赠送等）
           OR credits <= 0 )                        -- 负数记录永不过期（expired_at 为 NULL）
     （正负记录都包含，净余额 = 正数之和 + 负数之和）
 
 实际查询: getUserValidCredits()
   -> SELECT * FROM credits
-     WHERE user_uuid = ? AND (credits > 0 AND expired_at >= now() OR credits <= 0)
+     WHERE user_uuid = ? AND (credits > 0 AND (expired_at IS NULL OR expired_at >= now()) OR credits <= 0)
      ORDER BY expired_at ASC NULLS LAST   -- FIFO: 先扣最早过期的，负数记录排最后
 ```
 
@@ -474,16 +468,18 @@ op_events (id, event_type, severity, source, subject_uuid, detail JSONB, created
      -> FIFO 插入负数记录（expired_at=NULL，order_no 指向首个被消耗来源）
 ```
 
-### 2. handle_order_payment（迁移 0003，0010 增强）—— 支付成功落账
+### 2. handle_order_payment（迁移 0003，0010/0017 增强）—— 支付成功落账
 
 ```
 参数：p_order_no, p_paid_at, p_paid_email, p_paid_detail,
      p_amount_cents（渠道实付，分）, p_currency, p_reward_percent, p_max_reward
-行为：行锁订单 -> 幂等（已 paid 直接返回）-> 【0010】金额/币种与订单精确比对，
-     不符置 status='mismatch' 返回 'mismatch'（不充值、不发联盟奖励、不抛错——
-     抛错会引发渠道无限重试）-> 订单置 paid + INSERT credits + INSERT affiliates
-     单事务完成
-返回：'ok' / 'mismatch' / 已处理时的原状态
+行为：行锁订单 -> 幂等（已 paid 直接返回）-> 【0017】expired 订单允许被迟到
+     webhook 恢复（order_detail 留审计痕迹）；mismatch 等其他状态仍拒绝 ->
+     【0010】金额/币种与订单精确比对，不符置 status='mismatch' 返回 'mismatch'
+     （不充值、不发联盟奖励、不抛错——抛错会引发渠道无限重试）-> 订单置 paid +
+     INSERT credits + INSERT affiliates 单事务完成；【0017】联盟奖励双重幂等：
+     同 paid_order_no 只记一次 + 每个被邀请人仅首笔付费
+返回：'paid'（含 expired 恢复）/ 'mismatch'；非 created/paid/expired 状态抛错
 ```
 
 ### 3. process_order_refund（迁移 0011）—— 退款原子化

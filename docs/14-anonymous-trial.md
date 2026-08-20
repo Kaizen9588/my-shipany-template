@@ -5,8 +5,15 @@
 > 日期：2025-08-14
 >
 > ✅ **v1 落地记录（2026-08）**：迁移 `0005_anonymous_usage.sql`（表 + 原子递增/递减 RPC）、
-> `/api/v1/ai/demo`（IP + 设备指纹双维度限次，用完 429 提示登录送 10 积分，失败退还次数）、
-> `lib/browser.ts`（FingerprintJS 开源版设备指纹）、环境变量 `ANONYMOUS_DAILY_LIMIT`/`DEMO_MODEL`/`DEMO_MAX_TOKENS`/`ANONYMOUS_FINGERPRINT_ENABLED`。
+> `/api/v1/ai/demo`（限次，用完 429 提示登录送 10 积分，失败退还次数）、环境变量 `ANONYMOUS_DAILY_LIMIT`/`DEMO_MODEL`/`DEMO_MAX_TOKENS`。
+
+> ⚠️ **现状修订（2026-08 对抗式审查）**：下文 §2.2 的「设备指纹 + IP 双维度」方案已**主动废弃**：
+> `x-device-id` 是客户端可任意伪造的头，作为额度键无安全增益，实际额度键已收敛为
+> **纯 IP（`sha256(ip)`）**，`ANONYMOUS_FINGERPRINT_ENABLED` 不再读取（见 docs/08）。
+> 防刷真实边界见 §五修订表。另：§2.3 的 RPC 代码已由迁移 0016 修正（达上限返回 NULL，见文内标注）；
+> §2.6 的 30 天清理已接入 `/api/cron/daily`。
+> 部署注意：`TRUSTED_PROXY` 未配置（默认 none）时 `getClientIp` 恒返回 127.0.0.1，
+> 全部流量共享同一额度键——反向代理部署必须正确配置该变量。
 
 ---
 
@@ -21,7 +28,7 @@
 | | 匿名用户（未登录） | 注册用户（登录） |
 |---|---|---|
 | 本质 | **限流问题**（服务端计数，不看客户端状态） | **积分账户**（有 uuid，可持久追踪） |
-| 数据存哪 | 服务端（IP+指纹维度） | credits 表 |
+| 数据存哪 | 服务端（纯 IP 维度） | credits 表 |
 | 清 cookie 能刷吗 | ❌ 不能（服务端按 IP 计数） | 不适用 |
 | 换 IP 能刷吗 | 能（但成本高于收益，见 §5） | 不适用 |
 
@@ -40,9 +47,19 @@
 | 输出上限 | 低（如 1024 tokens） | 防止白嫖长输出 |
 | 重置时间 | 每日 0 点（UTC） | 与 usage_date 对齐 |
 
-### 2.2 匿名用户识别：设备指纹 + IP 双维度
+### 2.2 匿名用户识别：~~设备指纹 + IP 双维度~~ → 纯 IP（已收敛）
 
-**设备指纹选型**：
+> ⚠️ **现状（2026-08）**：本节原方案已废弃。`x-device-id` 由客户端生成、可任意伪造，
+> 作为额度键无安全增益（伪造 = 换设备，攻击成本与真实换设备相同）。实际实现：
+>
+> ```
+> anonymous_key = sha256(ip)   // app/api/v1/ai/demo/route.ts
+> ```
+>
+> `lib/browser.ts` 的指纹代码成为死代码（客户端仍发送 `X-Device-Id`，服务端不消费）。
+> 以下为原始设计存档，仅供追溯。
+
+**设备指纹选型**（已废弃，存档）：
 
 | 方案 | 精度 | 费用 | 数据流向 | 结论 |
 |------|------|------|----------|------|
@@ -69,16 +86,16 @@ const deviceId = req.headers.get("x-device-id") || "";
 const key = sha256(ip + deviceId);  // deviceId 为空时退化为纯 IP 维度
 ```
 
-**维度组合效果**：
+**维度组合效果**（现状修订——纯 IP 维度下的真实边界）：
 
 | 攻击方式 | 结果 |
 |----------|------|
-| 清 cookie / 隐私模式 | ❌ 无效——device_id 基于浏览器/硬件特征，与 cookie 无关 |
-| 换 IP（同设备） | ❌ 无效——device_id 不变，key 里 ip 变化但 device_id 锚定 |
-| 换浏览器/换设备 | ⚠️ device_id 变（正常用户换设备本应算新用户） |
-| 伪造随机 device_id | ⚠️ 部分绕过——但每次伪造都等价于换设备，仍有 IP 维度兜底（见 §5） |
+| 清 cookie / 隐私模式 | ❌ 无效——额度在服务端，与 cookie 无关 |
+| 换 IP（同设备） | ✅ **可绕过**——额度键是纯 IP，换 IP 即重置（代理池可规模化） |
+| 换浏览器/换设备（同 IP） | ❌ 无效——同 IP 共享额度 |
+| 反向代理未配 `TRUSTED_PROXY` | ⚠️ 全部流量共享 127.0.0.1 一个额度键（安全默认，功能性副作用） |
 
-**降级策略**：FingerprintJS 脚本异步加载，首次演示时若指纹未就绪（`device_id` 为空），自动降级为纯 IP 维度限次；指纹就绪后的后续请求自动升级为双维度。用户体验不阻塞。
+**降级策略**（已废弃，存档）：~~FingerprintJS 脚本异步加载，首次演示时若指纹未就绪自动降级为纯 IP~~——现恒为纯 IP。
 
 ### 2.3 数据模型
 
@@ -117,13 +134,16 @@ BEGIN
 END $$ LANGUAGE plpgsql;
 ```
 
+> ⚠️ **现状（迁移 0016 已修正）**：上述返回 `p_limit` 的写法有 off-by-one——「正好递增到上限」与
+> 「已达上限被拒」无法区分，路由按 `count >= limit` 判 429 时上限 3 只放行 2 次。
+> 现行实现：**达上限不再递增并返回 NULL**，路由按 `count === null` 判 429，恰好放行 dailyLimit 次。
+
 ```typescript
-// 服务端调用
-const deviceId = req.headers.get("x-device-id") || "";
-const key = sha256(ip + deviceId);
+// 服务端调用（现状：纯 IP 键 + NULL 判 429，见 app/api/v1/ai/demo/route.ts）
+const key = sha256(ip);
 const today = new Date().toISOString().slice(0, 10);
 const count = await rpc("increment_anonymous_usage", { p_key: key, p_date: today, p_limit: 3 });
-if (count >= 3) return respErr(429, "今日免费次数已用完");
+if (count === null) return respErr(429, "今日免费次数已用完");
 ```
 
 > ⚠️ 与 P-1.2 积分扣减同一纪律：原子化是硬要求。`WHERE count < p_limit` 是防止 count 无限增长的关键细节，缺失会导致记录膨胀且语义错误。
@@ -149,9 +169,10 @@ POST /api/v1/ai/demo
 
 > 退还实现：失败时对 `anonymous_usage.count` 减 1（需保证不出现负数，RPC 内 `GREATEST(count-1, 0)`）。
 
-### 2.6 数据清理（防表膨胀）
+### 2.6 数据清理（防表膨胀，✅ 已接入）
 
-`anonymous_usage` 每 IP+UA 每天一行，需定期清理：
+`anonymous_usage` 每 IP 每天一行，需定期清理。已接入 `/api/cron/daily`（`cleanupAnonymousUsage(30)`，
+models/anonymous-usage.ts）：
 
 ```sql
 -- 定时任务（与 6.16 数据备份同一 Cron）：删除 30 天前记录
@@ -165,7 +186,7 @@ DELETE FROM anonymous_usage WHERE usage_date < CURRENT_DATE - INTERVAL '30 days'
 | 端点 | 归宿 |
 |------|------|
 | `/api/demo/*`（旧） | **废弃**，前端改调 `/api/v1/ai/demo` |
-| `/api/v1/ai/demo`（新） | 匿名演示：无需登录，设备指纹+IP 限次 |
+| `/api/v1/ai/demo`（新） | 匿名演示：无需登录，纯 IP 限次 |
 | `/api/v1/ai/generate`（新） | 正式：需登录 + 积分扣减 |
 
 > 即 P-1.4 问题 2 的修复方式是「重构为匿名演示端点」，而非「给旧 demo 加登录」。否则与「未登录可试用」的需求矛盾。
@@ -198,7 +219,7 @@ DELETE FROM anonymous_usage WHERE usage_date < CURRENT_DATE - INTERVAL '30 days'
 
 ```
 未登录用户
-  │ 每天 3 次演示（IP+指纹限次）
+  │ 每天 3 次演示（纯 IP 限次）
   │ 用完 → 429「登录送 10 积分」
   ▼
 注册/登录
@@ -216,19 +237,20 @@ DELETE FROM anonymous_usage WHERE usage_date < CURRENT_DATE - INTERVAL '30 days'
 
 ---
 
-## 五、防刷边界（诚实声明）
+## 五、防刷边界（诚实声明，2026-08 修订）
 
 | 攻击 | 能否防 | 手段 |
 |------|--------|------|
-| 清 cookie / 隐私模式 | ✅ 防 | device_id 与 cookie 无关 |
-| 换 IP（同设备） | ✅ 防 | device_id 锚定，key 里 ip 变化无效 |
-| 换浏览器/换设备 | ⚠️ 部分防 | device_id 变，等价于新用户（正常用户换设备本应算新用户） |
-| 伪造随机 device_id | ⚠️ 部分防 | 每次伪造=换设备，仍有 IP 维度兜底（同 IP 伪造多次会被 IP 维度拦住） |
-| 换 IP + 伪造指纹（代理池） | ❌ 不防 | 需 Pro 级指纹 + 行为分析 + 验证码，**模板阶段不做** |
+| 清 cookie / 隐私模式 | ✅ 防 | 额度在服务端，与 cookie 无关 |
+| 换 IP（同设备） | ❌ **不防** | 额度键为纯 IP，换 IP 即重置；代理池可规模化绕过 |
+| 换浏览器/换设备（同 IP） | ✅ 防 | 同 IP 共享额度 |
+| 反向代理未配 TRUSTED_PROXY | ⚠️ 过度拦截 | 全流量共享 127.0.0.1 一个键，部署必须正确配置 |
 
-**决策**：设备指纹（开源版）把防刷从「清 cookie 即可刷」提升到「需换 IP 且伪造指纹才能刷」。对抗代理池/黑产不是模板职责，留给真实产品的风控层。这与「一次性付款优先」「订阅后续再说」的 v1 简化哲学一致。
+**决策（修订）**：v1 初版曾引入 FingerprintJS 开源版指纹，后因 `x-device-id` 可任意伪造、
+无安全增益而废弃，收敛为纯 IP。防刷目标是挡普通用户而非黑产；对抗代理池需
+Pro 级指纹/行为分析/验证码，不是模板职责，留给真实产品的风控层。
 
-**fingerprint 升级路径**：开源版（~65%）→ Pro 版（99.5%，按次付费）→ 行为分析/验证码。模板只做第一档，后续按数据表现升级。
+**fingerprint 升级路径**（保留备查）：开源版（~65%）→ Pro 版（99.5%，按次付费）→ 行为分析/验证码。
 
 ---
 
@@ -253,7 +275,7 @@ DELETE FROM anonymous_usage WHERE usage_date < CURRENT_DATE - INTERVAL '30 days'
 | `ANONYMOUS_DAILY_LIMIT` | ❌（默认 3） | 未登录用户每日免费演示次数 |
 | `DEMO_MODEL` | ❌（默认 deepseek-chat） | 演示使用的模型 |
 | `DEMO_MAX_TOKENS` | ❌（默认 1024） | 演示输出上限 |
-| `ANONYMOUS_FINGERPRINT_ENABLED` | ❌（默认 true） | 是否启用设备指纹（关闭则退化为纯 IP 维度） |
+| `ANONYMOUS_FINGERPRINT_ENABLED` | —（**已废弃，不再读取**） | 指纹方案已收敛为纯 IP，见文首修订说明 |
 
 > 依赖：`@fingerprintjs/fingerprintjs`（开源版，自托管，无 API key 需求）。
 > 需同步登记到 docs/08-config-env.md（单一真相源）。
@@ -264,9 +286,9 @@ DELETE FROM anonymous_usage WHERE usage_date < CURRENT_DATE - INTERVAL '30 days'
 
 | 阶段 | 内容 |
 |------|------|
-| v1 | anonymous_usage 表 + RPC 原子递增 + `/api/v1/ai/demo` 演示端点 + FingerprintJS 设备指纹 + 前端「用完提示登录」弹窗 |
+| v1 | anonymous_usage 表 + RPC 原子递增 + `/api/v1/ai/demo` 演示端点 + 前端「用完提示登录」弹窗（指纹已废弃） |
 | v2 | 演示用模型/次数后台可配 + 埋点转化漏斗 |
-| v3 | Upstash 限流替换 anonymous_usage 表（与 6.18 合并）；指纹按数据表现考虑升级 Pro |
+| v3 | Upstash 限流替换 anonymous_usage 表（与 6.18 合并）；防刷升级按风控需求另立项 |
 
 ---
 
@@ -274,9 +296,9 @@ DELETE FROM anonymous_usage WHERE usage_date < CURRENT_DATE - INTERVAL '30 days'
 
 | 检查点 | 结论 |
 |--------|------|
-| 是否解决「关掉客户端再进刷新积分」？ | ✅ 根本解决——匿名额度是服务端 IP+设备指纹计数，与客户端状态无关 |
+| 是否解决「关掉客户端再进刷新积分」？ | ✅ 根本解决——匿名额度是服务端纯 IP 计数，与客户端状态无关 |
 | 是否过度设计？ | 无——设备指纹用开源版（免费自托管），未做 Pro 级指纹/验证码/代理池风控 |
 | 是否与现有「登录送 10 积分」重复？ | 不重复——匿名是限次演示，登录是积分账户，两个独立机制 |
 | 是否引入新安全风险？ | anonymous_usage 表存 hash 不存明文；FingerprintJS 开源版自托管数据不出服务器，GDPR 风险可控 |
-| 客户端指纹可被伪造？ | 是，但有 IP 维度兜底（同 IP 伪造多次被 IP 维度拦），且防刷目标是挡普通用户而非黑产 |
+| 客户端指纹可被伪造？ | 是，故已废弃指纹维度，收敛为纯 IP（伪造无增益也不劣化）；防刷目标是挡普通用户而非黑产 |
 | 演示和正式是否混淆？ | 已分离：演示不碰积分系统，正式才扣积分 |

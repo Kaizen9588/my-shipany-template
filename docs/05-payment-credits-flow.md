@@ -59,8 +59,9 @@ interface PricingItem {
      │ 1.点击购买     │               │                 │
      │──────────────>│               │                 │
      │               │ 2.POST /api/checkout            │
-     │               │   {credits, amount, interval,   │
-     │               │    product_id, currency, ...}   │
+     │               │   {product_id, method?,         │
+     │               │    cancel_url?}（金额不上传，   │
+     │               │    服务端查价，P-1.1）          │
      │               │──────────────>│                 │
      │               │               │ 3.鉴权          │
      │               │               │   getUserUuid() │
@@ -76,8 +77,8 @@ interface PricingItem {
      │               │               │ 6.INSERT orders │
      │               │               │   status=created│
      │               │               │                 │
-     │               │               │ 7.创建 Stripe   │
-     │               │               │   Session       │
+     │               │               │ 7.渠道路由 +    │
+     │               │               │   createCheckout│
      │               │               │────────────────>│
      │               │               │ 8.session.id    │
      │               │               │<────────────────│
@@ -87,13 +88,13 @@ interface PricingItem {
      │               │               │   order_detail  │
      │               │               │                 │
      │               │ 10.返回       │                 │
-     │               │   {session_id,│                 │
-     │               │    public_key,│                 │
-     │               │    order_no}  │                 │
+     │               │   {checkout_url,│                │
+     │               │    order_no,   │                 │
+     │               │    provider}   │                 │
      │               │<──────────────│                 │
      │               │               │                 │
      │ 11.重定向到    │               │                 │
-     │  Stripe 支付页 │               │                 │
+     │  checkout_url │               │                 │
      │──────────────>│               │                 │
      │               │──────────────────────────────────>│
      │ 12.用户输入卡号/支付            │                 │
@@ -122,8 +123,8 @@ interface PricingItem {
      │                    │                        │─────────────────────>│
      │                    │                        │ 'mismatch'? -> 告警  │
      │                    │                        │  人工核查，不充值     │
-     │                    │                        │ 'ok'? -> 站内通知 +  │
-     │                    │                        │  埋点 + 邮件         │
+     │                    │                        │ 'paid'（或 recovered）->│
+     │                    │                        │  站内通知 + 埋点 + 邮件│
      │                    │                        │ refund_succeeded:    │
      │                    │                        │ RPC process_order_   │
      │                    │                        │ refund（原子扣积分） │
@@ -145,9 +146,10 @@ interface PricingItem {
 Creem 无退款 API，提示去 Dashboard 手动退）和 `refund.created` webhook
 （渠道侧退款完成后回调同步扣积分）。
 
-### 1.5 CNY 支付特殊处理
+### 1.5 CNY 支付特殊处理（⬜ 未实现，规划）
 
-当 `currency === "cny"` 时，Checkout Session 自动启用中国支付方式：
+> ⚠️ 现状（2026-08 对抗式审查核验）：代码中无 CNY 分支——`payment_method_types` 固定 `["card"]`、
+> `mode` 固定 `"payment"`。以下为目标设计，实现时需同步修改 Stripe 适配器：
 
 ```typescript
 if (currency === "cny") {
@@ -159,7 +161,10 @@ if (currency === "cny") {
 }
 ```
 
-### 1.6 订阅模式
+### 1.6 订阅模式（⬜ 未实现，规划）
+
+> ⚠️ 现状：v1 只支持一次性付款（`mode: "payment"` 固定），无 recurring/subscription_data 代码。
+> 下表为目标设计：
 
 | 项 | 一次性付款 | 订阅（月/年） |
 |----|-----------|--------------|
@@ -176,7 +181,8 @@ if (currency === "cny") {
 /pay-success/{CHECKOUT_SESSION_ID}
 ```
 
-前端通过 `CHECKOUT_SESSION_ID` 查询 Stripe Session 状态，展示支付成功信息。
+> ✅ 现状（已收敛）：该页为**纯 redirect**，不再查询 Session 状态、不触发落账/
+> 邮件（防未授权刷 API）。落账唯一入口是渠道 webhook → `handle_order_payment`。
 
 ---
 
@@ -205,8 +211,8 @@ if (currency === "cny") {
 | 订单充值 | `order_pay` | +增加 | N（按定价方案） | Stripe 支付成功 |
 | 系统增加 | `system_add` | +增加 | N | 管理员手动（代码有定义，无 UI） |
 | API 消耗 | `ping` | -扣减 | 1 | 调用 /api/ping |
-| AI 调用扣费 | `ai_generate` | -扣减 | 预估一次扣清 | 调用 /api/v1/ai/generate（规划，见 [AI 网关](./13-ai-gateway.md)） |
-| AI 失败退款 | `ai_refund` | +回补 | 全额 | AI 服务端异常时（规划） |
+| AI 调用扣费 | `ai_generate` | -扣减 | 预估一次扣清 | 调用 /api/v1/ai/generate（已落地，见 [AI 网关](./13-ai-gateway.md)） |
+| AI 失败退款 | `ai_refund` | +回补 | 全额 | AI 服务端异常时（已落地） |
 
 ### 2.3 积分增加流程
 
@@ -228,8 +234,14 @@ async function increaseCredits({ user_uuid, trans_type, credits, expired_at, ord
 
 ### 2.4 积分扣减流程（FIFO 算法）
 
+> ✅ **现状（P-1.2 已落地）**：扣减已下沉到数据库存储过程 `decrease_credits`（迁移 0002：
+> FOR UPDATE 行锁 + 余额校验 + FIFO，单事务原子），`services/credit.ts` 仅调用
+> `rpc("decrease_credits")`，应用层无 check-then-write。余额不足抛 `InsufficientCreditsError`
+> （路由层转 402）。负数记录 `expired_at` 恒为 NULL（永不过期，防「积分复活」）。
+> 以下旧版应用层实现仅作历史存档，说明 FIFO 思路与当年 BUG：
+
 ```typescript
-// services/credit.ts
+// ⬇ 历史存档（已被 decrease_credits RPC 取代，勿照此实现）
 async function decreaseCredits({ user_uuid, trans_type, credits }) {
   // 1. 查询所有有效积分（未过期），按 expired_at 升序（最早过期优先扣）
   const userCredits = await getUserValidCredits(user_uuid);
@@ -351,34 +363,23 @@ interface UserCredits {
 
 ### 2.6 订单与积分关联
 
+> ✅ **现状（多渠道统一后）**：落账不再由应用层函数编排，而是渠道 webhook →
+> `handlePaymentEvent` → `handle_order_payment` RPC（迁移 0010/0017），
+> 积分充值与联盟奖励在同一存储过程内完成（行锁 + 双重幂等）：
+
 ```
-订单支付成功
+渠道 webhook（验签通过）
   │
-  ├─> updateCreditForOrder(order)
-  │    ├─ findCreditByOrderNo(order.order_no)  // 防重复
-  │    │   └─ 已存在 -> return (幂等)
-  │    └─ increaseCredits({
-  │         user_uuid: order.user_uuid,
-  │         trans_type: "order_pay",
-  │         credits: order.credits,            // 订单对应的积分数
-  │         expired_at: order.expired_at,      // 计算的过期时间
-  │         order_no: order.order_no           // 关联订单
-  │       })
-  │
-  └─> updateAffiliateForOrder(order)
-       ├─ findUserByUuid(order.user_uuid)
-       ├─ 检查 user.invited_by
-       ├─ findAffiliateByOrderNo(order.order_no) // 防重复
-       └─ insertAffiliate({
-            user_uuid: user.uuid,
-            invited_by: user.invited_by,
-            status: "completed",
-            paid_order_no: order.order_no,
-            paid_amount: order.amount,
-            reward_percent: 20,
-            reward_amount: min(order.amount * 0.2, 5000)
-          })
+  └─> handle_order_payment(order_no, 实付金额/币种, ...)
+       ├─ 行锁订单；paid 幂等返回；expired 允许恢复（0017，留审计痕迹）
+       ├─ 金额/币种比对 → 不符置 mismatch（不充值、告警人工核查）
+       ├─ UPDATE orders → paid
+       ├─ 充值积分：NOT EXISTS(credits.order_no) → INSERT order_pay（幂等）
+       └─ 联盟奖励：同 paid_order_no 只记一次 + 每个被邀请人仅首笔付费（0017）
 ```
+
+> 存档说明：`updateCreditForOrder`/`updateAffiliateForOrder`（services 层）仍在代码中，
+> 但支付路径无调用方，仅作历史/兜底保留；新集成一律走 RPC 路径。
 
 ---
 
@@ -432,6 +433,9 @@ interface UserCredits {
 |------|----------|----------|------|
 | 被邀请人注册 | 0% | $0 | pending |
 | 被邀请人首次付费 | 20% | $50 | completed |
+
+> ✅ 「首次付费」口径已由存储过程强制执行（迁移 0017：同一被邀请人已存在
+> completed 奖励行时不再新增；此前 0010 仅按订单去重，后续每笔都会多发）。
 
 ```typescript
 // services/constant.ts（P-1.8 后）

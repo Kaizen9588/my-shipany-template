@@ -53,7 +53,7 @@ export async function POST(req: Request) {
     const dailyLimit =
       parseInt(process.env.ANONYMOUS_DAILY_LIMIT || "3", 10) || 3;
 
-    // 原子递增配额（RPC，达到上限后不再递增）
+    // 原子递增配额（RPC，达到上限后不再递增并返回 NULL，见 0016 迁移）
     const supabase = getSupabaseClient();
     const { data: count, error } = await supabase.rpc(
       "increment_anonymous_usage",
@@ -68,7 +68,9 @@ export async function POST(req: Request) {
       return jsonErr("demo failed", 500);
     }
 
-    if (count >= dailyLimit) {
+    // L2（对抗性测试）：RPC 返回 NULL 表示已达上限（不再递增），
+    // 此前按 count >= dailyLimit 判断导致上限 3 时实际只放行 2 次（off-by-one）
+    if (count === null || count > dailyLimit) {
       return jsonErr(
         "今日免费次数已用完，登录送 10 积分",
         429,

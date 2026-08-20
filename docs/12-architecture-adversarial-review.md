@@ -14,7 +14,7 @@
 | 2 | 免费试用额度（匿名演示 + 登录赠分） | [14-anonymous-trial.md](./14-anonymous-trial.md) + 6.0.1 |
 | 3 | API 版本前缀 /api/v1 + HTTP 状态码 | 13 §决策 4 |
 | 4 | Provider 抽象分层规则（lib 根目录 vs 子目录） | [01-architecture.md](./01-architecture.md) §2.1 |
-| 5 | aisdk 归属 lib/ai/providers | 01 §2.2 |
+| 5 | ~~aisdk 归属 lib/ai/providers~~ | ⬜ **迁移未发生**：`aisdk/` 仍在仓库根目录，已移入 §二待落地 |
 | 6 | S3 key 硬编码修复 | P-1.8 问题 7 |
 | 7 | 通知中心弃 Realtime 改轮询+SSE | 6.14 |
 | 8 | 联盟奖励发放闭环 | [05-payment-credits-flow.md](./05-payment-credits-flow.md) §3.4 |
@@ -137,9 +137,25 @@
 
 ## 二、待落地（⬜）
 
+> ⚠️ **状态盘点（2026-08 对抗式审查）**：本节多项已在代码中修复但表格未同步，
+> 已逐项在标题标注。确认已落地：2.2（P-1.12）、2.4（P-1.3）、2.5（P-1.1）、
+> 2.7（requireAdmin(level)）、2.8（toSafeUser）、2.9（messages 计费）、2.11（waffo 超时兜底）、
+> 2.13（备份白名单 + cron fail fast）、2.14（AUTH_SECRET 置空）、2.15（验证码 hash + 清理）、
+> 2.16（TRUSTED_PROXY 默认 none）、2.17（.dockerignore）、2.19-①（pay-success 收敛为纯跳转）。
+> 部分落地：2.18（HSTS ✅ / CSP ⬜）、2.12/2.19 其余子项见标题标注。
+> 仍未落地：2.10（pending_refunds 补偿表 + 每日对账）、2.6（E2E 支付测试）、#5（aisdk 归属）。
+
+### aisdk 归属迁移（原 §一 #5，⬜ 待落地）
+
+| 项 | 说明 |
+|----|------|
+| **问题** | `aisdk/`（Kling 视频等 Provider）仍位于仓库根目录，未按 01 §2.2 分层规则迁入 `lib/ai/providers` |
+| **决策** | 迁入 `lib/ai/providers/` 并更新 import 路径；或修订 01 分层规则承认 aisdk 例外 |
+| **优先级** | 低（P3，纯工程整理，无功能影响） |
+
 ### 第五轮审查新增待办（2026-08-16，文档 vs 代码偏差 + 备份/配置面）
 
-### 2.13 备份链路明文导出敏感数据 + cron 未鉴权放大
+### 2.13 备份链路明文导出敏感数据 + cron 未鉴权放大（✅ 已落地：备份 select 白名单 + 生产未配 CRON_SECRET fail fast，见 lib/backup.ts / cron/daily 注释）
 
 | 项 | 说明 |
 |----|------|
@@ -147,7 +163,7 @@
 | **决策** | ① 备份 select 收敛白名单字段（剔除 password_hash/signin_openid）或加密后再上传；② cron 未设 CRON_SECRET 时生产环境拒绝执行（fail fast 而非跳过校验）；③ .env.example 的 CRON_SECRET 加显著必填注释 |
 | **优先级** | **高（P1）** |
 
-### 2.14 .env.example 内置真实格式 AUTH_SECRET 默认值
+### 2.14 .env.example 内置真实格式 AUTH_SECRET 默认值（✅ 已落地：`.env.example` 已置空）
 
 | 项 | 说明 |
 |----|------|
@@ -155,7 +171,7 @@
 | **决策** | `.env.example` 置空 `AUTH_SECRET = ""`（让 fail-fast 逼用户生成）；README/08 增加 `openssl rand -base64 32` 生成指引 |
 | **优先级** | **高（P1，模板分发特有）** |
 
-### 2.15 verification_codes 明文存储且无过期清理
+### 2.15 verification_codes 明文存储且无过期清理（✅ 已落地：SHA-256 hash + 原子消费 + cleanupVerificationCodes 挂 cron）
 
 | 项 | 说明 |
 |----|------|
@@ -163,7 +179,7 @@
 | **决策** | code 存 hash（比对时哈希后查）；cron daily 顺带清理 `expired_at < now() - 1d` 的记录 |
 | **优先级** | 中高（P1） |
 
-### 2.16 TRUSTED_PROXY 默认值在 Docker 自托管下信任伪造头
+### 2.16 TRUSTED_PROXY 默认值在 Docker 自托管下信任伪造头（✅ 已落地：默认改为 `none`，lib/ip.ts）
 
 | 项 | 说明 |
 |----|------|
@@ -171,7 +187,7 @@
 | **决策** | Docker 部署文档显著标注必须设置；或默认值改为 `"none"`（只认 socket 直连），显式声明平台才信任代理头（更安全的默认） |
 | **优先级** | **高（P1，self-host 场景）** |
 
-### 2.17 Docker 构建中间层泄漏 .env
+### 2.17 Docker 构建中间层泄漏 .env（✅ 已落地：.dockerignore 排除 .env/.env.*，保留 .env.example）
 
 | 项 | 说明 |
 |----|------|
@@ -179,7 +195,7 @@
 | **决策** | `.dockerignore` 增加 `.env*`（保留 `.env.example`） |
 | **优先级** | 中（P2） |
 
-### 2.18 安全响应头缺失：CSP 与 HSTS
+### 2.18 安全响应头缺失：CSP 与 HSTS（⚠️ 部分：HSTS ✅ 已加；CSP ⬜ 仍待办）
 
 | 项 | 说明 |
 |----|------|
@@ -187,7 +203,7 @@
 | **决策** | HSTS 直接加（无兼容成本）；CSP 先 Report-Only 模式上线收集违规报告，再切换 enforce |
 | **优先级** | 中（P2） |
 
-### 2.19 第五轮杂项
+### 2.19 第五轮杂项（① ✅ pay-success 收敛为纯跳转；②③④ ⬜ 待落地）
 
 | 项 | 说明 |
 |----|------|
@@ -197,7 +213,7 @@
 
 ### 第四轮审查新增待办（资金安全与防刷，2026-08-16，见 2.7~2.12）
 
-### 2.7 RBAC 分级与提权防护
+### 2.7 RBAC 分级与提权防护（✅ 已落地：requireAdmin(level) + status 检查，lib/auth.ts）
 
 | 项 | 说明 |
 |----|------|
@@ -205,7 +221,7 @@
 | **决策** | `requireAdmin(level)` 分级 + 授予 super_admin 需 super_admin + 鉴权处检查 status |
 | **优先级** | P1（单人自用时风险可控，模板给他人用前必须） |
 
-### 2.8 API 响应泄露敏感字段
+### 2.8 API 响应泄露敏感字段（✅ 已落地：toSafeUser 白名单出口，services/user.ts）
 
 | 项 | 说明 |
 |----|------|
@@ -213,7 +229,7 @@
 | **决策** | 定义 `toSafeUser()` 白名单字段出口；models 层 select 收敛 |
 | **优先级** | P1 |
 
-### 2.9 AI 网关 messages 输入不计费
+### 2.9 AI 网关 messages 输入不计费（✅ 已落地：estimateCredits 按 messages 序列化长度估算，见 13 §决策 2 标注）
 
 | 项 | 说明 |
 |----|------|
@@ -229,7 +245,7 @@
 | **决策** | `pending_refunds` 补偿表 + 每日对账 cron（渠道成交 vs 本地 paid/mismatch 订单） |
 | **优先级** | P1 |
 
-### 2.11 Waffo 适配器验签失败永久挂起
+### 2.11 Waffo 适配器验签失败永久挂起（✅ 已落地：超时兜底，lib/payment/providers/waffo.ts）
 
 | 项 | 说明 |
 |----|------|
@@ -253,7 +269,10 @@
 | **决策** | **v1 保持单表**：v1 只有 Creem + Waffo，Waffo 动态金额不需要 channel_product_id，只有 Creem 需要一列，稀疏矩阵不成立。**阶段 2 加 Stripe/PayPal 时再拆**为 `payment_products` + `channel_products` 两张表 |
 | **优先级** | P0（阶段 2 时） |
 
-### 2.2 最小迁移机制
+> 现状（2026-08）：Stripe 已接入但仍维持单表（渠道专属 ID 作列 + session id 回写订单行），
+> 尚未触发拆表；新增 PayPal 等渠道时重新评估。
+
+### 2.2 最小迁移机制（✅ 已落地：P-1.12，见 §一表 #12）
 
 | 项 | 说明 |
 |----|------|
@@ -269,7 +288,7 @@
 | **决策** | **v1 诚实标注**：在 DEVELOPMENT_PLAN 2.1 注明「数据层为手写 Supabase Client，返回类型靠手工断言，无编译期 schema 校验；Drizzle 引入后升级」。不提前引入 Drizzle（P-1 阶段改动过大） |
 | **优先级** | 文档标注即时；Drizzle 仍 P3 |
 
-### 2.4 orders.status 枚举补 expired
+### 2.4 orders.status 枚举补 expired（✅ 已落地：P-1.3 一并补 Expired/Refunded）
 
 | 项 | 说明 |
 |----|------|
@@ -277,7 +296,7 @@
 | **决策** | `OrderStatus` 补 `Expired = "expired"` 和 `Refunded = "refunded"`（退款流程也需要）。6.16 定时任务将超时 created 订单置为 expired |
 | **优先级** | P-1.3 事务化时一并补（同一涉及文件） |
 
-### 2.5 cn_amount 残留处置
+### 2.5 cn_amount 残留处置（✅ 已落地：P-1.1 一并删除）
 
 | 项 | 说明 |
 |----|------|

@@ -31,8 +31,12 @@ export default async function UserDetailPage({
 
   async function updateRole(formData: FormData) {
     "use server";
-    const adminUser = await requireAdmin();
+    // 2.7：改角色是授权操作，仅 super_admin；operator/admin 不能自我提权
+    const adminUser = await requireAdmin("super_admin");
     const role = String(formData.get("role") || "user");
+    if (!["user", "operator", "admin", "super_admin"].includes(role)) {
+      throw new Error("invalid role");
+    }
     await updateUserByAdmin(uuid, { role });
     fireAndForgetAudit({
       admin_uuid: adminUser.uuid || "",
@@ -46,8 +50,9 @@ export default async function UserDetailPage({
 
   async function toggleStatus() {
     "use server";
-    const adminUser = await requireAdmin();
-    const next = currentUser.status === "已封禁" ? "正常" : "已封禁";
+    // 2.7：封禁/解封是 admin 级操作
+    const adminUser = await requireAdmin("admin");
+    const next = currentUser.status === "banned" ? "active" : "banned";
     await updateUserByAdmin(uuid, { status: next });
     fireAndForgetAudit({
       admin_uuid: adminUser.uuid || "",
@@ -61,7 +66,8 @@ export default async function UserDetailPage({
 
   async function adjustCredits(formData: FormData) {
     "use server";
-    const adminUser = await requireAdmin();
+    // 2.7：调整积分是资金操作，需 admin 级
+    const adminUser = await requireAdmin("admin");
     const creditsNum = parseInt(String(formData.get("credits") || "0"), 10);
     const remark = String(formData.get("remark") || "");
     if (!creditsNum || creditsNum === 0) {
@@ -94,7 +100,7 @@ export default async function UserDetailPage({
         <div className="mt-2 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
           <div>UUID: {user.uuid?.slice(0, 12)}...</div>
           <div>角色：{user.role || "user"}</div>
-          <div>状态：{user.status === "已封禁" ? "已封禁" : "正常"}</div>
+          <div>状态：{user.status === "banned" ? "已封禁" : "正常"}</div>
           <div>注册：{moment(user.created_at).format("YYYY-MM-DD")}</div>
         </div>
       </div>
@@ -144,7 +150,7 @@ export default async function UserDetailPage({
           </form>
           <form action={toggleStatus}>
             <Button type="submit" variant="destructive" size="sm">
-              {user.status === "已封禁" ? "Unban" : "Ban"}
+              {user.status === "banned" ? "解封" : "封禁"}
             </Button>
           </form>
         </div>

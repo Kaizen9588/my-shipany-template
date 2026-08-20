@@ -1,4 +1,8 @@
 import { getSupabaseClient } from "@/models/db";
+import {
+  getPricingProduct,
+  type PricingProduct,
+} from "@/data/pricing";
 
 /**
  * 支付配置模型（6.1，docs/payment/provider-abstraction.md §五）
@@ -20,6 +24,38 @@ export interface PaymentProduct {
   valid_months: number;
   creem_product_id?: string | null;
   stripe_price_id?: string | null;
+}
+
+
+/**
+ * Checkout 用的定价真相源（P-1.1 + 后台 /admin/pricing 热编辑）
+ *
+ * 优先取 payment_products 表（后台可热改），缺失时回退 data/pricing.ts 常量。
+ * product_name / interval 仍来自常量（DB 不存文案）；金额/积分/有效期以 DB 为准。
+ */
+export async function getCheckoutProduct(
+  product_id: string
+): Promise<PricingProduct | undefined> {
+  const fallback = getPricingProduct(product_id);
+  try {
+    const products = await getPaymentProducts();
+    const row = products[product_id];
+    if (!row) {
+      return fallback;
+    }
+    return {
+      product_id: row.product_id,
+      product_name: fallback?.product_name || row.product_id,
+      amount: row.amount,
+      currency: row.currency || fallback?.currency || "USD",
+      credits: row.credits,
+      valid_months: row.valid_months,
+      interval: "one-time",
+    };
+  } catch (e) {
+    console.error("[payment] getCheckoutProduct failed:", e);
+    return fallback;
+  }
 }
 
 /** 读取全部渠道设置（provider -> setting 映射） */

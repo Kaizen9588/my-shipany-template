@@ -38,33 +38,33 @@ const withMDX = mdx({                         // MDX 支持
 });
 
 const nextConfig = {
-  output: "standalone",         // 独立输出（Docker 友好）
-  reactStrictMode: false,        // ⚠️ 关闭了严格模式
+  // P-1.6：条件 standalone——仅 Docker 构建（NEXT_OUTPUT=standalone）启用，
+  // 与 next start / Vercel 不再冲突
+  output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
+  reactStrictMode: true,           // ✅ 已开启严格模式
   pageExtensions: ["ts", "tsx", "js", "jsx", "md", "mdx"],
   images: {
-    remotePatterns: [{
-      protocol: "https",
-      hostname: "*",             // 允许所有 HTTPS 图片源
-    }],
+    // P-1.6：只允许已知域名（Google/GitHub 头像 + 配置的 STORAGE_DOMAIN），不再放通 *
+    remotePatterns: buildImageRemotePatterns(),
   },
   async redirects() {
-    return [];                   // 无自定义重定向
+    return [];                     // 无自定义重定向
   },
-  experimental: {
-    mdxRs: true,                 // MDX Rust 编译器（Turbopack）
-  },
+  // 安全响应头：X-Frame-Options / X-Content-Type-Options / Referrer-Policy /
+  // Strict-Transport-Security 等（CSP 由部署平台按需追加）
+  async headers() { /* ... */ },
 };
 
 export default withBundleAnalyzer(withNextIntl(withMDX(configWithMDX)));
 ```
 
-### 配置问题
+### 配置状态（P-1.6 后）
 
-| 项 | 当前值 | 建议 |
+| 项 | 当前值 | 说明 |
 |----|--------|------|
-| `reactStrictMode` | `false` | 建议改为 `true`（生产环境质量保障） |
-| `images.hostname` | `"*"` | 安全风险，建议限制为已知域名 |
-| `output: "standalone"` | 开启 | 与 `next start` 冲突，Vercel 部署可去掉 |
+| `reactStrictMode` | `true` | ✅ 已修复 |
+| `images.remotePatterns` | 白名单 | ✅ 已修复（不再放通 `*`） |
+| `output: "standalone"` | 条件开启 | ✅ 已修复（仅 NEXT_OUTPUT=standalone 时，与 Vercel/next start 不冲突） |
 
 ## 3. tailwind.config.ts
 
@@ -132,11 +132,16 @@ export const config = {
 
 ### 5.2 数据库 (Supabase)
 
+> ⚠️ 必填语义（2026-08 修订）：`lib/env.ts` 启动 fail-fast 仅强制 3 个变量
+> （NEXT_PUBLIC_WEB_URL、NEXT_PUBLIC_PROJECT_NAME、AUTH_SECRET）。下表 SUPABASE_*
+> 在 schema 中为 **optional**：未配置时降级为 Landing Page 模式（数据库功能不可用），
+> 「功能必填」指要启用对应功能时必须配置。
+
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `SUPABASE_URL` | ✅ | Supabase 项目 URL |
-| `SUPABASE_ANON_KEY` | ✅ | Supabase Anon Key |
-| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Supabase Service Role Key（绕过 RLS） |
+| `SUPABASE_URL` | 功能必填* | Supabase 项目 URL（*未配置时降级 Landing Page 模式，不 fail-fast） |
+| `SUPABASE_ANON_KEY` | 功能必填* | Supabase Anon Key |
+| `SUPABASE_SERVICE_ROLE_KEY` | 功能必填* | Supabase Service Role Key（绕过 RLS） |
 | `DATABASE_URL` | ❌* | PostgreSQL 连接串，迁移机制（P-1.12）使用；推荐 Supabase 连接池事务模式（`?pgbouncer=true`）。*设置后服务启动自动执行未应用迁移 |
 
 > ⚠️ 代码中优先使用 `SUPABASE_SERVICE_ROLE_KEY`，仅在未设置时 fallback 到 `SUPABASE_ANON_KEY`。生产环境应谨慎使用 Service Role Key。
@@ -200,9 +205,12 @@ export const config = {
 | `NEXT_PUBLIC_GOOGLE_ANALYTICS_ID` | ❌ | Google Analytics ID（`G-XXXXXXX`） |
 | `NEXT_PUBLIC_OPENPANEL_CLIENT_ID` | ❌ | OpenPanel Client ID |
 
-### 5.8 待新增环境变量
+### 5.8 变量登记台账
 
-> ⚠️ 本清单是环境变量的**单一真相源**。DEVELOPMENT_PLAN.md 及各方案文档引用此处，新增变量时须在此同步登记，避免多源漂移。
+> ⚠️ 本清单是环境变量的**登记台账**：新增变量时须在此同步登记，避免多源漂移。
+> 注意边界：启动 fail-fast 校验以 `lib/env.ts` 为准（当前仅强制 3 个变量 + 一批
+> optional 声明）；本表中 CREEM/WAFFO/RESEND/CRON_SECRET/UPSTASH/TRUSTED_PROXY 等
+> 由功能代码在运行时读取，**不在启动校验 schema 内**（未配置 = 对应功能关闭）。
 
 | 变量 | 用途 | 阶段 |
 |------|------|------|
@@ -324,7 +332,10 @@ i18n/
 | `dev` | `cross-env NODE_NO_WARNINGS=1 next dev --turbopack` | 开发服务器 |
 | `build` | `next build` | 生产构建 |
 | `start` | `NODE_NO_WARNINGS=1 next start` | 启动生产服务器 |
-| `lint` | `next lint` | ESLint 检查 |
+| `lint` | `eslint .` | ESLint 检查 |
+| `test` | `vitest run` | 单元测试 |
+| `migrate` | `node --experimental-strip-types scripts/migrate.ts` | 执行数据库迁移 |
+| `db:generate` | `drizzle-kit generate` | 生成 drizzle 迁移 |
 | `analyze` | `ANALYZE=true pnpm build` | 包体积分析 |
 | `cf:build` | `npx @cloudflare/next-on-pages` | Cloudflare 构建 |
 | `cf:preview` | `pnpm cf:build && wrangler pages dev` | Cloudflare 预览 |

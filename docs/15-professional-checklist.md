@@ -12,13 +12,13 @@
 | 包管理 | ✅ | pnpm 11 + `pnpm-workspace.yaml`（allowBuilds 已配置） |
 | TypeScript 严格模式 | ✅ | `tsconfig.json` strict: true |
 | 代码检查 | ✅ | ESLint 9 flat config（`eslint.config.mjs`），`pnpm lint` 0 error |
-| 单元测试 | ✅ | Vitest 33 文件 / 119 用例，`pnpm test` |
+| 单元测试 | ✅ | Vitest 43 文件 / 179 用例，`pnpm test`（数字随测试演进，以实际输出为准） |
 | 生产构建 | ✅ | `pnpm build` 通过 |
 | CI/CD | ✅ | `.github/workflows/ci.yml`（typecheck + lint + test + build） |
 | 数据库迁移 | ✅ | `data/migrations/*.sql` + `instrumentation.ts` 自动执行 |
 | 环境变量校验 | ✅ | `lib/env.ts`，启动时 fail-fast |
 | 健康检查 | ✅ | `GET /api/health` |
-| 日志 | ✅ | `lib/logger.ts` 统一封装 |
+| 日志 | ⚠️ | `lib/logger.ts` 统一封装已存在；接线推进中（checkout 失败分支、三渠道 webhook 验签/处理失败已接，其余错误路径仍为裸 console） |
 
 ## 二、安全 ✅
 
@@ -120,6 +120,10 @@
 | 积分管理 | ✅ | `admin/credits` + 手动调整 |
 | 文章管理 | ✅ | `admin/posts` |
 | 审计日志 | ✅ | `lib/audit.ts` + `admin/audit-logs` |
+| 支付渠道管理 | ✅ | `admin/payment`（启用/优先级热切换，docs/payment/provider-abstraction.md） |
+| 定价管理 | ✅ | `admin/pricing`（payment_products 热编辑） |
+| 运营事件日志 | ✅ | `admin/logs`（op_events 检索，docs/16） |
+| 告警通知配置 | ✅ | `admin/notify`（飞书/企微 webhook，docs/16） |
 | 系统设置 | ⬜ | P3 规划（见 DEVELOPMENT_PLAN 5.4） |
 
 ## 十、监控与分析 ✅

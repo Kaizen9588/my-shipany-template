@@ -16,6 +16,16 @@ import {
   recordLoginFailure,
 } from "@/lib/login-guard";
 import { verifyPassword } from "@/lib/password";
+import { logger } from "@/lib/logger";
+
+/** 日志脱敏：只保留首字符，避免明文邮箱进日志（复审 2） */
+function maskEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) {
+    return "***";
+  }
+  return `${email[0]}***@${email.slice(at + 1)}`;
+}
 
 /** jwt 回调中暂存的用户字段（避免 NextAuth v5 JWT 类型增强不稳定） */
 type SessionJwtUser = {
@@ -142,13 +152,18 @@ providers.push(
 
       const lock = isLoginLocked(email, ip);
       if (lock.locked) {
-        console.log("[credentials] login locked:", email);
+        logger.warn("[credentials] login locked:", maskEmail(email));
         return null;
       }
 
       const user = await findUserByEmail(email, "credentials");
       if (!user?.password_hash) {
         recordLoginFailure(email, ip);
+        return null;
+      }
+      // 已封禁/已删除账号禁止密码登录
+      if (user.status === "banned" || user.status === "deleted") {
+        logger.warn("[credentials] login blocked:", maskEmail(email), user.status);
         return null;
       }
 

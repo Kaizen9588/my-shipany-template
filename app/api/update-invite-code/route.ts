@@ -5,7 +5,7 @@ import {
 } from "@/models/user";
 import { respData, respErr } from "@/lib/resp";
 
-import { getUserUuid } from "@/services/user";
+import { getUserUuid, toSafeUser } from "@/services/user";
 
 export async function POST(req: Request) {
   try {
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     }
 
     if (user_info.invite_code === invite_code) {
-      return respData(user_info);
+      return respData(toSafeUser(user_info));
     }
 
     const user_by_invite_code = await findUserByInviteCode(invite_code);
@@ -38,14 +38,15 @@ export async function POST(req: Request) {
         return respErr("invite code already exists");
       }
 
-      return respData(user_by_invite_code);
+      return respData(toSafeUser(user_by_invite_code));
     }
 
     await updateUserInviteCode(user_uuid, invite_code);
 
     user_info.invite_code = invite_code;
 
-    return respData(user_info);
+    // 2.8：白名单出口，不返回 password_hash/signin_ip 等敏感字段
+    return respData(toSafeUser(user_info));
   } catch (e) {
     console.log("update invite code failed", e);
     return respErr("update invite code failed");

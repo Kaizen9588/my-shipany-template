@@ -31,6 +31,13 @@ export async function backupKeyTables(): Promise<{
   exported: string[];
   error?: string;
 }> {
+  // L4（对抗性测试）：STORAGE 未配置时直接跳过，绝不实例化 S3 客户端。
+  // 此前空 endpoint/credentials 下 AWS SDK 会尝试解析默认端点，曾导致
+  // /api/cron/daily（dev 无 CRON_SECRET 可任意触发）长时间挂起。
+  if (!process.env.STORAGE_BUCKET) {
+    return { exported: [], error: "storage not configured, backup skipped" };
+  }
+
   const supabase = getSupabaseClient();
   const storage = new Storage();
 

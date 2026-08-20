@@ -1,4 +1,4 @@
-import { Environment, Waffo } from "@waffo/waffo-node";
+import { Environment, Waffo, WebhookResult } from "@waffo/waffo-node";
 import {
   CheckoutParams,
   CheckoutResult,
@@ -188,11 +188,27 @@ export const waffoProvider: PaymentProvider = {
         });
       });
 
-      // 验签 + 事件路由（SDK 内部完成 RSA 验签）
+      // 验签 + 事件路由（SDK 内部完成 RSA 验签）。
+      // 注意 SDK 契约：handleWebhook 在验签失败时**不抛错**，resolve
+      // {success:false, error}（见 @waffo/waffo-node handleWebhook）。若不检查
+      // success 标志，伪造签名会被静默 settle(null) 当"未识别事件"放行并回 200，
+      // payment.webhook_invalid_signature 告警永不触发（对抗式复审 2 P1）。
       handler
         .handleWebhook(body, signature)
-        .then(() => {
-          // 正常 resolve 但未命中任何业务回调（未知事件类型）→ 兜底返回 null
+        .then((result: WebhookResult) => {
+          if (!result.success) {
+            if (!settled) {
+              settled = true;
+              clearTimeout(timer);
+              reject(
+                new Error(
+                  `waffo webhook verify failed: ${result.error || "unknown"}`
+                )
+              );
+            }
+            return;
+          }
+          // 验签通过但未命中任何业务回调（未知事件类型）→ 兜底返回 null
           settle(null);
         })
         .catch((e: Error) => {

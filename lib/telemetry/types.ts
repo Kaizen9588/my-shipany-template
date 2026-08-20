@@ -32,4 +32,5 @@ export const TelemetryEvents = {
   PaymentAmountMismatch: "payment.amount_mismatch", // 渠道实付与本地订单不符，订单已置 mismatch 待人工核查
   CreditsExhausted: "credits.exhausted",
   ApiKeyCreated: "api_key.created",
+  AiGenerated: "ai.generated", // AI 生成成功（扣减后真相源，docs/13 §二步骤 7）
 } as const;

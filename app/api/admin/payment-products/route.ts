@@ -32,13 +32,30 @@ export async function PUT(req: Request) {
     const { products = [] } = body || {};
 
     for (const prod of products) {
+      if (!prod?.product_id) {
+        continue;
+      }
       const fields: Record<string, unknown> = {};
-      if (typeof prod.amount === "number") fields.amount = Math.floor(prod.amount);
-      if (typeof prod.credits === "number") fields.credits = Math.floor(prod.credits);
-      if (typeof prod.valid_months === "number") fields.valid_months = Math.floor(prod.valid_months);
+      // 复审 2：先 floor 再校验 —— 此前 0.5 可通过「>0 校验」后被 floor 成 0，
+      // 落库 0 元/0 积分行（资损面）。消费侧 getCheckoutProduct 不再二次断言。
+      if (typeof prod.amount === "number") {
+        const amount = Math.floor(prod.amount);
+        if (amount <= 0) return respErr("amount must be a positive integer");
+        fields.amount = amount;
+      }
+      if (typeof prod.credits === "number") {
+        const credits = Math.floor(prod.credits);
+        if (credits <= 0) return respErr("credits must be a positive integer");
+        fields.credits = credits;
+      }
+      if (typeof prod.valid_months === "number") {
+        const valid_months = Math.floor(prod.valid_months);
+        if (valid_months <= 0) return respErr("valid_months must be a positive integer");
+        fields.valid_months = valid_months;
+      }
       if (typeof prod.creem_product_id === "string") fields.creem_product_id = prod.creem_product_id;
       if (typeof prod.stripe_price_id === "string") fields.stripe_price_id = prod.stripe_price_id;
-      if (Object.keys(fields).length > 0 && prod.product_id) {
+      if (Object.keys(fields).length > 0) {
         await updatePaymentProduct(prod.product_id, fields);
       }
     }

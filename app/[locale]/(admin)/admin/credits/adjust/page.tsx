@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 export default function AdjustCreditsPage() {
   async function adjust(formData: FormData) {
     "use server";
-    const admin = await requireAdmin();
+    const admin = await requireAdmin("admin"); // 2.7：调整积分是资金操作，需 admin 级
 
     const email = String(formData.get("email") || "").trim().toLowerCase();
     const user_uuid = String(formData.get("user_uuid") || "").trim();

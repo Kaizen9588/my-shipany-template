@@ -18,7 +18,7 @@
 | 11 | [埋点与监控方案](./11-telemetry-analytics.md) | 分析/回放/错误三层拆解、追踪抽象层、事件规范、漏斗、bug 复现、选型 | ✅ 完成 |
 | 12 | [架构审查遗留项跟踪表](./12-architecture-adversarial-review.md) | 历轮审查结论：✅已落地 / ❌已否决 / ⬜待落地，不允许留过时结论 | ✅ 完成 |
 | 13 | [AI 网关闭环](./13-ai-gateway.md) | 核心收费闭环：鉴权→余额校验→预估一次扣清→模型路由→失败退款，模型白名单，/api/v1 前缀 | ✅ 完成 |
-| 14 | [免费试用额度](./14-anonymous-trial.md) | 匿名演示限流（设备指纹+IP 双维度，清 cookie/换 IP 无法刷）、登录赠 10 积分、用完提示充值、防刷边界 | ✅ 完成 |
+| 14 | [免费试用额度](./14-anonymous-trial.md) | 匿名演示限流（纯 IP 维度，指纹方案已废弃，清 cookie 无法刷、换 IP 可绕过为已知边界）、登录赠 10 积分、用完提示充值、防刷边界 | ✅ 完成 |
 | 15 | [专业模板完整度清单](./15-professional-checklist.md) | 工程化/Security/支付/AI/营销/控制台/后台/监控/部署 完整度评估 | ✅ 完成 |
 | 16 | [可观测性与告警设计](./16-observability-alerting.md) | 日志采集（op_events）+ 支付渠道告警闭环 + 飞书/企微机器人通知（6.23 设计稿） | ✅ 完成 |
 | 17 | [项目边界规范](./boundary-spec.md) | 禁止提交/密钥安全/API 越权/代码工程/Git 工作流的边界规则与 push 前自查 | ✅ 完成 |
@@ -43,7 +43,7 @@
 | UI | React + Tailwind CSS + shadcn/ui | 19.2.8 / 3.4.19 |
 | 数据库 | Supabase (PostgreSQL) | - |
 | 鉴权 | NextAuth.js (Auth.js v5) | 5.0.0-beta.25 |
-| 支付 | Creem + Waffo（多渠道抽象） | - |
+| 支付 | Stripe + Creem + Waffo（多渠道抽象） | - |
 | i18n | next-intl | 4.13.6 |
 | AI | Vercel AI SDK | 4.1.x |
 | 部署 | Vercel（首选） | - |
@@ -51,16 +51,17 @@
 ## 已知关键问题（高优先级）
 
 > 以下问题经三轮对抗式审查确认，已全部纳入 DEVELOPMENT_PLAN.md 的 P-1 安全修复阶段（P-1.1 ~ P-1.11）。
+> ✅ **状态（2026-08）**：下表 10 项已全部修复落地，落地位置见 [12-architecture-adversarial-review.md](./12-architecture-adversarial-review.md) P-1 记录表。
 
-| # | 问题 | 文档位置 | 严重程度 |
-|---|------|----------|----------|
-| 1 | Google One-Tap 不校验 aud，可伪造登录 | [04-auth-flow.md](./04-auth-flow.md) | 致命 |
-| 2 | 积分扣减无余额检查，可透支 | [05-payment-credits-flow.md](./05-payment-credits-flow.md) | 致命 |
-| 3 | Checkout 信任客户端金额，可 0 成本攻击 | [02-api-reference.md](./02-api-reference.md) | 致命 |
-| 4 | Snowflake workerId 硬编码，多实例重复订单号 | [03-database-schema.md](./03-database-schema.md) | 高 |
-| 5 | Demo API 无认证无限流，可被滥用 | [02-api-reference.md](./02-api-reference.md) | 高 |
-| 6 | /api/update-invite 无认证，可被伪造 | [02-api-reference.md](./02-api-reference.md) | 高 |
-| 7 | 订单+积分+联盟非事务操作 | [05-payment-credits-flow.md](./05-payment-credits-flow.md) | 高 |
-| 8 | 直接使用 Service Role Key，无 RLS | [03-database-schema.md](./03-database-schema.md) | 高 |
-| 9 | API Key 明文存储 | [03-database-schema.md](./03-database-schema.md) | 中高 |
-| 10 | 并发注册导致 session 无 uuid | [04-auth-flow.md](./04-auth-flow.md) | 中 |
+| # | 问题 | 文档位置 | 严重程度 | 状态 |
+|---|------|----------|----------|------|
+| 1 | Google One-Tap 不校验 aud，可伪造登录 | [04-auth-flow.md](./04-auth-flow.md) | 致命 | ✅ 已修复（P-1.11） |
+| 2 | 积分扣减无余额检查，可透支 | [05-payment-credits-flow.md](./05-payment-credits-flow.md) | 致命 | ✅ 已修复（P-1.2） |
+| 3 | Checkout 信任客户端金额，可 0 成本攻击 | [02-api-reference.md](./02-api-reference.md) | 致命 | ✅ 已修复（P-1.1） |
+| 4 | Snowflake workerId 硬编码，多实例重复订单号 | [03-database-schema.md](./03-database-schema.md) | 高 | ✅ 已修复（P-1.11） |
+| 5 | Demo API 无认证无限流，可被滥用 | [02-api-reference.md](./02-api-reference.md) | 高 | ✅ 已修复（P-1.4，重构为匿名演示端点） |
+| 6 | /api/update-invite 无认证，可被伪造 | [02-api-reference.md](./02-api-reference.md) | 高 | ✅ 已修复（P-1.4） |
+| 7 | 订单+积分+联盟非事务操作 | [05-payment-credits-flow.md](./05-payment-credits-flow.md) | 高 | ✅ 已修复（P-1.3，迁移 0003/0017） |
+| 8 | 直接使用 Service Role Key，无 RLS | [03-database-schema.md](./03-database-schema.md) | 高 | ✅ 已修复（P-1.8，服务端单例收口） |
+| 9 | API Key 明文存储 | [03-database-schema.md](./03-database-schema.md) | 中高 | ✅ 已修复（P-1.5，SHA-256 hash） |
+| 10 | 并发注册导致 session 无 uuid | [04-auth-flow.md](./04-auth-flow.md) | 中 | ✅ 已修复（P-1.11，并发注册兜底） |

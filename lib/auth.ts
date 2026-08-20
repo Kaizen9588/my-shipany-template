@@ -58,8 +58,9 @@ export async function getAdminUser(): Promise<User | null> {
     return null;
   }
 
-  // 2.7：被 ban 的账号立即失去后台权限（session 是 JWT 不会随 ban 吊销，必须实时查库拦截）
-  if (user.status === "banned") {
+  // 2.7：非 active 账号（banned/deleted）立即失去后台权限
+  // session 是 JWT 不会随状态变更吊销，必须实时查库拦截
+  if (user.status && user.status !== "active") {
     return null;
   }
 

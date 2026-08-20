@@ -3,7 +3,9 @@ FROM node:22-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
-RUN apk add --no-cache libc6-compat && yarn global add pnpm
+# 与 CI（pnpm/action-setup version: 11）对齐：锁定主版本，避免未锁版本的
+# pnpm 与 lockfileVersion 不兼容导致 --frozen-lockfile 失败
+RUN apk add --no-cache libc6-compat && yarn global add pnpm@11
 
 WORKDIR /app
 
@@ -31,6 +33,9 @@ RUN addgroup --system --gid 1001 nodejs && \
     chown nextjs:nodejs .next
 
 COPY --from=builder /app/public ./public
+# data/migrations 必须进运行镜像：lib/migrate.ts 运行时 readdirSync 扫描该目录
+# （nft 无法追踪 fs 动态读），缺了容器启动会因迁移 ENOENT 崩溃（对抗式复审 2 P2）
+COPY --from=builder --chown=nextjs:nodejs /app/data ./data
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 

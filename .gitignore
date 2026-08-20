@@ -50,3 +50,6 @@ supabase
 .agents/
 .supabase-home/
 skills-lock.json
+
+# qoder better-harness review artifacts (local tooling cache)
+.qoder/

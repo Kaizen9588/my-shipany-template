@@ -58,12 +58,26 @@ export async function PUT(req: Request) {
       }
     }
 
-    // 定价映射
+    // 定价映射（M1 修复：与 /api/admin/payment-products 同规则 —— 金额/积分/有效期必须 > 0，
+    // 否则可把商品金额改成 0 制造「免费送积分」的资损配置；复审 2：先 floor 再校验，
+    // 防止 0.5 通过校验后被 floor 成 0）
     for (const prod of products) {
       const fields: Record<string, unknown> = {};
-      if (typeof prod.amount === "number") fields.amount = Math.floor(prod.amount);
-      if (typeof prod.credits === "number") fields.credits = Math.floor(prod.credits);
-      if (typeof prod.valid_months === "number") fields.valid_months = Math.floor(prod.valid_months);
+      if (typeof prod.amount === "number") {
+        const amount = Math.floor(prod.amount);
+        if (amount <= 0) return respErr("amount must be a positive integer");
+        fields.amount = amount;
+      }
+      if (typeof prod.credits === "number") {
+        const credits = Math.floor(prod.credits);
+        if (credits <= 0) return respErr("credits must be a positive integer");
+        fields.credits = credits;
+      }
+      if (typeof prod.valid_months === "number") {
+        const valid_months = Math.floor(prod.valid_months);
+        if (valid_months <= 0) return respErr("valid_months must be a positive integer");
+        fields.valid_months = valid_months;
+      }
       if (typeof prod.creem_product_id === "string") fields.creem_product_id = prod.creem_product_id;
       if (typeof prod.stripe_price_id === "string") fields.stripe_price_id = prod.stripe_price_id;
       if (Object.keys(fields).length > 0 && prod.product_id) {

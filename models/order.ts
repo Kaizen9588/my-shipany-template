@@ -1,5 +1,6 @@
 import { Order } from "@/types/order";
 import { getSupabaseClient } from "@/models/db";
+import { likeFilter } from "@/lib/postgrest";
 
 export enum OrderStatus {
   Created = "created",
@@ -198,7 +199,8 @@ export async function getPaidOrders(
     .select("*")
     .eq("status", "paid")
     .order("created_at", { ascending: false })
-    .range((page - 1) * limit, page * limit);
+    // L5（对抗性测试）：range 是闭区间，此前 end = page*limit 每页多取一条
+    .range((page - 1) * limit, page * limit - 1);
 
   if (error) {
     return undefined;
@@ -224,7 +226,7 @@ export async function searchPaidOrders(
 
   if (keyword) {
     query = query.or(
-      `order_no.ilike.%${keyword}%,user_email.ilike.%${keyword}%,paid_email.ilike.%${keyword}%,product_name.ilike.%${keyword}%`
+      `${likeFilter("order_no", keyword)},${likeFilter("user_email", keyword)},${likeFilter("paid_email", keyword)},${likeFilter("product_name", keyword)}`
     );
   }
 

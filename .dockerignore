@@ -2,7 +2,9 @@
 .vercel
 .vscode
 .wrangler
-data
+# data/migrations 必须进镜像：lib/migrate.ts 运行时扫描该目录自动迁移；
+# 仅排除 drizzle 工作区产物
+data/drizzle
 debug
 node_modules
 .cursorrules

@@ -81,3 +81,40 @@ describe("services/credit decreaseCredits（P-1.2 原子扣减 RPC 契约）", (
     ).rejects.toThrow("db down");
   });
 });
+
+// ---------- H1 对抗性测试回归：admin 手动加积分 ----------
+describe("services/credit adjustCreditsByAdmin（H1 回归）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("正数加积分 expired_at 必须为 NULL（此前传 \"\" 导致 timestamptz 解析失败）", async () => {
+    const insert = vi.fn().mockResolvedValue({ data: null, error: null });
+    mockGetClient.mockReturnValue({ from: vi.fn().mockReturnValue({ insert }) });
+
+    const { adjustCreditsByAdmin } = await import("@/services/credit");
+    await adjustCreditsByAdmin({
+      user_uuid: "user-1",
+      credits: 100,
+      remark: "test grant",
+    });
+
+    expect(insert).toHaveBeenCalledTimes(1);
+    const payload = insert.mock.calls[0][0];
+    expect(payload.credits).toBe(100);
+    expect(payload.expired_at).toBeNull();
+    expect(payload.expired_at).not.toBe("");
+  });
+
+  it("负数扣减 expired_at 为 NULL（永久消费语义不变）", async () => {
+    const insert = vi.fn().mockResolvedValue({ data: null, error: null });
+    mockGetClient.mockReturnValue({ from: vi.fn().mockReturnValue({ insert }) });
+
+    const { adjustCreditsByAdmin } = await import("@/services/credit");
+    await adjustCreditsByAdmin({ user_uuid: "user-1", credits: -50 });
+
+    const payload = insert.mock.calls[0][0];
+    expect(payload.credits).toBe(-50);
+    expect(payload.expired_at).toBeNull();
+  });
+});

@@ -28,10 +28,13 @@ describe("models/verification（6.4 邮箱验证码，2.15 hash 存储）", () =
     mockNonce.mockReturnValue("a1b2c3");
   });
 
-  it("generateCode 返回 6 位/6 字符", () => {
-    const code = generateCode();
-    expect(code.length).toBeGreaterThanOrEqual(1);
-    expect(code.length).toBeLessThanOrEqual(6);
+  it("generateCode 恒定返回 6 位数字（修复 T2：过滤后不足 6 位）", () => {
+    for (let i = 0; i < 200; i++) {
+      const code = generateCode();
+      expect(code).toMatch(/^\d{6}$/);
+    }
+    // 边界：randomInt(0,1e6) 最低为 0，补零后仍必须是 6 位
+    expect(String(0).padStart(6, "0")).toBe("000000");
   });
 
   it("createVerificationCode 插入的是哈希而非明文 code", async () => {

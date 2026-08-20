@@ -16,7 +16,7 @@
 | 禁止提交任何真实密钥/令牌 | ✅ 已约定 + push 前扫描 | `sk-*`、`AKIA*`、`ghp_*`、RSA/OPENSSH 私钥、webhook secret、JWT secret、真实 Supabase key 等一律不进仓库 |
 | 禁止提交 `.pnpm-store/`、`node_modules/`、`.next/`、覆盖测试产物 | ✅ `.gitignore` | 依赖缓存/构建产物/coverage 不应进入 Git 历史 |
 | 禁止提交 `.agents/`、`skills-lock.json`、`.supabase-home/`、wrangler 缓存 | ✅ `.gitignore` | 本机/个人环境文件不属于模板本体 |
-| Docker 构建镜像不得包含 `.env*` | 🚧 docs/12 §2.17 | `.dockerignore` 应排除 `.env*`（保留 `.env.example`），避免镜像历史层泄露 |
+| Docker 构建镜像不得包含 `.env*` | ✅ `.dockerignore` 已排除 `.env`/`.env.*`（保留 `.env.example`） |
 | Push 前必须先自查 staged diff | ✅ 本次已执行 | `git diff --cached` 扫描 `sk-*` / `AKIA*` / 私钥块 / 真实 `password=` 等；并确认 `.env.local` 不在 `git status` |
 
 ---
@@ -28,7 +28,7 @@
 | `.env.*` 只给服务端读；`NEXT_PUBLIC_*` 只放公开数据（URL、开关、分析 ID） | ✅ docs/12 §61 |
 | API 返回给客户端禁止带 `password_hash`、`password_updated_at`、`signin_ip`、`signin_openid`、OAuth token、支付密钥 | ✅ `toSafeUser()` 白名单出口 |
 | 用户 API Key 存 SHA-256 hash，创建时只展示一次明文 | ✅ 已落地 |
-| 邮箱验证码不应明文存库；应存 hash 并定期清理过期记录 | 🚧 docs/12 待办 |
+| 邮箱验证码不应明文存库；应存 hash 并定期清理过期记录 | ✅ 已落地（仅存 SHA-256 hash + 原子消费，`cleanupVerificationCodes` 挂 cron） |
 | `AUTH_SECRET` 必须由部署者自己生成，禁止共用默认示例值 | ✅ `.env.example` 已置空 + 文档说明 |
 | 数据库迁移不能写真实生产密钥；默认管理员 `123456` 仅作模板初始化并要求首次强制改密 | ✅ 已落地 |
 | 告警 webhook 可存 `system_settings`，但页面不回显完整 secret | ✅ 当前 FE 不回显密钥 |
@@ -40,17 +40,18 @@
 | 边界 | 状态 |
 |---|---|
 | 后台必须是管理员才能访问，非管理员一律 403 | ✅ `requireAdmin()` |
-| 管理员分级：operator/admin/super_admin；operator 不能自我提权、不能授 super_admin | 🚧 docs/12 §2.7（P1 待办） |
-| 被封禁的管理员不能继续操作后台 | 🚧 docs/12 §2.7（P1 待办） |
-| 支付金额/定价只信服务端，客户端传的价格一律忽略 | ✅ `data/pricing.ts` 服务端单一真相源 |
+| 管理员分级：operator/admin/super_admin；operator 不能自我提权、不能授 super_admin | ✅ `requireAdmin(level)` + `hasAdminLevel`（lib/auth.ts） |
+| 被封禁的管理员不能继续操作后台 | ✅ 已落地（status≠active 实时查库拦截） |
+| 支付金额/定价只信服务端，客户端传的价格一律忽略 | ✅ checkout 只收 product_id；价格以 payment_products 表优先、`data/pricing.ts` 为回退 |
 | 支付回调必须验签；金额/币种必须比对，不匹配不充值并告警 | ✅ 已落地 |
 | 积分扣减必须事务 + 行锁 + 余额校验，不能透支 | ✅ 已落地 |
 | 退款必须幂等，不能重复扣回积分 | ✅ 已落地 |
-| Webhook 签名非法应告警 | 🚧 `payment.webhook_invalid_signature` 为「预留」事件 |
+| Webhook 签名非法应告警 | ✅ 已接入：三个 notify 路由验签失败发射 `payment.webhook_invalid_signature`（critical） |
 | AI 网关：鉴权 → 限流 → 402 → 原子扣费 → 失败退款 | ✅ 已落地 |
-| 匿名试用限流：IP + 设备指纹双维度防刷 | ✅ 已落地 |
+| 匿名试用限流 | ✅ 纯 IP 维度（指纹方案因 `x-device-id` 可伪造已废弃，见 docs/14 修订）；换 IP 可绕过为已知边界 |
 | CORS 白名单、CSRF、安全响应头 | ✅ 已落地 |
-| CSP / HSTS | 🚧 docs/12 §2.18 待办 |
+| CSP / HSTS | ⚠️ 部分：HSTS 已落地（next.config.mjs headers）；CSP 仍待办（docs/12 §2.18） |
+| 迟到支付回调撞上 expired 订单不得丢账 | ✅ 迁移 0017：expired 订单可被 webhook 恢复为 paid（留审计痕迹） |
 
 ---
 
@@ -65,7 +66,7 @@
 | 通知链路必须 fire-and-forget，失败不能阻塞业务主流程 | ✅ |
 | 新增支付渠道：写 adapter + registry 注册，不动核心 checkout/webhook 逻辑 | ✅ |
 | `NEXT_PUBLIC_*` 数量克制，服务端 secret 不进客户端 bundle | ✅ |
-| 单测、`tsc`、`pnpm build`、lint 通过后才能提交 | ✅ 当前 37 文件 / 147 用例 |
+| 单测、`tsc`、`pnpm build`、lint 通过后才能提交 | ✅ 当前 43 文件 / 179 用例（数字随测试演进，以 `pnpm test` 实际输出为准） |
 | 改 Next.js 相关代码前先读 `node_modules/next/dist/docs/` | ✅ AGENTS.md |
 
 ---

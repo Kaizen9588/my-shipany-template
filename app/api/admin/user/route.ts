@@ -1,5 +1,5 @@
 import { respData, respErr } from "@/lib/resp";
-import { requireAdmin } from "@/lib/auth";
+import { isSuperAdmin, requireAdmin } from "@/lib/auth";
 import { findUserByUuid, updateUserByAdmin } from "@/models/user";
 import { fireAndForgetAudit } from "@/lib/audit";
 
@@ -23,6 +23,11 @@ export async function PUT(req: Request) {
     const target = await findUserByUuid(uuid);
     if (!target) {
       return respErr("user not found");
+    }
+
+    // 2.7 加固：非 super_admin 不得修改 super_admin 账号（防止 admin 封禁/降级超管）
+    if (target.role === "super_admin" && !isSuperAdmin(admin)) {
+      return respErr("cannot modify super_admin");
     }
 
     const fields: Record<string, string> = {};

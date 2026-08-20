@@ -7,11 +7,13 @@
 ```
 components/
 ├── ui/               # shadcn/ui 基础组件 (29 个)
-├── blocks/           # Landing Page 区块组件 (23 个区块)
+├── blocks/           # Landing Page 区块组件 (22 个区块)
 ├── console/          # 用户控制台组件
 ├── dashboard/        # 后台管理组件
 ├── sign/             # 登录/注册组件
 ├── analytics/        # 分析追踪组件
+├── cookie-consent/   # Cookie 同意横幅（GDPR，✅ 已落地）
+├── feedback/         # 反馈/客服（Crisp，✅ 已落地）
 ├── theme/            # 主题切换
 ├── locale/           # 语言切换
 ├── invite/           # 邀请组件
@@ -157,11 +159,14 @@ interface Hero {
 ### 控制台侧边栏导航项
 
 ```
-当前导航项:
-├── API Keys       /api-keys
-├── My Credits     /my-credits
+当前导航项（`app/[locale]/(default)/(console)/layout.tsx` 配置）:
 ├── My Orders      /my-orders
-└── My Invites     /my-invites
+├── My Credits     /my-credits
+├── My Invites     /my-invites
+├── API Keys       /api-keys
+├── Notifications  /notifications
+├── Usage          /usage
+└── Settings       /settings
 ```
 
 ## 5. 后台管理组件 (`components/dashboard/`)
@@ -181,11 +186,18 @@ interface Hero {
 ### 管理后台侧边栏导航项
 
 ```
-当前导航项:
-├── Users           /admin/users
-├── Orders
-│   └── Paid Orders /admin/paid-orders
-└── Posts           /admin/posts
+当前导航项（`app/[locale]/(admin)/layout.tsx` 配置）:
+├── 控制台          /admin
+├── 用户管理        /admin/users
+├── 订单
+│   └── 已支付订单  /admin/paid-orders
+├── 积分管理        /admin/credits（含 /admin/credits/adjust 调整页）
+├── 操作审计        /admin/audit-logs
+├── 支付渠道        /admin/payment
+├── 定价映射        /admin/pricing
+├── 告警通知        /admin/notify
+├── 运营日志        /admin/logs
+└── 文章管理        /admin/posts（含 add / edit 页）
 ```
 
 ## 6. Slot 插槽模式
@@ -292,9 +304,12 @@ export const providerMap = providers
 
 | 组件 | 文件 | 用途 |
 |------|------|------|
-| GoogleAnalytics | `analytics/google-analytics.tsx` | GA 追踪 |
-| OpenPanel | `analytics/open-panel.tsx` | OpenPanel 追踪（⚠️ 待 PostHog 接入后移除，见 docs/11） |
+| GoogleAnalytics | `analytics/google-analytics.tsx` | GA 追踪（consent 门控） |
+| PostHog | `analytics/posthog.tsx` | PostHog 分析 + 会话录制（consent 门控 + 输入遮盖，见 docs/11） |
+| OpenPanel | `analytics/open-panel.tsx` | OpenPanel 追踪（✅ consent 门控已补；⚠️ 待 PostHog 接入评估后移除，见 docs/11） |
 | AnalyticsIndex | `analytics/index.tsx` | 分析组件统一入口 |
+| CookieConsent | `cookie-consent/index.tsx` | Cookie 同意横幅（GDPR，同意后派发 `cookie-consent-accepted` 事件） |
+| CrispFeedback | `feedback/crisp.tsx` | 反馈/客服按钮（Crisp） |
 | ThemeToggle | `theme/toggle.tsx` | 亮/暗色切换 |
 | LocaleToggle | `locale/toggle.tsx` | 语言切换 |
 | InviteModal | `invite/modal.tsx` | 邀请弹窗 |
@@ -338,9 +353,8 @@ interface ContextValue {
 
 | 组件 | 归属 | 关联设计 |
 |------|------|----------|
-| 设备指纹加载 | `hooks/useFingerprint.ts`（FingerprintJS 客户端集成，生成 X-Device-Id） | [14-anonymous-trial.md](./14-anonymous-trial.md) §2.2 |
-| Cookie 同意横幅 | `components/cookie-consent/` | 6.17 GDPR |
-| 通知中心 | `components/notifications/` + `(console)/notifications/page.tsx` | 6.14（轮询 + SSE） |
 | AI 试用弹窗 | `components/trial/`（「用完提示登录」弹窗） | 6.0.1 / 14 §2.4 |
-| 支付方式选择 | `components/blocks/pricing/` 改造（Buy 按钮 + 支付方式） | payment/provider-abstraction §4 |
-| 反馈/客服按钮 | `components/feedback/crisp.tsx` | 6.3 |
+
+> 已落地移出本表：~~设备指纹加载~~（指纹方案已废弃，收敛为纯 IP，见 docs/14 修订）、
+> Cookie 同意横幅（`components/cookie-consent/`）、通知中心（`(console)/notifications/page.tsx`）、
+> 反馈/客服按钮（`components/feedback/crisp.tsx`）、支付方式选择（pricing 区块已支持多渠道 checkout）。

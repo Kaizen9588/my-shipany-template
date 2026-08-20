@@ -54,12 +54,15 @@ export async function getUserValidCredits(
   const now = new Date().toISOString();
   const supabase = getSupabaseClient();
   // P-1.2：负数扣减记录 expired_at 为 NULL，永不过期，不参与 expired_at 过滤；
-  // 正数记录需未过期。净余额 = 正负记录累加。
+  // 正数记录需未过期（expired_at 为 NULL = 管理员赠送的长期有效积分，等同永不过期）。
+  // 注意：过滤语义必须与 decrease_credits 存储过程的余额口径一致（NULL = 永不过期）。
   const { data, error } = await supabase
     .from("credits")
     .select("*")
     .eq("user_uuid", user_uuid)
-    .or(`and(credits.gt.0,expired_at.gte.${now}),credits.lte.0`)
+    .or(
+      `and(credits.gt.0,or(expired_at.is.null,expired_at.gte.${now})),credits.lte.0`
+    )
     .order("expired_at", { ascending: true, nullsFirst: false });
 
   if (error) {

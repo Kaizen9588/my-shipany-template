@@ -38,12 +38,23 @@ export async function POST() {
         email: deletedEmail,
         nickname: "",
         avatar_url: "",
+        // GDPR：清除登录凭据，避免账号删除后仍可登录/凭据残留
+        password_hash: null,
+        password_updated_at: null,
+        signin_openid: "",
+        signin_ip: "",
         updated_at: getIsoTimestr(),
       })
       .eq("uuid", user_uuid);
     if (error) {
       throw error;
     }
+
+    // 撤销该用户所有 API Key，避免账号删除后仍可凭历史 sk- 调用 API
+    await supabase
+      .from("apikeys")
+      .update({ status: "deleted" })
+      .eq("user_uuid", user_uuid);
 
     // 通知客户端登出
     return respData({ deleted: true });

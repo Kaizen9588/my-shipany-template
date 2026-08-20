@@ -192,6 +192,9 @@ export async function increaseCredits({
   order_no?: string;
 }) {
   try {
+    // 修复（对抗性测试，与 adjustCreditsByAdmin 同源）：expired_at 为空串时
+    // Postgres timestamptz 解析失败（22007）。NULL 才是「长期有效」的正确表示，
+    // 与 decrease_credits / getUserValidCredits 的「NULL 永不过期」口径一致。
     const new_credit: Credit = {
       trans_no: getSnowId(),
       created_at: getIsoTimestr(),
@@ -199,7 +202,9 @@ export async function increaseCredits({
       trans_type: trans_type,
       credits: credits,
       order_no: order_no || "",
-      expired_at: expired_at || "",
+      expired_at: expired_at
+        ? expired_at
+        : (null as unknown as string),
     };
     await insertCredit(new_credit);
   } catch (e) {
@@ -231,8 +236,12 @@ export async function updateCreditForOrder(order: Order) {
 
 /**
  * 管理员手动增减积分（6.9，system_add）
- * - credits > 0：增加，不设有效期（-1 长期有效）
+ * - credits > 0：增加，不设有效期（expired_at = NULL 长期有效，与 decrease_credits RPC
+ *   的「NULL 永不过期」语义一致）
  * - credits < 0：扣减，expired_at 为 NULL（永久消费，与 P-1.2 负数记录语义一致）
+ *
+ * 修复（对抗性测试）：此前正数分支 expired_at 传 ""（空字符串），Postgres
+ * timestamptz 解析失败（22007），管理员加积分永远报错。NULL 才是"长期有效"的正确表示。
  */
 export async function adjustCreditsByAdmin({
   user_uuid,
@@ -254,11 +263,7 @@ export async function adjustCreditsByAdmin({
     trans_type: CreditsTransType.SystemAdd,
     credits: credits,
     order_no: remark || "",
-    expired_at: credits > 0 ? "" : "",
+    expired_at: null as unknown as string,
   };
-  // 负数记录 expired_at 必须为 NULL（不随原积分过期消失）
-  if (credits < 0) {
-    (credit as any).expired_at = null;
-  }
   await insertCredit(credit);
 }

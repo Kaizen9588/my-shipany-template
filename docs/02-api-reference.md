@@ -82,7 +82,8 @@ NextAuth.js 自动处理的认证端点，不是自定义 API。
 
 创建支付订单并发起支付（多渠道统一入口）。
 
-> ⚠️ 本文档描述的是 **P-1.1 + 6.1 修复后的目标形态**。当前实现仍信任客户端金额，修复前存在 0 成本攻击风险，见 DEVELOPMENT_PLAN.md P-1.1。
+> ✅ P-1.1 已落地：客户端金额不再被信任，checkout 只收 `product_id`（+可选 method/cancel_url），
+> 金额/积分/有效期由服务端从 payment_products 表（回退 data/pricing.ts）查询。
 
 | 项 | 说明 |
 |----|------|
@@ -112,7 +113,8 @@ NextAuth.js 自动处理的认证端点，不是自定义 API。
   message: "ok",
   data: {
     checkout_url: string,  // 重定向用户到渠道托管支付页
-    order_no: string       // 内部订单号
+    order_no: string,      // 内部订单号
+    provider: string       // 实际路由到的渠道 id（stripe/creem/waffo）
   }
 }
 ```
@@ -123,7 +125,7 @@ NextAuth.js 自动处理的认证端点，不是自定义 API。
 3. 按 method 路由到渠道（`getEnabledProviders()`）
 4. 生成 order_no，INSERT orders（status="created", payment_provider=渠道）
 5. 调渠道 Provider `createCheckout()`（Stripe 传 price_data、Creem 传 product_id、Waffo 传动态金额）
-6. 写入渠道专属表（stripe_orders/creem_orders/waffo_orders）
+6. 渠道 session id 回写订单行（如 `orders.stripe_session_id`，无渠道专属表）
 7. 返回 checkout_url 给前端跳转
 
 ---
@@ -168,20 +170,20 @@ Stripe Webhook 回调端点，处理支付完成事件。
 
 **请求**：Stripe 原始 Webhook 体（非 JSON 解析，用 `req.text()`）
 
-**处理逻辑**：
+**处理逻辑**（多渠道统一，现状）：
 
 ```
-1. 验证签名 (stripe.webhooks.constructEventAsync)
-2. 判断 event.type:
-   ├─ "checkout.session.completed" -> handleOrderSession()
-   │   ├─ 更新订单状态为 paid
-   │   ├─ 充值积分 (updateCreditForOrder)
-   │   └─ 记录联盟奖励 (updateAffiliateForOrder)
-   └─ 其他事件 -> 仅日志，不处理
-3. 返回 200
+1. 验签 + 归一化（stripeProvider.parseWebhook：constructEventAsync）
+   └─ 验签/解析失败 → 400 + 发射 payment.webhook_invalid_signature 告警（docs/16）
+2. 归一化事件类型:
+   ├─ "checkout.session.completed"（payment_status=paid）→ payment_succeeded
+   └─ "charge.refunded" → refund_succeeded（经 payment_intent 反查 session 拿 order_no）
+3. handlePaymentEvent → handle_order_payment / process_order_refund RPC
+   （行锁 + 幂等 + 金额/币种比对，mismatch 不充值并告警）
+4. 返回 200
 ```
 
-> ⚠️ 当前仅处理 `checkout.session.completed` 一种事件。缺少 `subscription.deleted`、`subscription.updated`、`refund.created` 等事件处理。
+> ✅ 退款事件已处理（6.21）；订阅类事件（subscription.*）仍不在 v1 范围（docs/05 §1.6）。
 
 **环境变量**：`STRIPE_PRIVATE_KEY`、`STRIPE_WEBHOOK_SECRET`
 
@@ -317,12 +319,12 @@ Stripe Webhook 回调端点，处理支付完成事件。
 - 邀请人必须存在
 - 不能邀请自己
 - 被邀请人不能已有邀请人
-- 注册 2 小时内才可绑定（服务端校验，非前端）
+- 注册 2 小时内才可绑定（仅前端提示，服务端无时效校验）
 
 **业务流程**：
 1. 从 session 获取被邀请人 user_uuid（**不接受客户端传入**）
 2. 查找邀请人 (findUserByInviteCode)
-3. 校验（不能自邀、不能重复、2 小时时效）
+3. 校验（不能自邀、不能重复；2 小时时效仅前端提示，服务端不校验）
 4. UPDATE users.invited_by
 5. INSERT affiliates (status="pending")
 
@@ -366,8 +368,9 @@ Stripe Webhook 回调端点，处理支付完成事件。
 
 | 接口 | 方法 | 用途 | 优先级 |
 |------|------|------|--------|
-| /api/admin/payment-settings | GET/PUT | 后台查看/切换支付渠道启用状态与优先级（热切换 UI 缺失，API 待建） | P1 |
 | /api/unsubscribe | GET | 营销邮件退订 | P2 |
-| /api/admin/op-events | GET | 运营事件日志查询（日志采集/告警底座，见 docs/16） | P1（6.23） |
+
+> 已落地（曾列于本表）：`/api/admin/payment-settings`（GET/PUT，渠道启用/优先级热切换）、
+> `/api/admin/op-events`（运营事件查询，docs/16）。
 
 > 已废弃：`/api/creem-checkout`（多渠道后 checkout 统一入口，渠道不设独立 checkout 端点）。

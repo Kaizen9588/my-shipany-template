@@ -148,10 +148,10 @@ console.log(checkout.checkoutUrl);     // 跳转用户到此 URL
 console.log(checkout.id);              // Checkout Session ID
 ```
 
-**本项目封装**（待实现）：`app/api/creem-checkout/route.ts`
+**本项目封装**（✅ 已实现）：统一入口 `app/api/checkout/route.ts`（method → 服务端渠道路由，文档见 provider-abstraction §阶段 1）
 
 ```typescript
-// app/api/creem-checkout/route.ts（待实现）
+// 前端只需 POST /api/checkout { product_id, method: "creem" }，服务端路由到 creemProvider.createCheckout
 
 import { Creem } from "creem";
 import { respData, respErr } from "@/lib/resp";
@@ -212,7 +212,7 @@ const checkout = await creem.checkouts.retrieve("checkout_xxx");
 
 ### 3.4 Webhook 接收与签名验证
 
-**接口**：`POST /api/creem-notify`（本项目端点，待实现）
+**接口**：`POST /api/creem-notify`（✅ 已实现，app/api/creem-notify/route.ts，parseWebhook 验签 → handlePaymentEvent 归一化处理）
 
 **签名验证**（HMAC-SHA256）：
 
@@ -228,10 +228,10 @@ await verifyWebhookSignature(rawBody, request.headers, {
 > ⚠️ 与 Stripe 不同：Creem 的签名验证使用 `creem-signature` header + HMAC-SHA256，
 > Stripe 使用 `stripe-signature` header + 自有验证算法。
 
-**本项目封装**（待实现）：`app/api/creem-notify/route.ts`
+**本项目封装**（✅ 已实现）：`app/api/creem-notify/route.ts`
 
 ```typescript
-// app/api/creem-notify/route.ts（待实现）
+// app/api/creem-notify/route.ts（✅ 已实现，验签失败告警 + 400）
 
 import { verifyWebhookSignature } from "creem/webhooks";
 import { handleOrderSession } from "@/services/order";
@@ -424,20 +424,22 @@ export const PRICING = [
 
 ---
 
-## 5. 本项目实现计划
+## 5. 本项目实现计划（✅ 阶段 1 已落地，2026-08）
+
+> 状态列括号内为落地位置；大额核对见 provider-abstraction.md 阶段 1 落地记录。
 
 | 功能 | 文件 | 状态 | 优先级 |
 |------|------|------|--------|
-| Creem SDK 安装 | package.json | ❌ 待安装 | P0 |
-| 服务端定价表 | `data/pricing.ts` | ❌ 待创建 | P-1.1 |
-| 创建 Creem Checkout | `app/api/creem-checkout/route.ts` | ❌ 待实现 | P0 |
-| Creem Webhook | `app/api/creem-notify/route.ts` | ❌ 待实现 | P0 |
-| creem_orders 表 | SQL 迁移 | ❌ 待创建 | P0 |
-| Creem 产品创建 | Dashboard 或 API | ❌ 待创建 | P0 |
-| 统一 Checkout 入口 | `app/api/checkout/route.ts` | ❌ 待重构 | P0 |
-| 退款 | `services/order.ts` -> `refundOrder()` | ❌ 待实现 | P1 |
-| 订阅取消 | `services/order.ts` | ❌ 待实现 | P1 |
-| Customer Portal | 组件 | ❌ 待实现 | P2 |
+| Creem SDK 安装 | package.json | ✅ 已完成 | P0 |
+| 服务端定价表 | `data/pricing.ts` | ✅ 已完成 | P-1.1 |
+| 创建 Creem Checkout | `lib/payment/providers/creem.ts`（统一入口 `/api/checkout`） | ✅ 已完成 | P0 |
+| Creem Webhook | `app/api/creem-notify/route.ts` | ✅ 已完成（含验签失败告警） | P0 |
+| creem_orders 表 | 迁移 `0007_multi_payment.sql` | ✅ 已完成 | P0 |
+| Creem 产品创建 | Dashboard 或 API | ✅ 已完成 | P0 |
+| 统一 Checkout 入口 | `app/api/checkout/route.ts` | ✅ 已完成 | P0 |
+| 退款 | `services/refund.ts` → RPC `process_order_refund`（迁移 0011） | ✅ 已完成（Dashboard 手动退款 + webhook 同步） | P1 |
+| 订阅取消 | `services/order.ts` | ⬜ 未做（v1 无订阅） | P1 |
+| Customer Portal | 组件 | ⬜ 未做 | P2 |
 
 ---
 

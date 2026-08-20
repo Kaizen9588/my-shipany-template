@@ -37,7 +37,7 @@
 - 模型白名单 + 定价表（`data/model-pricing.ts`）
 - 预估一次扣清 + 失败退款闭环
 - `/api/v1/ai/generate` + `/api/v1/ai/demo`（匿名免费试用）
-- 匿名试用限流（设备指纹 + IP 双维度）
+- 匿名试用限流（纯 IP 维度，指纹方案已废弃，见 docs/14）
 
 ### 后台管理（Admin）
 - 数据看板：总用户 / 今日新增 / 总收入 / 今日订单 / 积分消耗 / 活跃用户 + 30 天趋势
@@ -65,7 +65,7 @@
 - 法律页（隐私政策 / 服务条款）
 
 ### 工程化与运维
-- 单元测试：Vitest，147 个用例覆盖核心业务逻辑
+- 单元测试：Vitest，43 文件 / 179 用例覆盖核心业务逻辑（以 `pnpm test` 实际输出为准）
 - ESLint（Next.js flat config）
 - 数据库迁移：`data/migrations/*.sql` 自动执行（幂等）
 - 健康检查 `/api/health`、每日备份 Cron、CSRF/CORS 防护
@@ -87,7 +87,7 @@
 | i18n | next-intl | 4.13.x |
 | 邮件 | Resend + React Email | - |
 | 埋点 | PostHog + GA4 + OpenPanel | - |
-| 限流 | Upstash Ratelimit（未配置降级内存） | - |
+| 限流 | 内存级（Upstash Ratelimit 待接入） | - |
 | 测试 | Vitest | 4.1.x |
 | 包管理 | pnpm | 11.x |
 
@@ -205,7 +205,7 @@ pnpm dev
 ### 5. 运行测试
 
 ```bash
-pnpm test        # 运行全部单元测试（147 个用例）
+pnpm test        # 运行全部单元测试（43 文件 / 179 用例）
 pnpm lint        # ESLint 检查
 pnpm build       # 生产构建
 ```

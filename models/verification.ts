@@ -1,5 +1,6 @@
+import { randomInt } from "crypto";
 import { getSupabaseClient } from "@/models/db";
-import { getNonceStr, hashString } from "@/lib/hash";
+import { hashString } from "@/lib/hash";
 
 /**
  * 邮箱验证码模型（6.4）
@@ -8,6 +9,10 @@ import { getNonceStr, hashString } from "@/lib/hash";
  * 2.15 修复：code 只存 SHA-256 哈希（与 API key 同款处理）。
  * 此前明文入库，DB/备份泄漏即可读出未使用验证码接管任意邮箱账号。
  * 过期与单次使用的约束不变；明文 code 只在生成瞬间返回给发件流程。
+ *
+ * 复审（docs/17 T2）：generateCode 不再依赖 getNonceStr 过滤数字——
+ * 过滤后可能不足 6 位（空间缩小到 1e5）。改用 crypto.randomInt 直接生成
+ * 0~999999 并补零到 6 位，恒定 1e6 空间、无偏、密码学安全。
  */
 
 export interface VerificationCode {
@@ -20,9 +25,9 @@ export interface VerificationCode {
   created_at: string;
 }
 
-/** 生成 6 位数字验证码 */
+/** 生成 6 位数字验证码（0~999999，补零；密码学安全） */
 export function generateCode(): string {
-  return getNonceStr(6).replace(/[^0-9]/g, "").slice(0, 6) || "000000";
+  return String(randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
 /** 创建验证码（10 分钟有效），返回明文（仅用于发送邮件） */

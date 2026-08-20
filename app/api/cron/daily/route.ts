@@ -2,12 +2,14 @@ import { respData, respErr } from "@/lib/resp";
 import { expireStaleOrders } from "@/scripts/expire-orders";
 import { backupKeyTables } from "@/lib/backup";
 import { cleanupVerificationCodes } from "@/models/verification";
+import { cleanupAnonymousUsage } from "@/models/anonymous-usage";
 
 /**
  * GET /api/cron/daily -- 每日定时任务（6.16）
  * 1. 超时未支付订单置为 expired
  * 2. 过期验证码清理（2.15）
- * 3. 关键表备份到 S3
+ * 3. 匿名试用用量清理（docs/14 §2.6，30 天前记录）
+ * 4. 关键表备份到 S3
  *
  * 安全（2.13 修复）：Vercel Cron 自动带 Authorization: Bearer <CRON_SECRET> 头。
  * 此前端点在 CRON_SECRET 未设置时完全跳过校验，且会触发 users 全量导出上传--
@@ -34,11 +36,13 @@ export async function GET(req: Request) {
 
     const expired = await expireStaleOrders(60);
     const cleaned = await cleanupVerificationCodes();
+    const cleanedAnonUsage = await cleanupAnonymousUsage(30);
     const backup = await backupKeyTables();
 
     return respData({
       expired_orders: expired,
       cleaned_verification_codes: cleaned,
+      cleaned_anonymous_usage: cleanedAnonUsage,
       backup_files: backup.exported,
       backup_error: backup.error || undefined,
     });

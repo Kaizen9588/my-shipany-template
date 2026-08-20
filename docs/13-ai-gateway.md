@@ -31,7 +31,7 @@ POST /api/v1/ai/generate
   1. 鉴权      getUserUuid()（session 或 sk-）
   │            └─ 未认证 → 401
   │
-  2. 限流      按用户/IP 维度（6.18 Upstash Ratelimit）
+  2. 限流      IP 维度 + 用户维度双层（✅ 现状：lib/ratelimit.ts 内存实现，Upstash 待 6.18）
   │            └─ 超限 → 429
   │
   3. 余额检查  查积分余额 < 预估费用 → 402（余额不足）
@@ -42,10 +42,10 @@ POST /api/v1/ai/generate
   │            └─ openai / deepseek / openrouter / siliconflow / replicate / kling
   │
   6. 生成      非流式 generateText / 流式 streamText
-  │            ├─ 成功 → 按实际用量结算（多退少补）
+  │            ├─ 成功 → 已完成计费（预估一次扣清，不退差额）
   │            └─ 失败 → 退款（负数记录回补）
   │
-  7. 埋点      trackServer("ai.generated")（6.5，事务后调用）
+  7. 埋点      trackServer("ai.generated")（6.5，✅ 已接入，扣费后 fire-and-forget）
 ```
 
 ---
@@ -202,8 +202,8 @@ export enum CreditsTransType {
 | 依赖 | 关系 |
 |------|------|
 | P-1.2 原子扣减 | **前置依赖**：「余额检查 + 扣减」必须原子化，否则并发透支 |
-| 6.18 限流 | 网关第 2 步。⚠️ 6.18 在 P3，网关 v1 若先落地必须自带简易限流（内存级按 IP 计数），或把 Upstash 提前到 P0 |
-| 6.5 埋点 | `trackServer("ai.generated")` 在事务后调用，吞错不阻塞 |
+| 6.18 限流 | 网关第 2 步。✅ v1 已自带内存级限流（IP 层 `rateLimit` + 用户层 `rateLimitUser`，lib/ratelimit.ts）；Upstash 落地后替换。已知边界：内存限流多实例不共享，重启清零 |
+| 6.5 埋点 | ✅ 已接入：`trackServer(AiGenerated)` 在扣费后调用，吞错不阻塞 |
 | P-1.4 Demo API 修复 | demo API 修复后可作为网关的「免费演示模式」（登录即可试一次） |
 | 6.2 邮件 | 积分耗尽时触发 `credit_exhausted` 邮件 |
 
@@ -225,8 +225,8 @@ export enum CreditsTransType {
 { code: 0, data: { text: string, reasoning?: string, usage: { prompt_tokens, completion_tokens }, credits_charged: number } }
 
 // 流式响应 200（AI SDK Data Stream 协议）
-// 402 余额不足
-{ code: -3, message: "insufficient credits", data: { required: number, balance: number } }
+// 402 余额不足（code = -HTTP 状态码，见决策 4）
+{ code: -402, message: "insufficient credits", data: { required: number, balance: number } }
 ```
 
 > `credits_charged` 返回预估扣费（即本次上限），让第三方用户可对账。HTTP 状态码与 code 的映射见决策 4。
@@ -251,7 +251,7 @@ export enum CreditsTransType {
 | 流式中途断连（v2） | 一次性扣清不退还——用户主动断连已消耗服务；仅服务端异常才退款 |
 | 模型白名单维护成本 | v1 用常量表，改动即发版；v3 才入数据库 |
 | 「积分 vs 金额」汇率漂移 | 积分是抽象单位，运营方自行定义积分与模型的换算，网关不感知 |
-| 网关先于 6.18 限流落地 | v1 自带内存级按 IP 简易限流，Upstash 到 P3 再替换 |
+| 网关先于 6.18 限流落地 | ✅ v1 已自带内存级双层限流（IP + 用户），Upstash 到 P3 再替换；多实例部署下限流不共享为已知边界 |
 
 ---
 

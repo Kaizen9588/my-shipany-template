@@ -1,6 +1,7 @@
 import { User } from "@/types/user";
 import { getIsoTimestr } from "@/lib/time";
 import { getSupabaseClient } from "./db";
+import { likeFilter } from "@/lib/postgrest";
 
 export async function insertUser(user: User) {
   const supabase = getSupabaseClient();
@@ -163,7 +164,7 @@ export async function searchUsers(
 
   if (keyword) {
     query = query.or(
-      `email.ilike.%${keyword}%,nickname.ilike.%${keyword}%,uuid.ilike.%${keyword}%`
+      `${likeFilter("email", keyword)},${likeFilter("nickname", keyword)},${likeFilter("uuid", keyword)}`
     );
   }
 

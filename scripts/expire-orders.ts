@@ -26,9 +26,13 @@ export async function expireStaleOrders(maxAgeMinutes: number = 60): Promise<num
   }
 
   const orderNos = stale.map((o) => o.order_no);
+  // 复审 2：UPDATE 补 status='created' 守卫 —— 否则 SELECT 与 UPDATE 之间若有
+  // 迟到 webhook 把订单 recovered→paid（0017），cron 会无条件把它改回 expired，
+  // 造成「已付款订单状态错乱」；守卫后只会过期仍处于 created 的订单。
   const { error } = await supabase
     .from("orders")
     .update({ status: "expired" })
+    .eq("status", "created")
     .in("order_no", orderNos);
 
   if (error) {

@@ -1,5 +1,7 @@
 import { respData, respErr } from "@/lib/resp";
 import { getSupabaseClient } from "@/models/db";
+import { likeFilter } from "@/lib/postgrest";
+import { PostStatus } from "@/models/post";
 
 /**
  * GET /api/search?q=... —— 全站博客搜索（6.15）
@@ -19,8 +21,8 @@ export async function GET(req: Request) {
     let query = supabase
       .from("posts")
       .select("uuid, slug, title, description, cover_url, created_at, locale")
-      .eq("status", "published")
-      .or(`title.ilike.%${q}%,description.ilike.%${q}%,content.ilike.%${q}%`)
+      .eq("status", PostStatus.Online)
+      .or(`${likeFilter("title", q)},${likeFilter("description", q)},${likeFilter("content", q)}`)
       .order("created_at", { ascending: false })
       .limit(20);
 

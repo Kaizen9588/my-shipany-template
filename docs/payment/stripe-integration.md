@@ -64,7 +64,7 @@ const options: Stripe.Checkout.SessionCreateParams = {
     },
     quantity: 1,
   }],
-  allow_promotion_codes: true,            // 允许优惠码
+  allow_promotion_codes: false,           // 禁用优惠码（R1：与「实付=订单额精确比对」互斥，docs/05 §1.4）
   metadata: {                              // 自定义元数据（Webhook 回调时可用）
     order_no: "xxx",
     user_uuid: "xxx",
@@ -94,7 +94,7 @@ if (currency === "cny") {
 
 ```typescript
 {
-  id: "cs_test_xxx",          // Session ID（存入 stripe_orders.stripe_session_id）
+  id: "cs_test_xxx",          // Session ID（存入 orders.stripe_session_id）
   url: "https://checkout.stripe.com/c/pay/cs_test_xxx",
   payment_status: "unpaid",
   // ...
@@ -134,7 +134,7 @@ const event = await stripe.webhooks.constructEventAsync(
 | `customer.subscription.updated` | ❌ 未处理 | 订阅升级/降级 -> 更新订单信息 |
 | `invoice.paid` | ❌ 未处理 | 订阅续费成功 -> 充值新周期积分 |
 | `invoice.payment_failed` | ❌ 未处理 | 订阅扣款失败 -> 通知用户 |
-| `charge.refunded` | ❌ 未处理 | 退款 -> 扣回积分 -> 更新订单状态 |
+| `charge.refunded` | ✅ 已处理（6.21） | 经 payment_intent 反查 session 拿 order_no → process_order_refund（扣回积分 → 更新订单状态） |
 
 **Webhook 事件处理代码模板**：
 
@@ -167,7 +167,12 @@ switch (event.type) {
 }
 ```
 
-### 2.4 退款（待实现）
+### 2.4 退款（✅ 已实现）
+
+> 现状：两条入口——后台 `POST /api/admin/refund`（services/refund.ts `processRefund`）与
+> 渠道 `charge.refunded`/`refund.created` webhook，均汇入 `process_order_refund` RPC
+> （迁移 0011：行锁 + refunded 幂等 + 锁序与 decrease_credits 一致防死锁）。
+> 口径：部分退款也扣回全部剩余积分（见 services/refund.ts 注释）。
 
 **接口**：`POST /v1/refunds`（Stripe API）
 
@@ -229,17 +234,15 @@ const session = await stripe.checkout.sessions.retrieve(session_id);
 | metadata.order_no | order_no | 关联 |
 | metadata.product_id | product_id | 产品 ID |
 
-### 3.2 stripe_orders 表（Stripe 专属）
+### 3.2 Stripe 专属字段（留在 orders 表，无 stripe_orders 物理表）
+
+> 迁移 0007 只为 Creem/Waffo 建了专属表；Stripe 特有字段仍留在 orders 表（见 docs/03 §2「Stripe 专属字段未做物理拆分」），订阅相关 sub_* 字段**未实现**。
 
 | Stripe 字段 | 本项目字段 | 说明 |
 |-------------|-----------|------|
-| id | stripe_session_id | Checkout Session ID |
-| subscription | sub_id | 订阅 ID |
-| - | sub_interval_count | 订阅间隔数 |
-| - | sub_cycle_anchor | 订阅周期锚点 |
-| - | sub_period_end | 订阅周期结束 |
-| - | sub_period_start | 订阅周期开始 |
-| - | sub_times | 扣款次数 |
+| id | stripe_session_id | Checkout Session ID（orders 表列） |
+| subscription | - | 订阅 ID（未实现） |
+| - | - | sub_* 订阅周期字段均未实现（本模板无订阅产品） |
 
 ---
 
@@ -247,12 +250,12 @@ const session = await stripe.checkout.sessions.retrieve(session_id);
 
 | 功能 | 文件 | 状态 |
 |------|------|------|
-| 创建 Checkout Session | `app/api/checkout/route.ts` | ✅ 已实现（需安全修复） |
-| Webhook 接收 | `app/api/stripe-notify/route.ts` | ⚠️ 仅处理 1 种事件 |
-| 订单处理 | `services/order.ts` -> `handleOrderSession()` | ✅ 已实现 |
+| 创建 Checkout Session | `app/api/checkout/route.ts` | ✅ 已实现（P-1.1 服务端定价已落地） |
+| Webhook 接收 | `app/api/stripe-notify/route.ts` | ✅ 支付成功 + 退款事件；验签失败发射告警 |
+| 订单处理 | `handle_order_payment` / `process_order_refund` RPC | ✅ 已实现（迁移 0010/0011/0017） |
 | 订单数据操作 | `models/order.ts` | ✅ 已实现 |
-| 支付成功页 | `app/[locale]/pay-success/[session_id]/page.tsx` | ✅ 已实现 |
-| 退款 | - | ❌ 待实现 |
+| 支付成功页 | `app/[locale]/pay-success/[session_id]/page.tsx` | ✅ 已实现（纯 redirect，不触发落账） |
+| 退款 | `/api/admin/refund` + webhook | ✅ 已实现（6.21） |
 | Customer Portal | - | ❌ 待实现 |
 | 订阅取消 | - | ❌ 待实现 |
 | 续费充值 | - | ❌ 待实现 |

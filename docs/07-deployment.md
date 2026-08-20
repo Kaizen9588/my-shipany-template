@@ -14,7 +14,7 @@
 
 - Vercel 账号
 - GitHub 仓库（已 Fork 到 Kaizen9588/my-shipany-template）
-- Supabase 项目（已执行 `data/install.sql` 建表，迁移 0001-0011 部署时自动应用，见 §5.2.1）
+- Supabase 项目（已执行 `data/install.sql` 建表，迁移 0000-0017 部署时自动应用，见 §5.2.1）
 - Google OAuth 凭据（如需 Google 登录）
 - GitHub OAuth 凭据（如需 GitHub 登录）
 - 支付渠道账号（按需）：Stripe / Creem / Waffo（多渠道架构见 [payment/provider-abstraction.md](./payment/provider-abstraction.md)）
@@ -44,12 +44,20 @@
     "app/api/**/*": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/daily",
+      "schedule": "0 2 * * *"
+    }
+  ]
 }
 ```
 
 - API 路由最大执行时间 60 秒（适用于 AI 生成等长耗时操作）
 - Vercel Hobby 计划最大 60 秒，Pro 计划最大 300 秒
+- `crons`：每日 02:00 UTC 触发 `/api/cron/daily`（订单过期/验证码清理/匿名用量清理/备份），
+  这也是 `CRON_SECRET` 生产必填的触发源（2.13 fail-fast）
 
 ### 2.4 output: standalone 说明
 
@@ -62,7 +70,7 @@ pnpm build                          # 默认不启用（Vercel / next start 兼�
 
 **影响**：
 - `next start` 与 Vercel 部署不再冲突（默认不启用 standalone）
-- Docker 构建命令已内置 `NEXT_OUTPUT=standalone`，使用 `node .next/standalone/server.js`
+- Docker 构建命令已内置 `NEXT_OUTPUT=standalone`；standalone 产物被复制到镜像 `/app` 根目录，启动命令为 `CMD ["node", "server.js"]`
 - Dockerfile 中的 `RUN NEXT_OUTPUT=standalone pnpm build` 已处理
 
 ### 2.5 Stripe Webhook 配置
@@ -170,7 +178,7 @@ pnpm dev
    - Settings -> API -> service_role -> `SUPABASE_SERVICE_ROLE_KEY`
    - Settings -> Database -> Connection string（pooler/transaction 模式）-> `DATABASE_URL`
 4. **其余表/RPC 无需手动执行**：首次 `pnpm dev`（或部署）时 `instrumentation.ts`
-   自动按序执行 `data/migrations/0001-0011`（`schema_migrations` 版本表保证幂等，
+   自动按序执行 `data/migrations/0000-0017`（`schema_migrations` 版本表保证幂等，
    重复启动只补漏不重跑）；也可手动 `pnpm migrate`
 
 > 顺序硬约束：必须先跑 `install.sql` 再让迁移跑起来--迁移 0004 的外键依赖基础表。
@@ -210,7 +218,7 @@ docker compose up -d
 `install.sql` + 全部迁移在纯 Postgres 上可执行）。
 
 **建表**：本地库与云端一样，先在 Studio（http://localhost:54323）SQL Editor 执行
-`data/install.sql`，迁移 0001-0011 由 `pnpm dev` 自动补齐。
+`data/install.sql`，迁移 0000-0017 由 `pnpm dev` 自动补齐。
 
 **注意**：本地 Auth（邮件验证码/OAuth 回调）需要额外配置回调地址，本地开发通常只测
 数据库 + 支付链路，OAuth 登录用云端项目更省事。
@@ -262,4 +270,4 @@ stripe listen --forward-to localhost:3000/api/stripe-notify
 |------|------|----------|
 | `next dev` 在沙箱中 EMFILE 循环重启 | 文件描述符限制 | 用户本地终端运行不受影响；沙箱内用 `next build && next start` |
 | npm EPERM 错误 | root-owned cache files | `npm install --cache /tmp/npm-cache` 或 `sudo chown -R 501:20 ~/.npm` |
-| 端口 3000 被占用 | 旧进程未退出 | `lsof -ti:3001 | xargs kill -9` |
+| 端口 3000 被占用 | 旧进程未退出 | `lsof -ti:3000 | xargs kill -9` |

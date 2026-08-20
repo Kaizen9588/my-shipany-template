@@ -64,6 +64,19 @@ describe("services/credit 补充", () => {
     expect(credit.trans_no).toBeTruthy();
   });
 
+  it("increaseCredits 未传 expired_at 时存 NULL（长期有效，与 decrease_credits 口径一致）", async () => {
+    mockInsertCredit.mockResolvedValueOnce([]);
+    await increaseCredits({
+      user_uuid: "u1",
+      trans_type: "new_user",
+      credits: 10,
+    });
+
+    const credit = mockInsertCredit.mock.calls[0][0];
+    // 回归：空串会让 Postgres timestamptz 解析失败（22007），NULL 才是正确表示
+    expect(credit.expired_at).toBeNull();
+  });
+
   it("increaseCredits 失败时抛出", async () => {
     mockInsertCredit.mockRejectedValueOnce(new Error("db down"));
     await expect(

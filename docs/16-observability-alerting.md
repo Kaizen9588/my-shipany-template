@@ -68,7 +68,7 @@
 个人产品量级（日事件 < 50w），Postgres 单表 + 索引完全够用；真到量级瓶颈时这张表
 天然适合按月分区/迁移 ClickHouse，迁移面只有写入点一处。
 
-### 3.2 op_events 表（迁移 0012）
+### 3.2 op_events 表（迁移 0014）
 
 ```sql
 CREATE TABLE IF NOT EXISTS op_events (
@@ -103,18 +103,19 @@ export async function recordOpEvent(input: {
 export function trackCriticalEvent(...)
 ```
 
-**接入点清单**（v1 只接资金与安全相关的 8 类，不贪多）：
+**接入点清单**（v1 只接资金与安全相关事件，不贪多；2026-08 状态：5 类已接入 + 1 类仅落库不推送，2 类预留）：
 
-| 事件 | severity | 触发点 |
-|------|----------|--------|
-| payment.checkout_failed | warn/error | checkout route catch |
-| payment.provider_unhealthy | critical | health.ts 标记 unhealthy 时 |
-| payment.provider_recovered | info | health TTL 到期恢复时 |
-| payment.amount_mismatch | critical | handlePaymentEvent data==='mismatch' |
-| payment.refund_processed | warn | processRefund 成功后 |
-| payment.webhook_invalid_signature | critical | 三渠道验签失败 |
-| auth.login_failed_burst | warn | 登录 guard 连续失败 |
-| system.env_or_migration_failed | critical | instrumentation register catch |
+| 事件 | severity | 触发点 | 状态 |
+|------|----------|--------|------|
+| payment.checkout_failed | warn/error | checkout route catch | ✅ 已接入，但仅写 op_events 落库（fireAndForgetOpEvent），不经 notifyChannel 推送——信用卡拒绝属高频正常业务失败，推送会告警淹没 |
+| payment.provider_failure | warn | 渠道创建会话失败时 health 记录 | ✅ 已接入（仅 logger/health 记录，不推送） |
+| payment.provider_unhealthy | critical | health.ts 标记 unhealthy 时 | ✅ 已接入 |
+| payment.provider_recovered | info | health TTL 到期恢复时 | ✅ 已接入 |
+| payment.amount_mismatch | critical | handlePaymentEvent data==='mismatch' | ✅ 已接入 |
+| payment.refund_processed | warn | processRefund 成功后 | ✅ 已接入 |
+| payment.webhook_invalid_signature | critical | 三渠道 notify 路由 parseWebhook 失败 | ✅ 已接入（2026-08 对抗式审查后接线） |
+| auth.login_failed_burst | warn | 登录 guard 连续失败 | 预留（无发射点） |
+| system.env_or_migration_failed | critical | instrumentation register catch | 预留（无发射点） |
 
 ### 3.4 图表与检索（后台 `/admin/logs` + `/admin/events`）
 
@@ -301,10 +302,10 @@ export async function notifyChannel(message: NotifyMessage): Promise<void>;
 
 | 步骤 | 内容 | 依赖 |
 |------|------|------|
-| 1 | 迁移 0012：op_events 表 | - |
+| 1 | 迁移 0014：op_events 表 | - |
 | 2 | `lib/oplog.ts`（recordOpEvent + trackCriticalEvent） | 1 |
 | 3 | `lib/notify/`（types + feishu + wecom + index，含抑制） | - |
-| 4 | 8 个接入点埋事件（§3.3 清单，其中 3 个同时接 notify） | 2, 3 |
+| 4 | 接入点埋事件（§3.3 清单：6 类已接入，2 类预留） | 2, 3 |
 | 5 | `/admin/payment` 渠道管理页 + `/api/admin/payment-settings` | - |
 | 6 | `/admin/logs` 事件检索页 + stats 图表扩展 | 2 |
 | 7 | health.ts 标记/恢复时发告警（替换 console.warn） | 3 |

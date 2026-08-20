@@ -14,6 +14,7 @@ import {
 import { getModelProvider } from "@/lib/ai/registry";
 import { getUserUuid } from "@/services/user";
 import { rateLimit, rateLimitUser } from "@/lib/ratelimit";
+import { TelemetryEvents, trackServer } from "@/lib/telemetry/server";
 
 /**
  * POST /api/v1/ai/generate —— AI 文本生成（核心收费闭环，docs/13）
@@ -65,6 +66,18 @@ export async function POST(req: Request) {
       return jsonErr(`invalid model: ${model}`, 400);
     }
 
+    // M3（对抗性测试）：max_tokens 服务端封顶 —— 此前未校验，负数被当 truthy 传入
+    // （预估扣费可能退化为仅 1 积分，若渠道对非法 max_tokens 做 clamp 则形成计费绕过），
+    // 超大值也无上限。只允许 [1, pricing.max_output_tokens]。
+    const rawMaxTokens =
+      typeof max_tokens === "number" && Number.isFinite(max_tokens)
+        ? Math.floor(max_tokens)
+        : pricing.max_output_tokens;
+    const safeMaxTokens = Math.min(
+      Math.max(rawMaxTokens, 1),
+      pricing.max_output_tokens
+    );
+
     const textPrompt =
       typeof prompt === "string" && prompt.trim() ? prompt.trim() : "";
     const hasMessages = Array.isArray(messages) && messages.length > 0;
@@ -83,7 +96,7 @@ export async function POST(req: Request) {
 
     // 5. 预估一次扣清（原子：余额校验 + 扣减，P-1.2）
     // 2.9：messages 计入输入长度（此前传 messages 时输入 0 计费）
-    const creditsCharged = estimateCredits(pricing, textPrompt, max_tokens, messages);
+    const creditsCharged = estimateCredits(pricing, textPrompt, safeMaxTokens, messages);
     try {
       await decreaseCredits({
         user_uuid,
@@ -108,7 +121,19 @@ export async function POST(req: Request) {
         ...(hasMessages
           ? { messages }
           : { prompt: textPrompt }),
-        maxTokens: max_tokens || pricing.max_output_tokens,
+        maxTokens: safeMaxTokens,
+      });
+
+      // 服务端真相源埋点（docs/13 §二步骤 7：扣减 + 生成成功后）
+      trackServer({
+        name: TelemetryEvents.AiGenerated,
+        distinctId: user_uuid,
+        properties: {
+          model,
+          credits_charged: creditsCharged,
+          prompt_tokens: result.usage?.promptTokens || 0,
+          completion_tokens: result.usage?.completionTokens || 0,
+        },
       });
 
       return Response.json({
