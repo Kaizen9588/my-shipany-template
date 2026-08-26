@@ -293,15 +293,39 @@ export async function getUserUuid() {
 
 ## 7. 鉴权安全问题
 
-| # | 问题 | 严重程度 | 说明 |
-|---|------|----------|------|
-| 1 | ~~One-Tap 不校验 aud~~ | ~~致命~~ | ✅ P-1.11 已修复：verifyIdToken 校验 aud/iss/exp |
-| 2 | ~~findUserByEmail 无 provider 维度~~ | ~~高~~ | ✅ P-1.11 已修复：findUserByEmail(email, provider)，saveUser 传 signin_provider |
-| 3 | ~~并发注册无幂等~~ | ~~高~~ | ✅ P-1.11 已修复：insertUser 捕获唯一约束冲突后重查复用 |
-| 4 | ~~/api/update-invite 无认证~~ | ~~高~~ | ✅ P-1.4 已修复：user_uuid 从 session 获取 |
-| 5 | ~~无 RBAC 角色系统~~ | ~~中~~ | ✅ RBAC 已落地且分级（2.7 修复）：operator（看板/查询）/ admin（退款/调积分/封禁）/ super_admin（角色授予，唯一可授予 super_admin）；getAdminUser 拦截 banned 账号；ADMIN_EMAILS 白名单等价 super_admin |
-| 6 | API Key 无速率限制 | 中 | sk- 密钥可被暴力使用（6.18 待落地） |
-| 7 | ADMIN_EMAILS 为明文环境变量 | 低 | 管理员邮箱列表明文存储 |
-| 8 | 无 Session 过期配置 | 低 | 使用 NextAuth 默认 30 天 |
-| 9 | 无刷新 Token 机制 | 低 | JWT 过期后需重新登录 |
-| 10 | next-auth beta 版本 | 中 | 5.0.0-beta.25 可能有 breaking change |
+| # | 问题 | 严重程度 | 状态 | 说明 |
+|---|------|----------|------|------|
+| 1 | ~~One-Tap 不校验 aud~~ | ~~致命~~ | ✅ 已修复 | P-1.11：verifyIdToken 校验 aud/iss/exp |
+| 2 | ~~findUserByEmail 无 provider 维度~~ | ~~高~~ | ✅ 已修复 | P-1.11：findUserByEmail(email, provider) |
+| 3 | ~~并发注册无幂等~~ | ~~高~~ | ✅ 已修复 | P-1.11：insertUser 捕获唯一约束冲突后重查 |
+| 4 | ~~/api/update-invite 无认证~~ | ~~高~~ | ✅ 已修复 | P-1.4：user_uuid 从 session 获取 |
+| 5 | ~~无 RBAC 角色系统~~ | ~~中~~ | ✅ 已修复 | operator / admin / super_admin 三级；getAdminUser 拦截 banned |
+| 6 | **验证码消费逻辑疑似在真实环境失败（P0）** | **阻断** | ⚠️ No-Go | `models/verification.ts` 使用 `.update().select("id")` 后检查 `count`，但未传 `count: "exact"`，Supabase/PostgREST 在此模式下 `count` 通常为 null。测试中人为 mock `count: 1`，不能证明真实行为。结果：邮箱登录/重置验证码可能永远消费失败。应检查 `data?.length` 或显式请求精确 count，并加真实 Postgres 集成测试。 |
+| 7 | **OAuth 同邮箱不合并（Account Linking）** | 高（P1） | ⚠️ 待设计 | 多 provider 登录同一邮箱会创建多个独立用户，积分/订单/订阅拆散。需定义：verified email 合并策略、provider subject 唯一键、合并审批、冲突处理。不能仅凭客户端 email 合并。 |
+| 8 | **删除/封禁后会话与 API Key 不即时失效** | 高（P1） | ⚠️ 待加固 | 用户被删除或封禁后，已签发的 JWT session 和 API Key 仍可使用，直到过期。应：封禁/删除时在服务端每次请求重新校验用户状态；API Key 状态实时查库或缓存短 TTL；提供主动撤销 session/API key 接口。 |
+| 9 | **`getUserUuid` 异常时 fail-open 风险** | 高（P1） | ⚠️ 待加固 | 数据库查询异常、用户状态未知或 session 字段缺失时，任何收费/后台/敏感读操作应 fail-closed（返回 401/5xx），不能把"查不到用户"当成匿名用户继续执行高价值路径。 |
+| 10 | API Key 无速率限制 | 中 | 待落地 | sk- 密钥可被暴力使用 |
+| 11 | ADMIN_EMAILS 为明文环境变量 | 低 | 已知边界 | 管理员邮箱列表明文存储 |
+| 12 | 无 Session 过期配置 | 低 | 已知边界 | 使用 NextAuth 默认 30 天 |
+| 13 | 无刷新 Token 机制 | 低 | 已知边界 | JWT 过期后需重新登录 |
+| 14 | next-auth beta 版本 | 中 | 已知风险 | 5.0.0-beta.25 可能有 breaking change |
+| 15 | **默认超级管理员弱口令（P0-3）** | **阻断** | **No-Go** | 迁移 0012 无条件创建 `admin@shipany.local / 123456 / super_admin`，「首次强制改密」只是登录后跳转，账号在迁移执行完即可用公开凭据登录，谁先登谁改密。修法：条件建号 + 随机密码 + pending_activation + 生产不建号（详见 boundary-spec §九 N-7） |
+| 16 | **账号风险状态机缺失（第九轮）** | 高 | 待设计 | 只有通用封禁（banned），没有资金风控的 `restricted` / 欠款 / 冻结消费概念；退款滥用、拒付、债务未清偿三类场景无处落地。需在用户状态机上增加 `restricted`（清偿前禁止消费与再次下单）、欠款记录与人工审批流（详见 docs/05 §7.3） |
+
+---
+
+## 8. 账号删除与 GDPR
+
+> ⚠️ **文档与实现不一致（已知）**：
+> - `docs/11-telemetry-analytics.md` 一处声称 GDPR 删除联动已完成，一处列为 v3；
+> - 代码中 `deleteUser` 的 PostHog 删除联动**未实现**；
+> - 当前删除为软删除 + 匿名化 email，但保留 `password_hash`、`signin_openid`、`signin_ip`。
+
+**当前实现**：`app/api/user/delete-account` 路由执行软删除，匿名化邮箱。
+
+**待补齐（严格 GDPR 口径）**：
+1. PostHog `deleteUser` / `$delete` 事件联动
+2. `password_hash`、`signin_openid`、`signin_ip` 擦除或置空
+3. 订单/发票数据按法定期限保留（不能删），与行为数据区分
+4. 数据导出功能（用户可下载全部个人数据）
+5. 删除确认邮件 + 冷静期（可选）

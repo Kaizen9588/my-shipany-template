@@ -2,7 +2,7 @@
 
 > 版本：v1（✅ 已实现，见落地记录；配合一次性积分包阶段，预留订阅续费提醒能力）
 > 目标：事务性邮件可扩展、模板可维护、失败可追踪；营销类与事务类严格分离（合规边界）
-> 日期：2025-08-14
+> 更新：2026-08（第八轮审查后补充生产边界说明）
 >
 > ✅ **v1 落地记录（2026-08）**：`lib/email/*`（Provider 抽象 + Resend 适配器 + fire-and-forget + shouldSendToday 节流）、
 > `emails/`（React Email 布局 + welcome/payment_success/credit_low/credit_exhausted/verification_code 模板）、
@@ -222,6 +222,12 @@ if (left.left_credits === 0) {
 | 发送失败 | Resend 自带重试（bounce 不会重试） |
 | 业务降级 | 邮件失败不阻塞支付/积分主流程，`console.error` 记录 |
 | 状态追踪 | v1 只记日志；v2 建 `email_logs` 表追踪 sent/bounced/complained |
+
+> ⚠️ **生产边界（P2）**：当前 fire-and-forget + console.error 意味着：
+> - 验证码邮件、支付成功邮件等关键通知可能静默丢失，用户无感知；
+> - 无送达率、退信率、投诉率监控，可能影响发件人信誉；
+> - 退信投诉无自动处理，长期可能被邮件服务商封禁。
+> v2 的 `email_logs` + Resend webhook 是生产稳定运行的必要条件。
 
 > Resend 的 webhook（bounced / complained / delivered）可在 v2 接入 `email_logs` 表，v1 先不做。
 

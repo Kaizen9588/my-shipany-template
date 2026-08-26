@@ -25,6 +25,10 @@ Waffo 是 2023 年成立的全球支付平台，总部香港，团队来自蚂�
 | 申请门槛 | 个人/公司均可，香港主体 |
 | 内置能力 | 智能路由（自动选最优 processor）、智能重试、欺诈防护、chargeback 防御 |
 
+> ⚠️ **P2-2（第九轮，2026-08-26）**：Waffo 内置 chargeback 防御只降低拒付率，不代表争议链路可缺。本地仍需
+> `PaymentEventType` 加 `dispute_opened / dispute_lost / dispute_won`、`orders` 加 `disputed / charged_back`，
+> 并把 Waffo 争议/拒付通知接入 webhook 白名单（当前 §4.2 事件表未列争议事件）。处理路径见 provider-abstraction §3.1。
+
 ### 1.2 与 Creem 的关键区别
 
 | 维度 | Creem | Waffo |

@@ -19,6 +19,13 @@
 - GitHub OAuth 凭据（如需 GitHub 登录）
 - 支付渠道账号（按需）：Stripe / Creem / Waffo（多渠道架构见 [payment/provider-abstraction.md](./payment/provider-abstraction.md)）
 
+> ⚠️ **P1-6（第九轮，2026-08-26）——建库路径三处并存，本文件是唯一的离群且最权威入口**：本文件在 §2.1、§5.2.1、§5.2.2 三处仍要求先手工执行
+> `data/install.sql`（并写「顺序硬约束：必须先跑 install.sql 再让迁移跑起来」）。这条硬约束的理由本身已过期——基础表由
+> `0000_install_base.sql` 创建（7 表），0004 的依赖天然由迁移序列满足；而 `docs/03 §概述` 明写 `install.sql`「与迁移基线存在出入，勿再参考」。
+> README 又给了第三条路径（从 0000 起逐条粘贴）。按本文字面推演最可能是首次启动 `relation already exists` 崩溃。
+> **修法**：统一为「空库 → 只跑 `data/migrations/*`，0000 即基线」；`data/install.sql` 移入 `legacy/` 并标废弃；
+> `lib/migrate.ts` 加基线断言（`schema_migrations` 为空但 `users` 已存在 → fail-fast）；三处建库说明只保留一处，其余改链接。
+
 ### 2.2 部署步骤
 
 1. **连接仓库**：
@@ -183,6 +190,18 @@ pnpm dev
 
 > 顺序硬约束：必须先跑 `install.sql` 再让迁移跑起来--迁移 0004 的外键依赖基础表。
 
+> ⚠️ **P1-7（第九轮，2026-08-26）——启动时自动迁移无并发锁/事务/回滚/发布顺序**：`schema_migrations` 只解决同一进程重复启动不重跑，
+> 不解决多进程同秒启动；而本文件首选 Vercel + push 即自动部署 + `docs/08` 推荐 pooler 事务模式，三者叠加正是「多实例 + 运行时自动迁移 + pooler」的默认形态。
+> `CREATE OR REPLACE FUNCTION` 并发执行会撞 `tuple concurrently updated`。修法：迁移器入口 `pg_advisory_xact_lock(固定key)`（事务级）；
+> 每条迁移与 `INSERT INTO schema_migrations` 同事务；失败 fail-fast；把迁移从 `instrumentation.ts` 剥离为流水线前置步骤，
+> 运行时只校验「schema 版本 ≥ 代码要求版本」；建索引一律 `CONCURRENTLY`；补 expand-contract 规则。
+>
+> ⚠️ **P0-3（第九轮，2026-08-26）——自动迁移向生产库种入公开弱口令**：迁移 0012 会在服务首次冷启动时把
+> `admin@shipany.local / 123456 / super_admin` 写进生产库，「首次强制改密」只是登录后的跳转，谁先登谁改密。
+> 生产实例在部署者首次登录前（通常几小时）暴露 super_admin。修法：0012 改为条件建号（仅 `ADMIN_BOOTSTRAP_EMAIL` 显式设置时创建），
+> 密码取 `ADMIN_BOOTSTRAP_PASSWORD` 或 `gen_random_uuid()` 随机生成只写一次启动日志，建号时 `status='pending_activation'`，
+> `NODE_ENV=production` 默认不建号改由 CLI 人工执行；README 删除逐字凭据。完整分析见 boundary-spec §二/§九。
+
 #### 5.2.2 本地 Supabase（本地开发，Docker 或 CLI 二选一）
 
 **前置**：Docker Desktop（OrbStack 等兼容 runtime 均可），项目端口 54322(Postgres)/54323(Studio)。
@@ -271,3 +290,4 @@ stripe listen --forward-to localhost:3000/api/stripe-notify
 | `next dev` 在沙箱中 EMFILE 循环重启 | 文件描述符限制 | 用户本地终端运行不受影响；沙箱内用 `next build && next start` |
 | npm EPERM 错误 | root-owned cache files | `npm install --cache /tmp/npm-cache` 或 `sudo chown -R 501:20 ~/.npm` |
 | 端口 3000 被占用 | 旧进程未退出 | `lsof -ti:3000 | xargs kill -9` |
+| 生产冷启动种入默认弱口令 | 迁移 0012 无条件创建 `admin@shipany.local/123456` | 条件建号 + 随机密码 + pending_activation + 生产不建号（P0-3，见 §5.2.1 与 boundary-spec §九） |

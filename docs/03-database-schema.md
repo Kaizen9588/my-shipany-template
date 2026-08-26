@@ -10,6 +10,20 @@
 - **表数量**：16 张（迁移 0000 基础 7 张 + 迁移新增 9 张，含 system_settings、op_events）
 - **存储过程**：资金与额度相关写操作全部下沉数据库原子执行（见文末「存储过程」一节），应用层不做 check-then-write
 
+> ⚠️ **生产就绪状态（2026-08 第八轮审查结论）**：当前 schema 满足沙箱/演示，
+> 但**资金 RPC 权限边界不成立**——三个资金函数（decrease_credits /
+> handle_order_payment / process_order_refund）均位于 public schema，
+> 迁移未显式 REVOKE/GRANT 或启用 RLS，anon/authenticated 理论上可直接调用。
+> 真实收费前必须完成权限收紧与 credit lots 改造。详见本文第 5 节。
+
+> ⚠️ **第九轮对抗式审查（2026-08-26）新增阻断项，详见文末「存储过程」与「问题清单」**：
+> - **P0-2**：`decrease_credits` 的「行锁串行化」论证不成立（INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化，保护资金的并发安全声明未经论证）。
+> - **P0-3**：自动迁移 0012 会向生产库种入全网公开的 `admin@shipany.local / 123456 / super_admin` 弱口令（「首次强制改密」只是登录后跳转，账号在迁移执行完那一刻即可用公开凭据登录，谁先登谁改密）。
+> - **P1-5**：`ai_requests.request_id` 若做成全局 `UNIQUE` 会变成「客户端可控的公共键空间」，需改为 `UNIQUE(user_uuid, request_id)`。
+> - **P1-6**：建库路径三处并存（`install.sql` vs 迁移 0000 基线），`docs/07` 仍要求先手工执行 `install.sql`，需统一。
+> - **P1-7**：启动时自动迁移无并发锁、无事务边界、无回滚、无发布顺序约定，`03` 问题清单却把「无迁移工具」标 ✅。
+> - **P2-1**：`orders.expired_at` 在下单时刻冻结，有效期应从 `paid_at` 起算。
+
 ## ER 关系图
 
 ```
@@ -166,6 +180,12 @@ created ──(支付成功 webhook)──> paid ──(退款)──> refunded
 > `p_amount_cents`/`p_currency` 后与订单金额精确比对，不符时置 `mismatch` 而非充值。
 > 该状态不会被 expire 定时任务触碰（任务只扫 `status='created'`）。
 
+> ⚠️ **P2-1（第九轮，2026-08-26）——积分有效期在下单时刻冻结**：`expired_at` 在创建 checkout 之前就按
+> `now + valid_months` 算好并随订单 INSERT，有效期从下单时刻而非付款时刻起算，收银台/3DS 停留时间全由用户承担。
+> 修法（随 credit_lots 改造一起做）：批次 `expired_at` 在 `handle_order_payment` 内以 `paid_at + valid_months` 计算；
+> `orders` 只存 `credit_valid_months` 策略，`expired_at` 改为支付时回填的派生列；另加 `checkout_expires_at`（下单时写，定时任务只扫它，
+> 对齐渠道 session 生命周期 24h）；`expired→paid` 恢复设最大迟到窗口（如 7 天），超窗落 `late_paid` 走人工决策。
+
 **字段说明**：
 
 | 字段 | 类型 | 说明 |
@@ -245,6 +265,18 @@ CREATE TABLE credits (
 3. FIFO：从最早过期的正数记录开始消耗，记录首个被消耗积分的 order_no
 4. INSERT 一条负数 credits 记录（expired_at 为 NULL，order_no 指向 FIFO 首笔来源）
 ```
+
+> ⚠️ **P0-2（第九轮，2026-08-26）**：上述第 1 步「行锁锁定该用户全部积分记录（串行化并发扣减）」的论证**不成立**。
+> 扣减写的是 **INSERT 一条负数流水**，不是 UPDATE 已有行；`SELECT ... FOR UPDATE` 只锁查询快照里**已存在**的行，
+> 对并发插入的新行没有谓词锁/间隙锁。所以「锁 + SUM 校验 + INSERT 负数」在 append-only 账本上不等价于串行化。
+> 是否真的能双花，取决于 SUM 校验是与 `FOR UPDATE` 同一条语句，还是解锁后另起一条语句（READ COMMITTED 下后者会重取快照看到对方提交）；
+> 文档没有规定这一点，也没有任何隔离级别分析（全仓 grep `advisory` / `SERIALIZABLE` / `幻读` 零命中）。
+> 这是一个被标成 ✅ 的、未经论证的并发安全声明，而它保护的是资金。
+> **修法（推荐 2）**：
+> 1. 快修：`decrease_credits` 开头 `PERFORM pg_advisory_xact_lock(hashtext(p_user_uuid))`（pooler 事务模式必须用**事务级**锁）。
+> 2. 正解：迁到 `credit_lots` 后改为 `UPDATE credit_lots SET remaining_credits = remaining_credits - x WHERE id = ? AND remaining_credits >= x`，靠 UPDATE 自身行锁 + 返回行数保证原子。
+> 3. 兜底：`credit_balances(user_uuid PK, balance)` 物化余额行 + `CHECK(balance >= 0)`。
+> **并发回归测试必须进验收标准**：N 并发扣减，断言余额恒 ≥ 0 且成功次数 = `floor(余额 / 单价)`。
 
 **缺失索引**（P-1.8 已补齐，见迁移 `0004_fk_indexes.sql`）：
 - `user_uuid` - 按用户查积分流水，高频 ✅
@@ -393,7 +425,7 @@ CREATE TABLE payment_settings (
 );
 
 -- 定价映射（兼容预建产品 Creem 与动态金额 Waffo/Stripe 两种模式）
--- ⚠️ v1 保持单表；阶段 2 加 Stripe/PayPal 时拆为 payment_products + channel_products（见 docs/12 遗留项跟踪表）
+-- ⚠️ v1 保持单表；阶段 2 加 Stripe/PayPal 时拆为 payment_products + channel_products（docs/12 已删除，遗留项见 ./ADVERSARIAL-REVIEW-2026-08-26.md）
 CREATE TABLE payment_products (
     id SERIAL PRIMARY KEY,
     product_id VARCHAR(50) UNIQUE NOT NULL,     -- 'starter' / 'standard' / 'premium'
@@ -407,50 +439,233 @@ CREATE TABLE payment_products (
 );
 ```
 
-## 待新增表（规划中）
+## 已落地的补充表（迁移中已创建）
 
 ```sql
--- 邮箱验证码 ✅ 已落地（迁移 0006）
-verification_codes (id, email, code, expired_at, used, created_at)
+-- 邮箱验证码（迁移 0006）
+verification_codes (id, email, code_hash, expired_at, consumed, consumed_at, created_at)
 
--- 匿名演示用量 ✅ 已落地（迁移 0005，见 docs/14-anonymous-trial.md）
+-- 匿名演示用量（迁移 0005，见 docs/14-anonymous-trial.md）
 anonymous_usage (id, anonymous_key VARCHAR(64), usage_date DATE,
                  count INT, updated_at timestamptz,
                  UNIQUE (anonymous_key, usage_date))
 
--- users 表字段补充 ✅ 已落地（迁移 0006/0008）
-ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT 'user';                    -- RBAC（0008）
-ALTER TABLE users ADD COLUMN password_hash VARCHAR(255);                         -- 密码登录（0006，OAuth 用户为 NULL）
-ALTER TABLE users ADD COLUMN password_updated_at timestamptz;                    -- （0006）
-ALTER TABLE users ADD COLUMN email_marketing_opt_in BOOLEAN DEFAULT true;        -- 营销邮件退订（待落地）
-
--- 操作审计日志 ✅ 已落地（迁移 0008）
+-- 操作审计日志（迁移 0008）
 audit_logs (id, admin_uuid, action, target_type, target_uuid,
             detail, ip, created_at)
 
--- 站内通知 ✅ 已落地（迁移 0009）
+-- 站内通知（迁移 0009）
 notifications (id, uuid, user_uuid, type, title, content,
                is_read, created_at)
 
--- 运营事件日志（规划，见 docs/16-observability-alerting.md）
--- 日志采集 + 飞书/企微机器人告警的数据底座
+-- 运营事件日志（迁移 0014，见 docs/16-observability-alerting.md）
 op_events (id, event_type, severity, source, subject_uuid, detail JSONB, created_at)
+
+-- users 表补充字段（迁移 0006/0008）
+ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT 'user';
+ALTER TABLE users ADD COLUMN password_hash VARCHAR(255);
+ALTER TABLE users ADD COLUMN password_updated_at timestamptz;
 ```
+
+## 规划中 / v1 收费前必须完成
+
+> 以下表为第八轮审查识别的 P0/P1 改造项，真实收费前必须落地。
+
+```sql
+-- ============================================
+-- P0：积分批次账本（替代正负净额模型）
+-- ============================================
+
+-- 积分批次：每次发放一个批次，追踪剩余量与过期时间
+CREATE TABLE credit_lots (
+    id BIGSERIAL PRIMARY KEY,
+    lot_no VARCHAR(64) UNIQUE NOT NULL,        -- 批次号（snowflake）
+    user_uuid VARCHAR(64) NOT NULL,            -- 用户
+    source_type VARCHAR(32) NOT NULL,          -- order_pay / affiliate_reward / admin_adjust / sign_up_bonus / refund
+    source_ref VARCHAR(128),                   -- 来源订单号 / 退款单号 / 调整单号
+    total_credits INT NOT NULL,                -- 原始发放数量
+    remaining_credits INT NOT NULL,            -- 剩余可用（消费后递减）
+    expired_at timestamptz,                    -- 过期时间（NULL = 永久）
+    status VARCHAR(20) NOT NULL DEFAULT 'active',  -- active / expired / exhausted / refunded
+    created_at timestamptz NOT NULL DEFAULT NOW(),
+    updated_at timestamptz NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_credit_lots_user ON credit_lots(user_uuid);
+CREATE INDEX idx_credit_lots_expired ON credit_lots(expired_at) WHERE status = 'active';
+
+-- 消费明细：一次消费可跨多个批次，每条记录扣减的批次与数量
+CREATE TABLE credit_consumptions (
+    id BIGSERIAL PRIMARY KEY,
+    consumption_no VARCHAR(64) UNIQUE NOT NULL,  -- 消费单号
+    user_uuid VARCHAR(64) NOT NULL,
+    request_id VARCHAR(128),                     -- 业务请求 ID（如 AI 请求 idempotency key）
+    request_type VARCHAR(32) NOT NULL,           -- ai_generate / admin_adjust 等
+    lot_id BIGINT NOT NULL REFERENCES credit_lots(id),
+    credits INT NOT NULL,                        -- 本次从该批次扣减的数量（正数）
+    created_at timestamptz NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_credit_consumptions_request ON credit_consumptions(request_id);
+CREATE INDEX idx_credit_consumptions_user ON credit_consumptions(user_uuid);
+
+-- 退款回补明细
+CREATE TABLE credit_refunds (
+    id BIGSERIAL PRIMARY KEY,
+    refund_no VARCHAR(64) UNIQUE NOT NULL,
+    user_uuid VARCHAR(64) NOT NULL,
+    order_no VARCHAR(64) NOT NULL,               -- 原支付订单号
+    provider_refund_id VARCHAR(256),             -- 渠道退款 ID
+    refunded_credits INT NOT NULL,               -- 回补积分数
+    reason TEXT,
+    created_at timestamptz NOT NULL DEFAULT NOW()
+);
+
+-- ============================================
+-- P0：支付事件 inbox 与对账
+-- ============================================
+
+-- Webhook 原始事件 inbox（所有渠道事件先入库，再异步处理）
+CREATE TABLE payment_events (
+    id BIGSERIAL PRIMARY KEY,
+    provider VARCHAR(32) NOT NULL,               -- stripe / creem / waffo
+    provider_event_id VARCHAR(256) NOT NULL,     -- 渠道事件 ID（幂等用）
+    event_type VARCHAR(64) NOT NULL,             -- payment_succeeded / refund_succeeded 等
+    order_no VARCHAR(64),                        -- 关联本地订单号（可能为空，需后绑定）
+    session_id VARCHAR(256),                     -- 渠道 session / checkout ID
+    payment_intent_id VARCHAR(256),              -- 渠道支付意图 ID
+    amount_cents INT,                            -- 事件金额（分）
+    currency VARCHAR(10),
+    raw_body JSONB NOT NULL,                     -- 原始 payload
+    signature_verified BOOLEAN NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending / processed / failed / ignored
+    retry_count INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    processed_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT NOW(),
+    UNIQUE (provider, provider_event_id)
+);
+CREATE INDEX idx_payment_events_order ON payment_events(order_no);
+CREATE INDEX idx_payment_events_status ON payment_events(status);
+
+-- ============================================
+-- P0 / P1：退款记录
+-- ============================================
+
+-- 退款单（支持部分退款、多次退款）
+CREATE TABLE refunds (
+    id BIGSERIAL PRIMARY KEY,
+    refund_no VARCHAR(64) UNIQUE NOT NULL,
+    order_no VARCHAR(64) NOT NULL,
+    user_uuid VARCHAR(64) NOT NULL,
+    provider VARCHAR(32) NOT NULL,
+    provider_refund_id VARCHAR(256),             -- 渠道退款 ID
+    amount_cents INT NOT NULL,                   -- 本次退款金额（分）
+    currency VARCHAR(10) NOT NULL,
+    credits_refunded INT,                        -- 回补的积分（部分退款按比例或批次）
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending / succeeded / failed
+    reason TEXT,
+    initiated_by VARCHAR(64),                    -- admin / system / customer
+    created_at timestamptz NOT NULL DEFAULT NOW(),
+    updated_at timestamptz NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_refunds_order ON refunds(order_no);
+CREATE INDEX idx_refunds_provider ON refunds(provider, provider_refund_id);
+
+> ⚠️ **P0-1（第九轮，2026-08-26）——批次账本还缺「债务化」与「退款中间态」**：上面的 `credit_lots.remaining_credits`、
+> `credit_refunds.refunded_credits`、`refunds.credits_refunded` 全部是非负语义，全库没有任何负批次/欠款的表达。
+> 当「已消费积分 + 全额退款」发生时，扣回量为 0 却订单进终态 `refunded`，白嫖成立。需补：
+> 1. `orders` 增加 `refund_requested` / `refund_blocked`（以及争议链路需要的 `disputed` / `charged_back`）状态。
+> 2. `credit_lots` 增加 `debt` 类型，或独立 `credit_debts(user_uuid, order_no, credits, status)`，账号进 `restricted`。
+> 3. 退款准入校验：`refundable_amount = order.amount × (该订单批次 remaining_credits / 订单发放积分)`，超额走显式审批。
+
+-- ============================================
+-- P1：AI 请求状态机（幂等 + 崩溃补偿）
+-- ============================================
+
+CREATE TABLE ai_requests (
+    id BIGSERIAL PRIMARY KEY,
+    request_id VARCHAR(128) NOT NULL,            -- 业务请求 ID（客户端 idempotency key 或服务端生成）
+    user_uuid VARCHAR(64) NOT NULL,
+    model VARCHAR(64) NOT NULL,
+    provider VARCHAR(32) NOT NULL,
+    provider_request_id VARCHAR(256),            -- 渠道请求 ID
+    estimated_credits INT NOT NULL,              -- 预估扣费
+    actual_credits INT,                          -- 实际结算（v3 精确结算用）
+    status VARCHAR(24) NOT NULL DEFAULT 'created',  -- created / reserved / running / succeeded / failed / refund_pending / refunded
+    input_tokens INT,
+    output_tokens INT,
+    error_message TEXT,
+    created_at timestamptz NOT NULL DEFAULT NOW(),
+    updated_at timestamptz NOT NULL DEFAULT NOW(),
+    completed_at timestamptz
+);
+CREATE UNIQUE INDEX uq_ai_requests_user_request ON ai_requests(user_uuid, request_id);
+CREATE INDEX idx_ai_requests_user ON ai_requests(user_uuid);
+CREATE INDEX idx_ai_requests_status ON ai_requests(status) WHERE status IN ('refund_pending', 'running');
+```
+
+> ⚠️ **P1-5（第九轮，2026-08-26）——幂等键作用域必须按用户隔离**：原设计 `request_id VARCHAR(128) UNIQUE NOT NULL`
+> 是**全局唯一 + 客户端可控**，键空间变成公共资源。批量抢注 `"1"`、`"test"`、常见客户端库默认键，受害者用同名键请求时
+> 要么被永久拒服（无 TTL 字段、无自助恢复），要么在「冲突返回已有记录」的实现下读到别人的结果。
+> **修法**：`UNIQUE(user_uuid, request_id)`（匿名端点用 `anonymous_key` 作租户维度）+ 补齐键的必填性/字符集/长度
+> + 存请求体指纹 `hash(model+prompt+max_tokens)`、同键不同体返 422 + 用 `created_at` 落地 24h 口径与清理任务。
+> （严格说这是「欠规定」而非已成事实漏洞：`ai_requests` 尚未建表，`docs/02` 已写明按用户作用域，实现者照做即可避免跨租户。）
+
+> 注：`users.email_marketing_opt_in` 仍待落地（营销邮件退订，见 docs/10）。
 
 ---
 
 ## 数据库设计问题清单
 
-| # | 问题 | 严重程度 | 建议 |
-|---|------|----------|------|
-| 1 | 无外键约束 | 中 | Supabase 可通过 Dashboard 添加 FK 约束 |
-| 2 | 缺少高频查询索引 | 高 | 补充上述缺失索引 |
-| 3 | 无 created_at 默认值 | 低 | 建议加 `DEFAULT NOW()` |
-| 4 | 无 updated_at 自动更新 | 低 | 建议加 trigger 自动更新 |
-| 5 | email 字段无唯一约束 | 低 | 当前 (email, provider) 组合唯一，同一邮箱可多 provider |
-| 6 | 无软删除机制（除 posts/apikeys） | 中 | users/orders/credits/affiliates 无软删除 |
-| 7 | ~~无数据库迁移工具~~ | ~~中~~ | ✅ 已落地：`data/migrations/` + `schema_migrations` 最小迁移机制（P-1.12） |
-| 8 | 直接用 Service Role Key | 高 | 生产环境应限制 RLS，用 Anon Key + RLS Policy |
+| # | 问题 | 严重程度 | 状态 | 说明 |
+|---|------|----------|------|------|
+| 1 | 无外键约束 | 中 | 待修复 | 建议逐步加 FK，先从 orders/credits → users 开始 |
+| 2 | 缺少高频查询索引 | 高 | ⚠️ 部分 | 迁移 0004 补了核心索引；credit_lots / payment_events 等新表需配套索引 |
+| 3 | 无 created_at 默认值 | 低 | 待修复 | 建议加 `DEFAULT NOW()` |
+| 4 | 无 updated_at 自动更新 | 低 | 待修复 | 建议加 trigger 自动更新 |
+| 5 | email 字段无唯一约束 | 低 | 已知边界 | 当前 (email, provider) 组合唯一；同邮箱多 provider 的 account linking 见 docs/04 |
+| 6 | 无软删除机制（除 posts/apikeys） | 中 | 待评估 | users/orders/credits/affiliates 无软删除；订单/积分因审计需求不应物理删除 |
+| 7 | ~~无数据库迁移工具~~ | ~~中~~ | ⚠️ 最小机制已落地，并发/回滚/发布顺序未覆盖 | `data/migrations/` + `schema_migrations` 只解决同进程重复启动；多进程同秒启动、失败 fail-fast、回滚、expand-contract、索引 CONCURRENTLY 均未定义（P1-7） |
+| 8 | **资金 RPC 权限边界不成立（P0）** | **阻断** | **No-Go** | 三个资金函数位于 public schema，无显式 REVOKE/GRANT、无 SECURITY DEFINER 边界、无 RLS；真实收费前必须移到 private schema 并只授权 service role |
+| 9 | **积分账本缺少批次追踪（P0）** | **阻断** | **No-Go** | 当前正负净额模型无法正确处理过期、退款和审计；需 credit_lots + credit_consumptions |
+| 10 | **缺少 Webhook inbox 与对账表（P0）** | **阻断** | **No-Go** | 无持久化事件队列，无法防重放、乱序、失败重试和每日对账 |
+| 11 | 缺少 RLS 策略 | 高 | 待落地 | 所有用户表应启用 RLS；终端用户 client 走 anon/authenticated + RLS，服务端走 service role bypass |
+| 12 | 备份无加密与脱敏 | 高 | 待落地 | backup.ts 对 orders/credits 用 select("*")，可能泄露 PII；需加密、保留期限、恢复演练 |
+| 13 | **`decrease_credits` 并发安全声明未经论证（P0-2）** | **阻断** | **No-Go** | INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化；需 advisory lock 或迁 credit_lots 后 UPDATE 原子扣减，并发回归测试进 CI |
+| 14 | **自动迁移向生产库种入公开弱口令（P0-3）** | **阻断** | **No-Go** | 迁移 0012 无条件创建 `admin@shipany.local / 123456 / super_admin`；需条件建号 + 随机密码 + pending_activation + 生产不建号 |
+| 15 | **建库路径三处并存（P1-6）** | 高 | 待统一 | `install.sql`（03 标「勿再参考」）与迁移 0000 基线、README 粘贴路径并存，`docs/07` 仍要求先手工执行 install.sql；需统一为「空库只跑 migrations」并加基线断言 |
+| 16 | **订单/支付事件缺少争议状态（P2-2）** | 中 | 待补 | `orders.status` 无 `disputed/charged_back`，`PaymentEventType` 无争议类型，收到渠道 dispute 事件无处归一化 |
+
+---
+
+## 权限与安全边界（生产强制）
+
+> ⚠️ **P0：当前资金函数的权限边界依赖代码约定，不依赖数据库强制**。
+> 在 Supabase 默认配置下，`public` schema 中的函数对 `anon` 和 `authenticated`
+> 角色默认具有 `EXECUTE` 权限。本项目的三个资金函数（decrease_credits /
+> handle_order_payment / process_order_refund）全部位于 `public` schema，
+> 迁移中没有任何 `REVOKE PUBLIC ON FUNCTION` 或 RLS 策略。
+
+### 生产必须满足的数据库权限基线
+
+1. **Schema 分层**：资金函数移入 `private` / `internal` schema，与 public schema 隔离。
+2. **权限最小化**：
+   ```sql
+   -- 回收 public 执行权限
+   REVOKE ALL ON FUNCTION private.decrease_credits FROM PUBLIC;
+   REVOKE ALL ON FUNCTION private.handle_order_payment FROM PUBLIC;
+   REVOKE ALL ON FUNCTION private.process_order_refund FROM PUBLIC;
+   -- 仅授权 service role
+   GRANT EXECUTE ON FUNCTION private.decrease_credits TO service_role;
+   GRANT EXECUTE ON FUNCTION private.handle_order_payment TO service_role;
+   GRANT EXECUTE ON FUNCTION private.process_order_refund TO service_role;
+   ```
+3. **RLS 启用**：`orders`、`credits`、`affiliates`、`credit_lots` 等核心表全部启用 RLS。
+   - 终端用户：只能看自己的订单/积分/消费记录
+   - 管理员：通过 service role 或专用 admin role 访问
+4. **客户端分离**：代码中明确区分 `serverClient`（service_role，仅服务端）与
+   `userClient`（anon/authenticated，随用户请求），禁止通用模块"有 service key 就切换"。
+5. **CI 断言**：每次迁移后检查 `information_schema.routine_privileges`，
+   确保资金函数没有授予 anon/authenticated。
 
 ---
 
@@ -467,6 +682,16 @@ op_events (id, event_type, severity, source, subject_uuid, detail JSONB, created
 行为：FOR UPDATE 锁定该用户全部积分记录 -> 净余额 < p_credits 抛 'insufficient credits'
      -> FIFO 插入负数记录（expired_at=NULL，order_no 指向首个被消耗来源）
 ```
+
+> ⚠️ **P0-2（第九轮，2026-08-26）**：「FOR UPDATE 串行化并发扣减」的论证不成立，分析见 §3「积分扣减算法」下方与问题清单 #13。
+> 这是 DB 层的 check-then-write（与本文开篇「应用层禁止 check-then-write」的约定是同一结构），在 append-only 账本上
+> 必须靠 advisory lock 或迁 credit_lots 后 `UPDATE ... WHERE remaining >= x` 才能成立，不能靠「实现细节可能刚好对」。
+
+> ⚠️ **P1-7（第九轮，2026-08-26）——迁移机制的并发与发布顺序**：`schema_migrations` 只保证同一进程重复启动不重跑，
+> 不解决多进程同秒启动；迁移失败后是否继续启动也没定义。`CREATE OR REPLACE FUNCTION` 并发执行会撞 `tuple concurrently updated`。
+> 修法：迁移器入口 `pg_advisory_xact_lock(固定key)`（**事务级**，pooler 下可用）；每条迁移与 `INSERT INTO schema_migrations` 同事务；
+> 失败 fail-fast 阻止服务接流量；把迁移从 `instrumentation.ts` 剥离为流水线前置步骤，运行时只校验「schema 版本 ≥ 代码要求版本」；
+> 建索引一律 `CONCURRENTLY` 且单独成条；补 expand-contract 规则（删列/改名拆两次发布）。
 
 ### 2. handle_order_payment（迁移 0003，0010/0017 增强）—— 支付成功落账
 

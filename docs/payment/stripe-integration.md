@@ -136,6 +136,11 @@ const event = await stripe.webhooks.constructEventAsync(
 | `invoice.payment_failed` | ❌ 未处理 | 订阅扣款失败 -> 通知用户 |
 | `charge.refunded` | ✅ 已处理（6.21） | 经 payment_intent 反查 session 拿 order_no → process_order_refund（扣回积分 → 更新订单状态） |
 
+> ⚠️ **P2-2（第九轮，2026-08-26）——争议/拒付事件缺失**：上表 6 个待处理事件里根本没有
+> `charge.dispute.created` / `charge.dispute.closed`（以及 `charge.dispute.updated`）。争议与订阅无关，v1 一次性付款同样会发生。
+> 需把 `dispute_opened / dispute_lost / dispute_won` 归一化进 `PaymentEventType`，订单加 `disputed / charged_back` 状态，
+> 并在 Stripe Dashboard 订阅争议事件（处理路径见 provider-abstraction §3.1 与 docs/05 §7.2）。
+
 **Webhook 事件处理代码模板**：
 
 ```typescript

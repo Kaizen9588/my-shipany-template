@@ -199,7 +199,7 @@ landing.visited
 | 回放遮盖 | ✅ 已落地：`session_recording.maskAllInputs: true`（posthog.tsx） |
 | 数据保留 | 回放 30 天，事件 13 个月（PostHog 免费版默认），文档写明 |
 | 欧盟用户 | 优先用 PostHog 欧盟节点（`api.eu.posthog.com`） |
-| 与 GDPR 方案整合 | 用户删除账号时同步删 PostHog 个人数据（`posthog.deleteUser`） |
+| 与 GDPR 方案整合 | ⚠️ **v3 规划，当前未实现**：代码中 `delete-account` 路由未调用 `posthog.deleteUser`。设计方案见 §11 v3 阶段。
 
 ---
 
@@ -220,7 +220,7 @@ landing.visited
 |------|------|
 | v1（✅ 已落地） | `lib/telemetry/` 抽象层 + PostHog Provider + 身份缝合（匿名→user_uuid）+ §6 漏斗埋点 + 支付停留时长（t1/t2/t3）+ 会话录制默认开启（maskAllInputs）+ 三 SDK consent 门控 + `ai.generated` 服务端埋点 |
 | v2 | 错误追踪 + bug 复现链路（PostHog Error Tracking / Sentry 评估） |
-| v3 | feature flag（灰度/开关）+ 移除 OpenPanel 评估 + GDPR 删除联动 |
+| v3 | feature flag（灰度/开关）+ 移除 OpenPanel 评估 + GDPR 删除联动（deleteUser） |
 
 ---
 

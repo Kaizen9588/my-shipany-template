@@ -103,6 +103,21 @@ export async function recordOpEvent(input: {
 export function trackCriticalEvent(...)
 ```
 
+**可靠性说明**：`recordOpEvent` 当前为 fire-and-forget 模式——异步写入、吞错、不阻塞。
+
+> ⚠️ **生产边界（P1）**：支付成功、退款、积分调账、Webhook 验签失败等
+> **审计/资金类关键事件，不能只靠 fire-and-forget**。
+> 数据库闪断、进程崩溃或网络波动都可能导致事件永久丢失，
+> 与"全量不能丢"的审计要求冲突。
+>
+> **目标方案**：Transactional Outbox——
+> 1. 关键事件与业务变更在同一数据库事务内写入 outbox 表；
+> 2. 异步进程轮询 outbox 发送通知 + 更新状态；
+> 3. 事件有唯一 id、重试次数、最后错误、告警升级；
+> 4. 通知失败不丢事件，只积压告警。
+>
+> 非关键事件（info 级）可继续 fire-and-forget。
+
 **接入点清单**（v1 只接资金与安全相关事件，不贪多；2026-08 状态：5 类已接入 + 1 类仅落库不推送，2 类预留）：
 
 | 事件 | severity | 触发点 | 状态 |
@@ -116,6 +131,13 @@ export function trackCriticalEvent(...)
 | payment.webhook_invalid_signature | critical | 三渠道 notify 路由 parseWebhook 失败 | ✅ 已接入（2026-08 对抗式审查后接线） |
 | auth.login_failed_burst | warn | 登录 guard 连续失败 | 预留（无发射点） |
 | system.env_or_migration_failed | critical | instrumentation register catch | 预留（无发射点） |
+
+> ⚠️ **第九轮（2026-08-26）新增告警缺口**：
+> 1. **迁移失败无人收到告警（P1-7）**：`system.env_or_migration_failed` 仍为「预留（无发射点）」，
+>    而迁移是 `instrumentation.ts` 服务启动时自动执行的，失败后若 fail-fast 也应有 critical 告警。
+> 2. **AI 成本与错误率的可观测性整块缺失（P0-4 的事后发现能力）**：全文 grep `ai.` / `成本` / `demo` 零命中；
+>    匿名演示端点因「失败退还次数」导致 `anonymous_usage` 计数被减回，监控上看不到任何异常。需新增 AI 调用成本、错误率、
+>    匿名演示失败率告警条目，否则 P0-4 的滥用无法被发现。
 
 ### 3.4 图表与检索（后台 `/admin/logs` + `/admin/events`）
 
@@ -178,6 +200,10 @@ recordProviderFailure 达阈值
 | 渠道卡片 x3 | 启用开关（写 payment_settings）、priority 编辑、当前健康状态（unhealthy 剩余时间）、最近 24h 成功/失败计数（op_events 聚合） |
 | 定价映射 | 独立菜单 `/admin/pricing`，编辑 payment_products（金额/积分/creem_product_id/stripe_price_id 回填） |
 | 操作审计 | 开关/改价全部走 `fireAndForgetAudit`（已有机制） |
+
+> ⚠️ **P1-8（第九轮，2026-08-26）——定价真相源矛盾**：此处「编辑 payment_products」隐含「表优先」，与 `docs/05:27` / `docs/15:45`
+> 宣称 `data/pricing.ts` 是「单一真相源」互相矛盾。若 DB 表才是权威，则 `/admin/pricing` 的定价写入（非事务、无不变量校验、无双人复核）
+> 直接落在收款金额权威源上，应从 P1 升 P0，并加最大金额/货币白名单/积分价格比例上下限 + 事务 + 审计 + 双人复核。
 
 > **健康状态说明**：/admin/payment 里的“健康状态”是**基于最近 24h checkout 落库成败的
 > 内存/日志统计**，不是真实的外部探活。没有调用数据的渠道显示“暂无调用数据”，
@@ -295,6 +321,21 @@ export async function notifyChannel(message: NotifyMessage): Promise<void>;
 | auth.login_failed_burst | warn | 疑似撞库 |
 
 > PostHog 埋点继续保留（漏斗分析用），Notifier 是即时通道，两者互补不互替。
+
+---
+
+## 五、Cron 安全与运维
+
+> ⚠️ **生产边界（P2）**：Cron 端点（`/api/cron/daily`）当前基础实现可用，
+> 但距离规模化生产运维还有以下缺口：
+
+| 项 | 状态 | 说明 |
+|----|------|------|
+| `CRON_SECRET` 校验 | ⚠️ 需确认 | 生产必须配置 `CRON_SECRET`，Vercel Cron 自动注入；未配置时应拒绝访问或 fail-closed |
+| 单实例锁 | ❌ 未实现 | 多实例部署下 cron 可能并发执行，造成重复清理、重复对账等；需分布式锁或唯一约束防重 |
+| 超时保护 | ❌ 未实现 | 长任务应分批/分页执行，避免 Vercel 函数超时（10s Pro / 60s Pro Max） |
+| 成功/失败指标 | ❌ 未实现 | 每次 cron 应记录执行时长、处理条数、失败条数，并写入 op_events；失败触发告警 |
+| 断点续跑 | ❌ 未实现 | 大规模任务失败后应能从中断处继续，而非重新全量 |
 
 ---
 

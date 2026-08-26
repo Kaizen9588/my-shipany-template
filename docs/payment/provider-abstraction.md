@@ -85,9 +85,18 @@ export type PaymentEventType =
   | "payment_succeeded"
   | "payment_failed"
   | "refund_succeeded"
+  | "dispute_opened"      // 第九轮 P2-2 建议新增：争议/拒付链路
+  | "dispute_lost"
+  | "dispute_won"
   | "subscription_activated"
   | "subscription_canceled"
   | "subscription_renewed";
+
+> ⚠️ **P2-2（第九轮，2026-08-26）——争议/拒付（chargeback）全链路缺失**：原 `PaymentEventType` 无争议类型，
+> `orders.status`（created/paid/expired/refunded/mismatch/deleted）无 `disputed/charged_back`，即使收到渠道 dispute 事件也无处归一化。
+> 修法：加 `dispute_opened / dispute_lost / dispute_won` + 订单加 `disputed / charged_back`；
+> `dispute_opened` 立即冻结该用户积分消费（保留余额不删）+ 挂起联盟奖励 + 订单收入移出可确认收入；
+> `dispute_lost` 复用退款债务化路径（docs/05 P0-1）；`dispute_won` 解冻。三份渠道文档的事件白名单显式列出争议事件。
 
 export interface PaymentProvider {
   id: string;                       // "creem" | "waffo" | "stripe" | "paypal"
@@ -225,9 +234,12 @@ CREATE TABLE payment_products (
 );
 ```
 
-> ⚠️ **渠道扩展决策**（见 docs/12 遗留项跟踪表）：v1 只有 Creem + Waffo，Waffo 动态金额不需要 channel_product_id，仅 Creem 需要一列，稀疏矩阵不成立，故 v1 保持单表。**阶段 2 加 Stripe/PayPal 时**拆为 `payment_products`（渠道无关）+ `channel_products(channel, product_id, channel_product_id)` 两张表，避免渠道列持续膨胀。
+> ⚠️ **渠道扩展决策**（docs/12 已删除，遗留项见 [ADVERSARIAL-REVIEW-2026-08-26.md](../ADVERSARIAL-REVIEW-2026-08-26.md)）：v1 只有 Creem + Waffo，Waffo 动态金额不需要 channel_product_id，仅 Creem 需要一列，稀疏矩阵不成立，故 v1 保持单表。**阶段 2 加 Stripe/PayPal 时**拆为 `payment_products`（渠道无关）+ `channel_products(channel, product_id, channel_product_id)` 两张表，避免渠道列持续膨胀。
 
 Checkout 流程：查 `payment_products` 拿可信金额 → 按渠道适配（Creem 传 product_id，Waffo/Stripe 传 amount）。
+
+> ⚠️ **P1-8（第九轮，2026-08-26）——定价真相源矛盾**：本节「查 `payment_products` 拿可信金额」属「表优先」阵营，
+> 与 `docs/05:27` / `docs/15:45` 宣称 `data/pricing.ts` 是「单一真相源」互相矛盾。需先钉死真相源，再重定级管理员定价写入的风险等级。
 
 ---
 

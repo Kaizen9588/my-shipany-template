@@ -69,7 +69,7 @@
 
 项目采用四层分离架构。**关键变更**（相对早期三层设计）：Provider 抽象层以 `lib/` 子目录（`payment/email/telemetry/notify/ai`）分区管理，因为它会调用第三方 SDK 和 models 层，不再满足「纯工具函数」约束。
 
-> ⚠️ 早期版本曾计划把抽象层集中到 `lib/integrations/` 目录，该迁移从未发生；实际落地形态即 lib 子目录（见 docs/12 待落地表 aisdk 项）。
+> ⚠️ 早期版本曾计划把抽象层集中到 `lib/integrations/` 目录，该迁移从未发生；实际落地形态即 lib 子目录（docs/12 已删除，遗留项见 [ADVERSARIAL-REVIEW-2026-08-26.md](./ADVERSARIAL-REVIEW-2026-08-26.md)）。
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -130,7 +130,7 @@
 
 | 目录 | 现状 | 归宿 |
 |------|------|------|
-| `aisdk/` | Kling 自定义 Provider（kling-provider、kling-image-model 等），⚠️ 仍在仓库根目录，迁移未发生（见 docs/12 待落地表） | 迁入 `lib/ai/providers/kling/` |
+| `aisdk/` | Kling 自定义 Provider（kling-provider、kling-image-model 等），⚠️ 仍在仓库根目录，迁移未发生（docs/12 已删除，遗留项见 [ADVERSARIAL-REVIEW-2026-08-26.md](./ADVERSARIAL-REVIEW-2026-08-26.md)） | 迁入 `lib/ai/providers/kling/` |
 | demo API 内联 switch-case | ✅ 已收敛：openai/deepseek/openrouter/siliconflow 路由已迁入 `lib/ai/registry.ts` + 各 provider 适配器 | — |
 
 **分层区分**：
@@ -383,3 +383,7 @@ interface FormSlot {
 | 写博文 | 后台表单 | insertPost | INSERT posts |
 | 发送邮件 | 服务端触发 | sendEmail（fire-and-forget） | —（失败仅日志） |
 | 埋点上报 | 客户端 track() | 服务端 trackServer()（真相源） | —（PostHog） |
+
+> ⚠️ **P1-8（第九轮，2026-08-26）——定价真相源矛盾**：本表「购买积分」写「查 payment_products」，与 `docs/05:27` / `docs/15:45`
+> 宣称 `data/pricing.ts` 是「单一真相源」互相矛盾（7 处表优先 vs 2 处文件唯一真相源）。需先钉死哪个是真相源，
+> 再据此重定级「管理员定价更新」的风险等级，详见 docs/05 §1.2 与 boundary-spec §九。

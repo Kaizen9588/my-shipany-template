@@ -293,6 +293,10 @@ export async function POST(req: Request) {
 | `refund.created` | 退款发生 | 扣回积分 | `charge.refunded` |
 | `dispute.created` | 争议发生 | 记录日志 | `charge.dispute.created` |
 
+> ⚠️ **P2-2（第九轮，2026-08-26）**：`dispute.created` 的处理动作「记录日志」不闭环——需归一化为 `dispute_opened`，
+> 立即冻结该用户积分消费（保留余额不删）+ 挂起联盟奖励 + 订单收入移出可确认收入；争议败诉复用退款债务化路径（docs/05 P0-1）。
+> Creem 无退款 API、对消费者申诉极宽松，争议/拒付链路必须在开真实收款前补齐。
+
 **Webhook 重试策略**：
 
 | 重试次数 | 间隔 |
