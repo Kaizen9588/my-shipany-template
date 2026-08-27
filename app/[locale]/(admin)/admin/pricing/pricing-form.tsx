@@ -15,6 +15,7 @@ interface ProductRow {
   valid_months: number;
   creem_product_id?: string | null;
   stripe_price_id?: string | null;
+  waffo_product_id?: string | null;
 }
 
 export default function PricingForm({ products }: { products: ProductRow[] }) {
@@ -46,6 +47,7 @@ export default function PricingForm({ products }: { products: ProductRow[] }) {
             valid_months: Number(p.valid_months),
             creem_product_id: p.creem_product_id || "",
             stripe_price_id: p.stripe_price_id || "",
+            waffo_product_id: p.waffo_product_id || "",
           })),
         }),
       });
@@ -68,7 +70,7 @@ export default function PricingForm({ products }: { products: ProductRow[] }) {
       {rows.map((p) => (
         <div key={p.product_id} className="rounded-lg border p-4">
           <div className="mb-2 font-medium">{p.product_id}</div>
-          <div className="grid gap-3 md:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-6">
             <div className="space-y-1">
               <Label>金额(分)</Label>
               <Input
@@ -108,6 +110,15 @@ export default function PricingForm({ products }: { products: ProductRow[] }) {
                 value={p.stripe_price_id || ""}
                 onChange={(e) =>
                   setField(p.product_id, "stripe_price_id", e.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Waffo Product ID</Label>
+              <Input
+                value={p.waffo_product_id || ""}
+                onChange={(e) =>
+                  setField(p.product_id, "waffo_product_id", e.target.value)
                 }
               />
             </div>

@@ -313,7 +313,7 @@ i18n/
 
 ```
 components/
-├── ui/               # shadcn/ui 基础组件（28 个）
+├── ui/               # shadcn/ui 基础组件（29 个，计数以 docs/06 清点为准，第十轮对齐）
 │   ├── button.tsx    # 按钮
 │   ├── dialog.tsx    # 对话框
 │   ├── form.tsx      # 表单
@@ -373,7 +373,7 @@ interface FormSlot {
 | 操作 | 前端 | 后端 | 数据库 |
 |------|------|------|--------|
 | 用户登录 | OAuth 重定向 | jwt callback → saveUser | INSERT users + INSERT credits |
-| 查看积分 | fetch /api/get-user-info | getUserCredits | SELECT credits WHERE expired_at > now |
+| 查看积分 | fetch /api/get-user-info | getUserCredits | SELECT credits WHERE ((credits > 0 AND (expired_at IS NULL OR expired_at >= now())) OR credits <= 0)——负数流水不过滤、正数 NULL=长期有效（原表只写 `expired_at > now` 会漏掉这两个分支导致余额算错；以 docs/03 §3 完整口径为准，第十轮修正） |
 | 购买积分 | POST /api/checkout | 查 payment_products → 渠道 createCheckout | INSERT orders (status=created) |
 | 支付成功 | 渠道 Webhook | handleOrderPayment（事务化） | UPDATE orders + INSERT credits + INSERT affiliates |
 | **调用 AI（正式）** | POST /api/v1/ai/generate | 鉴权 → 余额校验 → 原子扣减 → 模型路由（✅ 已实现，docs/13） | INSERT credits (负数 ai_generate) |

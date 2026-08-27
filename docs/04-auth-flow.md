@@ -329,3 +329,4 @@ export async function getUserUuid() {
 3. 订单/发票数据按法定期限保留（不能删），与行为数据区分
 4. 数据导出功能（用户可下载全部个人数据）
 5. 删除确认邮件 + 冷静期（可选）
+6. `op_events.subject_uuid`（关联 user_uuid/order_no）与 `audit_logs` 中个人数据的清理/匿名化策略（⚠️ 第十轮 P3-7 补入：软删除口径目前只覆盖 users 行本身；运营日志与审计表同样属于 GDPR「个人数据」范围，删除账号时需定义保留期或匿名化规则）

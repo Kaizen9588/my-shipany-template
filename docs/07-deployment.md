@@ -84,8 +84,15 @@ pnpm build                          # 默认不启用（Vercel / next start 兼�
 
 1. Stripe Dashboard -> Developers -> Webhooks -> Add Endpoint
 2. URL: `https://your-domain.com/api/stripe-notify`
-3. Events: `checkout.session.completed`
+3. Events: `checkout.session.completed` + `charge.refunded`
 4. 复制 Signing Secret 到环境变量 `STRIPE_WEBHOOK_SECRET`
+
+> ⚠️ **P2-C（第十轮对抗式审查，2026-08-26）——订阅清单必须与代码处理清单同步**：
+> 本节原先只订阅 `checkout.session.completed`，与 docs/02 §3、stripe-integration §2.3 已标 ✅ 的
+> `charge.refunded`（6.21 已实现处理逻辑）不一致。按旧文字面配置的生产站：渠道侧（含 Dashboard 手动）退款
+> 不会触发回调 → 本地订单不置 refunded、积分不扣回，退款同步**整体失效**且只有 No-Go 清单里的每日对账才能兜住。
+> **维护规则**：凡 [stripe-integration §2.3](./payment/stripe-integration.md) 事件白名单新增条目，本节第 3 步同步更新；
+> 后续接入争议事件时同样加在这里（`charge.dispute.created` / `charge.dispute.closed`，见第九轮 P2-2）。
 
 ### 2.6 Creem 配置
 

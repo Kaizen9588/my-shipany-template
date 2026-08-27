@@ -24,6 +24,7 @@ export interface PaymentProduct {
   valid_months: number;
   creem_product_id?: string | null;
   stripe_price_id?: string | null;
+  waffo_product_id?: string | null; // Pancake 预建产品（迁移 0018）
 }
 
 
@@ -105,6 +106,7 @@ export async function getPaymentProducts(): Promise<
       valid_months: row.valid_months,
       creem_product_id: row.creem_product_id,
       stripe_price_id: row.stripe_price_id,
+      waffo_product_id: row.waffo_product_id,
     };
   });
   return map;
@@ -152,6 +154,7 @@ export async function updatePaymentProduct(
       | "valid_months"
       | "creem_product_id"
       | "stripe_price_id"
+      | "waffo_product_id"
     >
   >
 ): Promise<void> {

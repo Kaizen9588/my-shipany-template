@@ -118,6 +118,14 @@ export function trackCriticalEvent(...)
 >
 > 非关键事件（info 级）可继续 fire-and-forget。
 
+> ⚠️ **P1-A（第十轮对抗式审查，2026-08-26）——Notifier 推送链路自身缺执行模型保障**：
+> 上面的 Transactional Outbox 解决的是「op_events 不丢」，但还有另一个断点：「告警从未开始发送」——
+> fire-and-forget 的 `notifyChannel` 在 Vercel serverless 下响应返回后不保证执行（全仓 `after()`/`waitUntil` 零命中）。
+> 后果：渠道摘除（provider_unhealthy）、金额篡改（amount_mismatch）、webhook 伪造等 critical 告警可能静默不发，
+> 而「收到告警」正是 §4.2c 渠道处置 SOP 的第一步，整条人工决策链路依赖它。
+> **修法**：critical 级告警改为同步发送或经 outbox 投递；其余通知挂 Next.js `after()`；boundary-spec §四的「fire-and-forget」纪律补执行模型约束。
+> 注意与 N-4 的关系：N-4 是持久化问题（事件落库不丢），P1-A 是调度问题（副作用根本没机会跑），两个都要关。
+
 **接入点清单**（v1 只接资金与安全相关事件，不贪多；2026-08 状态：5 类已接入 + 1 类仅落库不推送，2 类预留）：
 
 | 事件 | severity | 触发点 | 状态 |
@@ -324,7 +332,9 @@ export async function notifyChannel(message: NotifyMessage): Promise<void>;
 
 ---
 
-## 五、Cron 安全与运维
+## 六、Cron 安全与运维
+
+> ⚠️ 章节号勘误（第十轮 P3-5）：本文件原有两个「五」（飞书/企微、Cron），自本版起顺延为「六、七」。
 
 > ⚠️ **生产边界（P2）**：Cron 端点（`/api/cron/daily`）当前基础实现可用，
 > 但距离规模化生产运维还有以下缺口：
@@ -339,7 +349,7 @@ export async function notifyChannel(message: NotifyMessage): Promise<void>;
 
 ---
 
-## 六、实施清单（6.23，按依赖排序）
+## 七、实施清单（6.23，按依赖排序）
 
 | 步骤 | 内容 | 依赖 |
 |------|------|------|

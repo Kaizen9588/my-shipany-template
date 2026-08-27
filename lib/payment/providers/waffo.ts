@@ -1,4 +1,8 @@
-import { Environment, Waffo, WebhookResult } from "@waffo/waffo-node";
+import {
+  WaffoPancake,
+  WebhookEvent,
+  WebhookEventType,
+} from "@waffo/pancake-ts";
 import {
   CheckoutParams,
   CheckoutResult,
@@ -6,108 +10,103 @@ import {
   PaymentProvider,
 } from "../types";
 import { getSupabaseClient } from "@/models/db";
+import { getPaymentProducts } from "@/models/payment";
 
 /**
- * Waffo 支付渠道适配器（6.1，docs/payment/waffo-integration.md）
+ * Waffo 支付渠道适配器（Pancake 新一代模型，2026-08 从 @waffo/waffo-node 迁移）
+ * 操作指南：docs/payment/waffo-operations-guide.md
  *
- * 差异点（适配器内消化）：
- * - 动态金额：无 product 概念，金额为字符串（"99.00"）
- * - 认证：API Key + RSA 密钥对 + merchantId
- * - Webhook：RSA 验签（X-SIGNATURE），响应必须 {"message":"success"}
- * - 退款 API：有
+ * 差异点（适配器内消化，均以 @waffo/pancake-ts d.ts 为准）：
+ * - 预建产品：金额真相在渠道目录（Store/Product + publish），本地下单不传金额、
+ *   严禁 priceSnapshot 覆盖目录价 —— webhook 实付额与本地订单靠迁移 0010 精确比对兜底
+ * - 认证收敛为 2 项凭据：WAFFO_MERCHANT_ID + WAFFO_PRIVATE_KEY（PEM，
+ *   或 WAFFO_PRIVATE_KEY_BASE64 供 CI）；旧 API_KEY/WAFFO_PUBLIC_KEY 已废弃
+ * - 会话：登录用户一律 checkout.authenticated.create（buyerIdentity=user_uuid 防
+ *   串号），session 默认 45 分钟；新标签页打开 checkoutUrl（Safari ITP）
+ * - Webhook：x-waffo-signature 头（t=,v1= RSA-SHA256），SDK 内置验签公钥 +
+ *   时间戳防重放（默认容忍 45 分钟以覆盖全部重试）；成功响应体是纯文本 "OK"
+ * - 幂等锚点：orderMerchantExternalId = order_no，webhook data 原样回传
+ * - 退款：Pancake 无商户退款 API（OrdersResource 仅 cancelSubscription）——
+ *   capabilities.refund_api=false，后台退款走手动指引，refund.succeeded webhook 扣回积分
  */
-let waffoClient: Waffo | null = null;
+let pancakeClient: WaffoPancake | null = null;
 
-function getWaffoClient(): Waffo {
-  if (!waffoClient) {
-    waffoClient = new Waffo({
-      apiKey: process.env.WAFFO_API_KEY || "",
-      privateKey: process.env.WAFFO_PRIVATE_KEY || "",
-      waffoPublicKey: process.env.WAFFO_PUBLIC_KEY || "",
+function getPancakeClient(): WaffoPancake {
+  if (!pancakeClient) {
+    // BASE64 注入供 CI/托管平台无法存多行 PEM 的场景（操作指南 §三注入方式 C）
+    const privateKey = process.env.WAFFO_PRIVATE_KEY_BASE64
+      ? Buffer.from(process.env.WAFFO_PRIVATE_KEY_BASE64, "base64").toString(
+          "utf8"
+        )
+      : process.env.WAFFO_PRIVATE_KEY || "";
+    pancakeClient = new WaffoPancake({
       merchantId: process.env.WAFFO_MERCHANT_ID || "",
-      environment:
-        process.env.NODE_ENV === "production"
-          ? Environment.PRODUCTION
-          : Environment.SANDBOX,
+      privateKey,
     });
   }
-  return waffoClient;
+  return pancakeClient;
 }
 
-function centsToString(cents: number): string {
-  return (cents / 100).toFixed(2);
+/** 渠道显示串金额（"29.00"）→ 整数分。JPY 等零小数币种本项目 v1 未启用 */
+function displayToCents(display: string | undefined): number {
+  return Math.round(parseFloat(String(display ?? "0")) * 100);
 }
 
 export const waffoProvider: PaymentProvider = {
   id: "waffo",
-  supported_methods: ["card", "alipay", "wechat_pay"],
+  // Pancake 收银台方法集为 card/applepay/googlepay/wechat（d.ts PaymentMethod），无 alipay
+  supported_methods: ["card", "wechat_pay"],
   capabilities: {
-    refund_api: true,
-    subscription: true,
-    portal: true,
+    refund_api: false, // Pancake 无商户退款 API → 后台退款给手动指引，webhook 兜底扣分
+    subscription: true, // 模型存在但 v1 产品全为一次性
+    portal: false, // customer session 自助管理未接入
   },
 
   hasValidCredentials() {
     return Boolean(
-      process.env.WAFFO_API_KEY &&
-        process.env.WAFFO_PRIVATE_KEY &&
-        process.env.WAFFO_PUBLIC_KEY &&
-        process.env.WAFFO_MERCHANT_ID
+      process.env.WAFFO_MERCHANT_ID &&
+        (process.env.WAFFO_PRIVATE_KEY || process.env.WAFFO_PRIVATE_KEY_BASE64)
     );
   },
 
   async createCheckout(params: CheckoutParams): Promise<CheckoutResult> {
-    const waffo = getWaffoClient();
-    const webUrl = process.env.NEXT_PUBLIC_WEB_URL || "";
+    const waffo = getPancakeClient();
 
-    const response = await waffo.order().create({
-      paymentRequestId: params.order_no, // 幂等键（≤32 位）
-      merchantOrderId: params.order_no,
-      orderCurrency: params.currency,
-      orderAmount: centsToString(params.amount),
-      orderDescription: params.product_name,
-      orderRequestedAt: new Date().toISOString(),
-      notifyUrl: `${webUrl}/api/waffo-notify`,
-      successRedirectUrl: params.success_url,
-      failedRedirectUrl: params.cancel_url,
-      cancelRedirectUrl: params.cancel_url,
-      userInfo: {
-        userId: params.user_uuid, // 必填
-        userEmail: params.user_email, // 必填（真实邮箱，防欺诈）
-        userTerminal: "WEB", // 必填
-      },
-      paymentInfo: {
-        productName: "ONE_TIME_PAYMENT", // 不传 payMethodName → 用户跳 Waffo cashier 自选支付方式
-      },
-      goodsInfo: {
-        goodsName: params.product_name, // 必填
-        goodsUrl: params.goods_url, // 必填（合规）
-        appName: process.env.NEXT_PUBLIC_PROJECT_NAME || "", // 必填：goodsUrl 或 appName 至少一个
-      },
-      extendInfo: JSON.stringify({
-        order_no: params.order_no,
-        user_uuid: params.user_uuid,
-        credits: params.credits,
-      }),
-    });
-
-    if (!response.isSuccess()) {
+    // Pancake 预建产品映射（payment_products.waffo_product_id，迁移 0018）
+    const products = await getPaymentProducts();
+    const waffoProductId = products[params.product_id]?.waffo_product_id || "";
+    if (!waffoProductId) {
       throw new Error(
-        `waffo order create failed: ${response.getMessage() || "unknown"}`
+        `waffo product not mapped for: ${params.product_id}（请在 Waffo 创建 Store/Product 并 publish，再回填 payment_products.waffo_product_id；价格必须等于目录原价且与定价页含税口径一致）`
       );
     }
 
-    const data = response.getData();
-    if (!data) {
-      throw new Error("waffo order create failed: empty data");
-    }
+    const result = await waffo.checkout.authenticated.create({
+      productId: waffoProductId,
+      currency: params.currency.toUpperCase(),
+      buyerIdentity: params.user_uuid, // 绑定我方账户 id，JWT 身份防串号/滥用
+      buyerEmail: params.user_email, // 仅预填收银台邮箱输入框，与身份独立
+      successUrl: params.success_url,
+      orderMerchantExternalId: params.order_no, // 幂等/对账锚点，webhook 回传
+      metadata: {
+        order_no: params.order_no,
+        user_uuid: params.user_uuid,
+        credits: String(params.credits),
+      },
+      // 不传 priceSnapshot：目录原价即实付价（资金安全约束，动态改价 v1 禁用）
+      // 不传 cancel_url：create-session 无该参数，取消在收银台上完成
+    });
 
-    // 存入 waffo_orders 渠道专属表
+    // 存入 waffo_orders 渠道专属表（acquiring_order_id 待 webhook order.completed 落地）
     const supabase = getSupabaseClient();
     const { error } = await supabase.from("waffo_orders").insert({
       order_no: params.order_no,
-      acquiring_order_id: data.acquiringOrderId || "",
+      acquiring_order_id: "",
       payment_request_id: params.order_no,
+      session_id: result.sessionId || "",
+      checkout_expires_at: result.expiresAt
+        ? new Date(result.expiresAt).toISOString()
+        : null,
       created_at: new Date().toISOString(),
     });
     if (error) {
@@ -115,142 +114,68 @@ export const waffoProvider: PaymentProvider = {
     }
 
     return {
-      checkout_url: data.orderAction || "",
-      provider_session_id: data.acquiringOrderId || "",
+      checkout_url: result.checkoutUrl || "",
+      provider_session_id: result.sessionId || "",
     };
   },
 
   async parseWebhook(req: Request): Promise<PaymentEvent | null> {
-    const waffo = getWaffoClient();
     const body = await req.text();
-    const signature = req.headers.get("x-signature") || "";
+    const signature =
+      req.headers.get("x-waffo-signature") ||
+      req.headers.get("X-Waffo-Signature") ||
+      "";
 
     if (!signature) {
-      throw new Error("missing x-signature");
+      throw new Error("missing x-waffo-signature");
     }
 
-    const handler = waffo.webhook();
-    let settled = false;
+    // SDK 验签失败/时间戳过期直接抛错（旧代 SDK 静默 resolve 的坑已在新代消除）
+    let event: WebhookEvent;
+    try {
+      event = getPancakeClient().webhooks.verify(body, signature);
+    } catch (e) {
+      throw new Error(`waffo webhook verify failed: ${(e as Error).message}`);
+    }
 
-    // 兜底超时：SDK 可能在验签失败时 resolve（而非 reject）、或回调类型不匹配
-    // 而不触发 onPayment/onRefund —— 此前 Promise 永久 pending，请求悬挂 + 渠道无限重试
-    // （docs/12 2.11）。时限内未 settle 按 "未识别事件" 处理返回 null，避免挂起。
-    const event = await new Promise<PaymentEvent | null>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          resolve(null);
-        }
-      }, 10_000);
+    const data = (event.data || {}) as WebhookEvent["data"];
+    const meta = data.orderMetadata || {};
+    const orderNo = String(
+      data.orderMerchantExternalId || meta.order_no || ""
+    );
 
-      const settle = (ev: PaymentEvent | null) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(ev);
-      };
-
-      handler.onPayment((notification: any) => {
-        const result = notification?.result || {};
-        const extendInfo = result.extendInfo
-          ? safeParseExtend(result.extendInfo)
-          : {};
-        const orderNo = String(
-          result.merchantOrderId || extendInfo.order_no || ""
-        );
-        settle({
-          type:
-            result.orderStatus === "PAY_SUCCESS"
-              ? "payment_succeeded"
-              : "payment_failed",
+    switch (event.eventType) {
+      case WebhookEventType.OrderCompleted: {
+        return {
+          type: "payment_succeeded",
           order_no: orderNo,
-          user_uuid: String(extendInfo.user_uuid || ""),
-          credits: parseInt(String(extendInfo.credits || "0"), 10),
-          amount: Math.round(
-            parseFloat(String(result.orderAmount || "0")) * 100
-          ),
-          currency: String(result.orderCurrency || ""),
-          raw: notification,
-        });
-      });
-
-      handler.onRefund((notification: any) => {
-        const result = notification?.result || {};
-        settle({
+          user_uuid: String(meta.user_uuid || ""),
+          credits: parseInt(String(meta.credits || "0"), 10),
+          // 含税总额优先（taxIncluded 口径下 = 标价 = 本地订单额）
+          amount: displayToCents(data.total ?? data.amount),
+          currency: String(data.currency || ""),
+          raw: event,
+        };
+      }
+      case WebhookEventType.RefundSucceeded: {
+        return {
           type: "refund_succeeded",
-          order_no: String(result.origPaymentRequestId || ""),
+          order_no: orderNo,
           user_uuid: "",
           credits: 0,
-          amount: Math.round(
-            parseFloat(String(result.refundAmount || "0")) * 100
-          ),
-          raw: notification,
-        });
-      });
-
-      // 验签 + 事件路由（SDK 内部完成 RSA 验签）。
-      // 注意 SDK 契约：handleWebhook 在验签失败时**不抛错**，resolve
-      // {success:false, error}（见 @waffo/waffo-node handleWebhook）。若不检查
-      // success 标志，伪造签名会被静默 settle(null) 当"未识别事件"放行并回 200，
-      // payment.webhook_invalid_signature 告警永不触发（对抗式复审 2 P1）。
-      handler
-        .handleWebhook(body, signature)
-        .then((result: WebhookResult) => {
-          if (!result.success) {
-            if (!settled) {
-              settled = true;
-              clearTimeout(timer);
-              reject(
-                new Error(
-                  `waffo webhook verify failed: ${result.error || "unknown"}`
-                )
-              );
-            }
-            return;
-          }
-          // 验签通过但未命中任何业务回调（未知事件类型）→ 兜底返回 null
-          settle(null);
-        })
-        .catch((e: Error) => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timer);
-            reject(
-              new Error(`waffo webhook verify failed: ${e.message}`)
-            );
-          }
-        });
-    });
-
-    return event;
+          amount: displayToCents(data.amount),
+          raw: event,
+        };
+      }
+      default:
+        // refund.failed 记录即可（本地订单已终态化依赖 succeeded）；订阅族 v1 不启用
+        console.log("[waffo] unhandled webhook eventType:", event.eventType);
+        return null;
+    }
   },
 
   webhookResponseBody(success: boolean) {
-    // ⚠️ Waffo 必须返回 {"message":"success"}，否则视为失败并重试（最多 8 次）
-    return { message: success ? "success" : "failed" };
-  },
-
-  async refund(params: { order_no: string; amount?: number }) {
-    const waffo = getWaffoClient();
-    const webUrl = process.env.NEXT_PUBLIC_WEB_URL || "";
-    const response = await waffo.order().refund({
-      merchantOrderId: params.order_no,
-      refundAmount: params.amount ? centsToString(params.amount) : undefined,
-      refundReason: "requested_by_customer",
-      refundNotifyUrl: `${webUrl}/api/waffo-notify`,
-    } as any);
-    if (!response.isSuccess()) {
-      throw new Error(
-        `waffo refund failed: ${response.getMessage() || "unknown"}`
-      );
-    }
+    // ⚠️ Pancake 官方契约：200 + 纯文本 "OK"（旧代的 {"message":"success"} 已废止）
+    return success ? "OK" : { message: "failed" };
   },
 };
-
-function safeParseExtend(json: string): Record<string, unknown> {
-  try {
-    return JSON.parse(json);
-  } catch (e) {
-    return {};
-  }
-}

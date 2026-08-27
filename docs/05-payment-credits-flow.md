@@ -209,9 +209,14 @@ if (currency === "cny") {
 ```
 用户当前积分 = SUM(credits.credits)
   WHERE user_uuid = ?
-    AND ( (credits > 0 AND expired_at >= now()) OR credits <= 0 )
-    -- 负数记录 expired_at 为 NULL 永不过期（P-1.2）
+    AND ( (credits > 0 AND (expired_at IS NULL OR expired_at >= now())) OR credits <= 0 )
+    -- 正数记录：NULL = 长期有效（管理员赠送等，见 docs/03 §3 注释）
+    -- 负数记录：expired_at 恒为 NULL 永不过滤（P-1.2）
 ```
+
+> ⚠️ **第十轮回写时新发现（P3 级）**：本节原公式正数分支缺 `expired_at IS NULL`——SQL 三值逻辑下
+> `NULL >= now()` 结果为 NULL（非真），会把「长期有效的正数余额」全部排除，导致余额少算。
+> 已按 docs/03 §3 的完整口径修正本节公式；`getUserValidCredits` 的实现应以该口径为准并加对应用例。
 
 > ✅ **P-1.2 已修复**：扣减由存储过程 `decrease_credits` 原子执行（行锁 + 余额校验 + FIFO），
 > 余额不足抛 `InsufficientCreditsError`，不再透支；负数扣减记录 `expired_at` 为 NULL，

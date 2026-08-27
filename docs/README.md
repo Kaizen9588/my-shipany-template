@@ -11,7 +11,7 @@
 | 03 | [数据库设计](./03-database-schema.md) | 表结构、ER 图、索引、存储过程、迁移机制、权限边界、待建表（credit lots/refunds/payment events/ai_requests） | ⚠️ No-Go（资金权限 + 批次账本） |
 | 04 | [鉴权流程](./04-auth-flow.md) | NextAuth 配置、OAuth 登录、JWT/Session、验证码、RBAC、账号删除、安全问题 | ⚠️ No-Go（验证码消费逻辑 + 封禁失效） |
 | 05 | [支付与积分流程](./05-payment-credits-flow.md) | 多渠道支付、Webhook、积分扣减、退款、联盟营销、生产安全门槛 | ⚠️ No-Go（批次账本 + 部分退款 + 对账） |
-| 06 | [组件文档](./06-components.md) | 28 个 UI 组件、14 个区块组件、Slot 插槽模式、Context/Hooks | ✅ 完成 |
+| 06 | [组件文档](./06-components.md) | 29 个 UI 组件、22 个区块组件、Slot 插槽模式、Context/Hooks | ✅ 完成 |
 | 07 | [部署文档](./07-deployment.md) | Vercel/Cloudflare/Docker 三种部署方式、本地开发配置、Stripe Webhook | ✅ 完成 |
 | 08 | [配置与环境变量](./08-config-env.md) | 全部配置文件解析、环境变量清单（单一真相源，已有+待新增+废弃）、i18n 配置 | ✅ 完成 |
 | 10 | [邮件系统设计](./10-email-system.md) | 事务/营销分离、Provider 抽象、模板管理、触发点、退订、合规 | ⚠️ v2 待建（email logs + 退订） |
@@ -32,7 +32,9 @@
 | P1 | [支付架构设计](./payment/provider-abstraction.md) | Provider 抽象层、支付方式抽象、热切换、三阶段渠道演进、路由 | ✅ 完成 |
 | P2 | [Stripe 对接](./payment/stripe-integration.md) | Stripe API 对接细节、Webhook 事件、数据库映射 | ✅ 完成 |
 | P3 | [Creem 对接](./payment/creem-integration.md) | Creem API 对接细节（MoR、无退款 API、HMAC 验签） | ✅ 完成 |
-| P4 | [Waffo 对接](./payment/waffo-integration.md) | Waffo API 对接细节（MoR+PSP、RSA 验签、Auth&Capture） | ✅ 完成 |
+| P4 | [Waffo 对接](./payment/waffo-integration.md) | 上一代 API 对接存档（@waffo/waffo-node + /api/v1/order/*；官方已迁 Pancake，无官方背书） | ⚠️ 历史存档 |
+| P5 | [Waffo 操作指南](./payment/waffo-operations-guide.md) | 基于官方 docs.waffo.ai 现行文档：开通/KYB/密钥、建店建品、Checkout/Webhook/沙箱/上线清单、新旧 API 迁移决策（✅ 路线 B 已于 2026-08-27 执行） | ✅ 完成 |
+| P6 | [渠道切换 SOP](./payment/channel-switch-sop.md) | 「后台点按钮换渠道」Runbook：常备就绪项、计划内/紧急切换、回滚、MoR↔PSP 税费口径检查、切换台账 | ✅ 完成 |
 
 另见根目录 [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) - 完整开发方案（已有功能审计 + 待完成功能规划 + 路线图）。
 
@@ -143,3 +145,30 @@
 13. 跨实例限流 + AI 成本/错误率告警 + 迁移失败告警发射点。
 14. 退款政策条款、争议举证导出、风控节流。
 15. 文档收口：No-Go 补建库路径/迁移并发/争议链路/默认管理员/AI 网关整改正文；清理 8 处 docs/12 悬空引用。
+
+---
+
+## 第十轮对抗式审查（2026-08-26）
+
+> 本轮通读全部 22 份方案文档（约 7300 行），逐条对照第八/九轮存活项与被反驳条目去重后存活 13 条（含回写时新发现 1 条）。
+> **核心结论：资金主链路（账本/退款/争议/迁移/并发）无新增 P0**——本轮问题集中在副作用执行模型与文档间一致性。
+> 全部条目已回写各模块文档；下表「已回写位置」即整改正文所在。
+
+| # | 问题 | 级别 | 已回写位置 |
+|---|------|------|-----------|
+| P1-A | fire-and-forget 副作用在首选部署形态（Vercel serverless）下无执行模型保障：`after()`/`waitUntil` 全仓零命中，响应返回后未 await 的 promise 不保证执行——邮件、埋点（含漏斗 t3 锚点）、告警三条链路可能一次都不跑。N-4 管「落库不丢」，本条管「有没有开始跑」 | **P1** | [10 §2.3](./10-email-system.md) + [11 §4.1](./11-telemetry-analytics.md) + [16 §3.3](./16-observability-alerting.md) + [boundary-spec §四](./boundary-spec.md) |
+| P2-B | payment_success 邮件触发点挂在已废弃的 services 编排路径上（handleOrderPayment 已退化为历史存档），webhook 路径无人发信 | P2 | [10 §四触发点表](./10-email-system.md) |
+| P2-C | docs/07 Stripe webhook 订阅指引只有 `checkout.session.completed`，缺已实现的 `charge.refunded`——按文档配置则退款同步整体失效且仅 No-Go 对账可兜 | P2 | [07 §2.5](./07-deployment.md) |
+| P2-D | docs/15 两处错误状态标记：「订阅管理 ✅」与同文件「v1 不启用」矛盾、「错误监控 ✅」与 docs/11「❌ 无 / v2 规划」矛盾（第九轮「错误 ✅」同类增量） | P2 | [15 §八/§十](./15-professional-checklist.md) |
+| P3-1 | creem-integration §6 整节仍是废弃的 `NEXT_PUBLIC_PAYMENT_PROVIDER` 多入口机制（变量已在 docs/08 登记废弃），示例违反「前端不传渠道名」硬规则 | P3 | [creem §6 头部废弃横幅](./payment/creem-integration.md) |
+| P3-2 | docs/02 checkout 流程「无渠道专属表」与 docs/03（creem_orders/waffo_orders 已建，迁移 0007）矛盾 | P3 | [02 §2 业务流程第 6 步](./02-api-reference.md) |
+| P3-3 | Creem `discountCode`/Dashboard 折扣与迁移 0010 金额精确比对互斥未声明（Stripe 有显式决策，Creem 缺同款） | P3 | [creem §3.2](./payment/creem-integration.md) |
+| P3-4 | 对外 sk- API 与 CSRF/CORS 边界未定义：middleware 豁免清单未列 `/api/v1/*`，非浏览器 Bearer 调用行为无文档 | P3 | [02 §认证机制](./02-api-reference.md) + [boundary-spec §三](./boundary-spec.md) |
+| P3-5 | 文档卫生：docs/16 出现两个「五」章（已改六/七）；组件计数三方漂移（README/docs/01 28 个 vs docs/06 29 个，已对齐并声明唯一清点处）；docs/01 §7 查看积分口径漏负数分支（已补全口径） | P3 | [16 章节号](./16-observability-alerting.md) + [06 文首](./06-components.md) + [README 索引行](./README.md) + [01 §7](./01-architecture.md) |
+| P3-6 | `prompt.length / 4` 对中文输入低估 token 2–4 倍（目标市场含 zh），低估方向对平台不利（一次扣清不补收） | P3 | [13 决策 2](./13-ai-gateway.md) |
+| P3-7 | GDPR 待补清单未覆盖 op_events.subject_uuid 与 audit_logs 的个人数据处置 | P3 | [04 §8 第 6 条](./04-auth-flow.md) |
+| P3-8 | new_user 注册奖励（10 积分）可被一次性邮箱批量刷取；防刷边界表原先只覆盖匿名层 | P3 | [14 §五](./14-anonymous-trial.md) |
+| 附注 | 回写时新发现：docs/05 §2.1 公式正数分支缺 `expired_at IS NULL`，长期有效正数余额会被 SQL 三值逻辑排除导致少算；已按 docs/03 口径修正两处公式 | P3 | [05 §2.1](./05-payment-credits-flow.md) |
+
+> 上线顺序建议：P1-A 与 P2-C 代价极小（一处 `after()` 纪律 + 一行事件订阅），建议并入第九轮清单第 7 步一起做；
+> 其余 P2/P3 均为文档收口级改动，随第九轮第 15 步一并完成即可。资金类 P0 仍以第九轮清单为准。

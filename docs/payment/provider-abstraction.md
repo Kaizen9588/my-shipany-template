@@ -119,15 +119,21 @@ export interface PaymentProvider {
 
 ### 3.2 渠道差异消化表（适配器内部处理）
 
-| 差异点 | Creem | Waffo | Stripe | 抽象层统一 |
+> ⚠️ Waffo 列已于 2026-08-27 按 Pancake 新模型重写（`@waffo/pancake-ts@0.19.1`，
+> 迁移执行记录见 [waffo-operations-guide.md](./waffo-operations-guide.md) §九）；
+> 旧代「动态金额 + X-SIGNATURE + {"message":"success"}」语义作废。
+
+| 差异点 | Creem | Waffo（Pancake） | Stripe | 抽象层统一 |
 |--------|-------|-------|--------|-----------|
-| 金额格式 | 整数分 | 字符串 "99.00" | 整数分 | 统一「分」→ 适配器转 |
-| 幂等键 | request_id（一等字段） | paymentRequestId（必填） | idempotency_key | 统一用 order_no 生成 |
-| 元数据 | request_id 关联 | extendInfo | metadata | 统一塞 order_no/user_uuid |
-| Webhook 签名 | HMAC-SHA256 | RSA | constructEventAsync | parseWebhook 内消化 |
-| Webhook 响应 | 200 | 200 + {"message":"success"} | 200 | webhookResponseBody 提供 |
-| 退款 | ❌ | ✅ | ✅ | capabilities.refund_api 标记 |
-| 定价 | 预建 product | 动态金额 | 动态金额 | 查 payment_products 表 |
+| 定价模型 | 预建 product | **预建产品**（Store/Product + publish），金额真相在渠道目录 | 动态金额 | 查 payment_products 表 |
+| 金额格式 | 整数分 | 显示字符串（webhook `"29.00"`），适配器 ×100 转分 | 整数分 | 统一「分」→ 适配器转 |
+| 幂等键 | request_id（一等字段） | orderMerchantExternalId = order_no | idempotency_key | 统一用 order_no |
+| 元数据 | metadata | orderMetadata（flat k-v） | metadata | 统一塞 order_no/user_uuid |
+| Webhook 签名 | HMAC-SHA256（creem-signature） | RSA `x-waffo-signature`（t=,v1=，SDK 内置公钥+时间戳防重放） | constructEventAsync | parseWebhook 内消化 |
+| Webhook 响应 | 200 | 200 + 纯文本 `"OK"` | 200 | webhookResponseBody 提供 |
+| 退款 API | ❌ | ❌（Dashboard 手动 / 客户工单制） | ✅ | capabilities.refund_api 标记；❌ 渠道走手动指引 + refund webhook 扣回 |
+| 收银台支付方式 | 按地区自动展示本地方式 | card/applepay/googlepay/wechat（**无 alipay**） | card/alipay/wechat_pay 等 | supported_methods 声明 → payment-methods 聚合自动反映 |
+| session 时效 | 24h 级 | **45 分钟**（expiresInSeconds 默认 2700） | 24h 级 | checkout_expires_at 若落地须按渠道取最小值 |
 
 ### 3.3 注册表 + 运行时状态
 
@@ -210,7 +216,7 @@ CREATE TABLE payment_settings (
 | 渠道 | 环境变量 |
 |------|----------|
 | Creem | `CREEM_API_KEY` / `CREEM_WEBHOOK_SECRET` |
-| Waffo | `WAFFO_API_KEY` / `WAFFO_PRIVATE_KEY` / `WAFFO_PUBLIC_KEY` / `WAFFO_MERCHANT_ID` |
+| Waffo（Pancake，2026-08 迁移后收敛为 2 项） | `WAFFO_MERCHANT_ID` / `WAFFO_PRIVATE_KEY`（或 `WAFFO_PRIVATE_KEY_BASE64`）；~~WAFFO_API_KEY / WAFFO_PUBLIC_KEY~~ 已废弃 |
 | Stripe（阶段2） | `STRIPE_PRIVATE_KEY` / `STRIPE_WEBHOOK_SECRET` |
 
 `hasValidCredentials()` 检查环境变量是否存在，**避免「配置了渠道但 key 没配」导致 checkout 失败**。
@@ -229,7 +235,8 @@ CREATE TABLE payment_products (
     valid_months INT NOT NULL,
     creem_product_id VARCHAR(255),             -- Creem 预建产品 ID（可空）
     stripe_price_id VARCHAR(255),              -- Stripe 预建 price（可空，阶段2）
-    -- waffo 无预建概念，直接动态传 amount
+    waffo_product_id VARCHAR(255)              -- Waffo Pancake 预建产品 ID（可空，迁移 0018）
+    -- 注意：Pancake 迁移后 Waffo 也是预建产品模型，「动态传 amount」语义作废
     created_at timestamptz
 );
 ```
@@ -351,3 +358,50 @@ createCheckout() 连续 N 次失败（5 次 / 10 分钟）
 | Waffo MoR 模式下税费含在价内 | 定价需考虑含税价 | payment_products 的 amount 定义为含税价 |
 | 阶段 2 切 Stripe 后 Card 用户迁移 | Stripe 是 PSP，需自己处理税务 | 美区定价免税州；其余地区仍走 MoR 渠道 |
 | PayPal 尚未研究 | 接口细节未知 | 接前先调研，大概率也是动态金额 + 独立签名 |
+
+---
+
+## 十、渠道接入形态与「无缝切换」评估（2026-08-27）
+
+> 背景：渠道风控不确定性（Creem/Stripe 账号可能被限）催生「后台点按钮换渠道、前端用户无感」的诉求。
+> 本节给出三渠道官方接入形态对照与无感切换的可行性结论，作为切渠道决策与
+> [channel-switch-sop.md](./channel-switch-sop.md) 的依据。接入方式均经官方文档核实（2026-08-27）。
+
+### 10.1 三渠道接入形态对照
+
+| | 托管页跳转（本项目现行） | 站内嵌入 | 原生组件表单（Elements 式） | 白标能力 |
+|---|---|---|---|---|
+| Stripe | ✅ Checkout Session | ✅ 嵌入式 Checkout（iframe） | ✅ **有**：Payment Element 直接在我方 DOM 渲染卡输入框，Wallets/本地方式一并支持 | 最强：logo/配色 + **自定义收银域名** checkout.你域名.com |
+| Creem | ✅ 默认（checkout_url） | ✅ **Embedded Checkout**（overlay 弹层 / inline iframe）：`@creem_io/react`（≥18）/ vue / svelte 组件、`useCreemCheckout()` hook、script loader、声明式属性；`onComplete` 回调可拿到 orderId 且不外跳 | ❌ iframe 方案（页面仍由 Creem 渲染），非真表单 | logo/配色/locale；域名固定 creem.io |
+| Waffo Pancake | ✅ 仅此一种（checkoutUrl） | ❌ | ❌ | 深度白标（logo/四色/亮暗/19 语言）；域名固定 waffo 收银域 |
+
+结论：Stripe 是唯一能把「卡输入框长在我方页面上」做成的渠道；Creem 的嵌入只是把 Creem 页面装进我方弹窗；
+Waffo 只能跳转。三家的 MoR/PSP 身份差异见 §遗留风险表——这决定了无论嵌入与否，
+卡账单商户名与退款政策主体都会随渠道变化，「绝对无感」在法律层面不存在。
+
+### 10.2 无感切换在本模板的可行性结论
+
+**技术上和架构上都成立，且基建已就绪约九成**——这正是本架构的设计目标：
+
+1. `/api/checkout` 只收 `product_id + method`，前端永不感知渠道名；
+2. `payment_settings.enabled/priority` 数据库热切换，后台 `/admin/payment` 点按钮即生效、不重部署；
+3. `getEnabledProviders` 按 priority 排序 + health.ts 连续失败自动摘除 30 分钟，紧急故障连按钮都不用点；
+4. `orders.payment_provider` 下单即冻结：新订单走新渠道，存量在途订单各回各家 webhook（三个 notify 端点并存）；
+5. Webhook 归一化为统一 `PaymentEvent` → 所有渠道共用同一套落账 RPC，切渠道零业务代码改动；
+6. `GET /api/payment-methods` 聚合可用支付方式，渠道下线时对应按钮自动消失而非报错。
+
+### 10.3 「无感」的真实边界（如实声明，管理预期）
+
+| 边界 | 说明 | 缓解 |
+|------|------|------|
+| 跳转域名藏不住 | Waffo/Creem 固定自家收银域名，白标只盖住品牌观感 | 切到 Stripe 后配自定义域反而是无感度升级 |
+| 支付方式清单随渠道变 | 如 Waffo(Pancake) 无 alipay——/payment-methods 自动反映，按钮增减可见 | 属功能性变化；定价页文案不要写死「支持支付宝」 |
+| 卡账单商户名变 | statement descriptor 随 MoR/公司主体变化 | 一次性现象，客服话术预备即可 |
+| 订阅不可跨渠道迁移 | 行业难题；订阅用户只能在原渠道续费至到期 | v1 仅一次性积分包，天然绕开；若开订阅按 §七 SOP 折算补偿 |
+| 税费口径切换 | MoR 价内税 ↔ Stripe 价外税，语义必须同步调整 | 切换 checklist 强制项：定价页文案 + 本地订单额与实付的比对口径一起改，否则 0010 稳定 mismatch |
+
+### 10.4 切渠道前置条件（已完成状态跟踪）
+
+1. ✅ Waffo 迁移 Pancake（2026-08-27，见 waffo-operations-guide §九）——否则首选渠道本身无官方背书；
+2. ✅ `payment_products.waffo_product_id` 加列 + 后台回填入口（迁移 0018 + /admin/pricing）；
+3. ✅ 渠道切换 SOP 成文（[channel-switch-sop.md](./channel-switch-sop.md)：沙箱最小闭环 + 灰度分流 + 回滚步骤）。

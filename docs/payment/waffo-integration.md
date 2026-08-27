@@ -1,9 +1,16 @@
 # Waffo 支付对接文档
 
-> 文档来源：Waffo 官方文档 (https://waffo.com/docs)
-> SDK：@waffo/waffo-node（Node.js）
+> ~~文档来源：Waffo 官方文档 (https://waffo.com/docs)~~（来源域名有误；官方文档现为 https://docs.waffo.ai/zh ）
+> SDK：~~@waffo/waffo-node（Node.js）~~（见下方重要提示）
 > Merchant Portal：https://pancake.waffo.ai/merchant/auth/signin
-> 最后更新：2025-08-14
+> 最后更新：2025-08-14（2026-08-26 增补迁移警告，正文未按新版复核）
+>
+> ⚠️ **重要（2026-08-26）**：官方文档已整体迁移到 **Waffo Pancake** 模型
+> （SDK `@waffo/pancake-ts`、双凭据 Merchant ID + Private Key、REST 全 POST `/v1/actions/*` + GraphQL 只读、
+> webhook 头 `x-waffo-signature`、响应体 `"OK"`、Store/Product 建模）。本文以下描述的是**上一代 API**
+> （`@waffo/waffo-node` + `/api/v1/order/*`、X-SIGNATURE、必须 `{"message":"success"}`），与仓库现行代码一致，
+> 但已不在官方文档收录范围内，无官方背书。**现行操作步骤、沙箱与上线清单以
+> [waffo-operations-guide.md](./waffo-operations-guide.md) 为准**，本文仅作历史存档。
 >
 > ✅ **落地记录（2026-08）**：`lib/payment/providers/waffo.ts`（order.create 动态金额 + RSA webhook 验签 + 退款）、
 > `/api/waffo-notify`（响应 {message:"success"}）、迁移 `0007` 建 waffo_orders 表。

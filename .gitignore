@@ -50,6 +50,8 @@ supabase
 .agents/
 .supabase-home/
 skills-lock.json
+# mimosa security-scan session artifacts (local tooling cache)
+.mimosa/
 
 # qoder better-harness review artifacts (local tooling cache)
 .qoder/

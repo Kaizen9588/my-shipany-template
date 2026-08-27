@@ -148,6 +148,13 @@ console.log(checkout.checkoutUrl);     // 跳转用户到此 URL
 console.log(checkout.id);              // Checkout Session ID
 ```
 
+> ⚠️ **P3-3（第十轮，2026-08-26）——Creem 折扣能力与本地金额精确比对互斥，此前未声明**：
+> SDK 支持 `discountCode` 参数（产品也可在 Dashboard 配置折扣价），但迁移 0010 的 `handle_order_payment`
+> 要求实付金额与订单额**精确相等**，否则合法折扣支付会被置 `mismatch` → 不充值、告警、需人工核查。
+> Stripe 侧已有显式互斥决策（`allow_promotion_codes=false`，docs/05 §1.4），Creem 侧一直缺同款声明。
+> **规则**：v1 不得启用任何 Creem 折扣——checkout 不传 `discountCode`，产品按目录原价创建；
+> 若未来要支持促销，须先改比对策略（如「实付 ≤ 订单额」时按实付落账并接受差额规则）再放开。
+
 **本项目封装**（✅ 已实现）：统一入口 `app/api/checkout/route.ts`（method → 服务端渠道路由，文档见 provider-abstraction §阶段 1）
 
 ```typescript
@@ -379,6 +386,28 @@ import { CreemPortal } from "@creem_io/nextjs";
 </CreemPortal>
 ```
 
+### 3.10 嵌入式结账（Embedded Checkout，官方 2026 实况核实补充）
+
+> 2026-08-27 经官方文档核实补充（https://docs.creem.io/features/checkout/embedded-checkout ），
+> 本文档早期版本只记录了「checkout_url 跳转」一种形态。**注意：本模板 v1 现行实现仍为跳转式**
+> （§2 SDK 选型维持不变），嵌入式仅作为后续体验升级的备选项记录在此。
+
+Creem 官方提供整套「整流程不离开我方页面」的嵌入形态——支付页以 **弹窗层（modal overlay）或
+行内 iframe（inline）** 运行，与 `payment-methods` 抽象不冲突：
+
+| 接入方式 | 说明 |
+|----------|------|
+| `@creem_io/react` / `@creem_io/vue`（≥3）/ `@creem_io/svelte`（≥4） | 框架组件 + `useCreemCheckout()` hook，底层共享 `@creem_io/embed` |
+| `@creem_io/embed`（无构建） | promise 式 `CreemEmbedCheckout.create()`；script loader 后 `Creem.openCheckout()`（弹窗）/ `Creem.mount('#容器')`（行内） |
+| 零 JS | `<button data-creem-checkout="...">` 声明式接入 |
+
+行为要点：`onComplete` 回调拿到 `{ checkoutId, orderId, order }`，可在回调里 `close()` 取消外跳——用户全程留在站内；
+支持主题亮暗、强制 locale（BCP 47）、联盟 affiliate token 自动捕获。
+
+边界（如实声明）：嵌入的本质仍是「Creem 页面装进我方 iframe」，卡输入框由 Creem 渲染——
+不是 Stripe Elements 那种原生 DOM 表单；域名观感改善但 MoR 卖方主体不变。
+与本模板渠道切换架构的关系见 [provider-abstraction.md §十](./provider-abstraction.md)。
+
 ---
 
 ## 4. 数据库映射
@@ -448,6 +477,11 @@ export const PRICING = [
 ---
 
 ## 6. 统一支付入口设计
+
+> ❌ **本节已废弃（第十轮 P3-1，2026-08-26）**：下文以 `NEXT_PUBLIC_PAYMENT_PROVIDER` 环境变量路由的多入口设计与现状不符——
+> 该变量已在 docs/08 §5.8 登记为**废弃**；渠道启用/路由由 `payment_settings` 表管理（provider-abstraction §5.1）；
+> `/api/checkout` 是唯一统一入口，前端只传 `method`（card/alipay/wechat_pay）、**永不传渠道名**——
+> 本节示例中 `method: "creem"` 与「前端不感知渠道」的硬规则冲突。仅作历史存档保留，勿据此实现。
 
 ```
 前端 Pricing 按钮

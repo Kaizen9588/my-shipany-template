@@ -52,7 +52,7 @@
 | AI 网关：鉴权 → 限流 → 402 → 原子扣费 → 失败退款 | ⚠️ 部分落地 | 缺少幂等键、状态机和崩溃补偿（P0），真实收费前必须完成；失败退款只在进程内存中执行 |
 | 服务端与客户端数据库 client 必须分离 | ⚠️ ❌ No-Go（P0） | `models/db.ts` 在同一客户端中按环境变量切换 service_role。终端用户路径应走 anon/authenticated + RLS，service_role 仅限受控服务端路径。 |
 | 匿名试用限流 | ✅ 纯 IP 维度（指纹方案因 `x-device-id` 可伪造已废弃，见 docs/14 修订）；换 IP 可绕过为已知边界 |
-| CORS 白名单、CSRF、安全响应头 | ✅ 已落地 |
+| CORS 白名单、CSRF、安全响应头 | ✅ 已落地；⚠️ 作用域欠规定（第十轮 P3-4）：middleware Origin 校验的豁免清单未列 `/api/v1/*`，Bearer 非浏览器调用（无 Origin 头）行为、session 用户 vs API key 用户在该端点族的防护矩阵均无文档（详见 docs/02 §认证机制 P3-4） |
 | CSP / HSTS | ⚠️ 部分：HSTS 已落地（next.config.mjs headers）；CSP 仍待办（docs/12 已删除，见 [ADVERSARIAL-REVIEW-2026-08-26.md](./ADVERSARIAL-REVIEW-2026-08-26.md) §2.18） |
 | 迟到支付回调撞上 expired 订单不得丢账 | ✅ 迁移 0017：expired 订单可被 webhook 恢复为 paid（留审计痕迹） |
 
@@ -66,7 +66,7 @@
 | 数据库迁移必须幂等，写在 `data/migrations/*.sql` | 不手工改生产库；重复执行安全 |
 | 迁移/配置文件修改尽量“追加不覆盖” | 文档与配置类更新只增内容，不整文件覆盖 |
 | 后台管理页面统一直用中文；前台默认英文 | 后台仅给管理员使用 |
-| 通知链路必须 fire-and-forget，失败不能阻塞业务主流程 | ✅ |
+| 通知链路必须 fire-and-forget，失败不能阻塞业务主流程 | ⚠️ 执行模型欠规定（P1-A，第十轮） | 「不阻塞」已落地；但未规定响应返回后未 await 的副作用如何存续——Vercel serverless 下裸 fire-and-forget 不保证执行。需统一挂 Next.js `after()`；critical 告警同步发送或经 transactional outbox（详见 docs/16 §3.3 P1-A）。N-4 管「落库不丢」，P1-A 管「有没有开始跑」，缺一不可 |
 | 新增支付渠道：写 adapter + registry 注册，不动核心 checkout/webhook 逻辑 | ✅ |
 | 高风险端点限流缺失时必须 fail-closed | ⚠️ 待加固 | `lib/ratelimit.ts` 在未配置 Upstash 时返回 `{ ok: true }`（fail-open）。AI 生成、验证码、支付创建、webhook 等高成本/高风险端点，生产环境缺少可靠限流时应明确失败，不能静默放行。 |
 | Webhook 必须有 body size 限制 + 速率限制 | ⚠️ 待加固 | 非法签名请求可能造成日志/告警 DoS。需限制 body 大小（如 64KB）、IP 维度限流，验签失败快速拒绝不打 full alert。 |

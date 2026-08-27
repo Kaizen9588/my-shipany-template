@@ -6,7 +6,7 @@
 >
 > ✅ **v1 落地记录（2026-08）**：`lib/email/*`（Provider 抽象 + Resend 适配器 + fire-and-forget + shouldSendToday 节流）、
 > `emails/`（React Email 布局 + welcome/payment_success/credit_low/credit_exhausted/verification_code 模板）、
-> 触发点接入（saveUser 欢迎 / handleOrderSession 支付成功 / decreaseCredits 余额提醒 / send-verification 验证码）。
+> 触发点接入（saveUser 欢迎 / 支付成功【触发点位置见 §四 P2-B 修订，原表述 handleOrderSession 已过期】 / decreaseCredits 余额提醒 / send-verification 验证码）。
 > v2（email_logs + webhook 追踪 + 退订页 + 营销邮件）待落地。
 
 ---
@@ -125,6 +125,14 @@ export async function sendEmail(message: EmailMessage): Promise<EmailResult> {
 ```
 
 > ⚠️ **降级策略**：邮件发送失败**不阻塞主流程**（如支付处理）。支付成功但邮件失败 → 订单照常有效，邮件重试靠 Resend 自身机制 + 日志追踪。
+>
+> ⚠️ **P1-A（第十轮对抗式审查，2026-08-26）——fire-and-forget 在 serverless 下无执行模型保障**：
+> 全部方案文档对「响应返回后未 await 的副作用靠什么继续执行」零规定（grep `after(` / `waitUntil` 无命中），
+> 而部署首选是 Vercel serverless——函数响应返回后未完成的 promise **不保证执行**。「不阻塞主流程」没问题，
+> 问题是没有规定「靠什么活下来」：`void sendEmail` 若恰好在响应边界之后才被调度，邮件可能一次都不发。
+> 本节说的「Resend 自身重试」指的是 Resend 收到请求之后的内部处理，救不了「请求从未发给 Resend」。
+> **修法**：所有「响应后仍需完成」的副作用统一挂 Next.js 的 `after()`（Next 16 已内置）；关键事务邮件（验证码）评估同步发送。
+> 此约束同样适用于 docs/11 埋点与 docs/16 告警（同一处回写），并需落入 boundary-spec §四的工程纪律。
 
 ---
 
@@ -180,7 +188,7 @@ export function renderTemplate(message: EmailMessage) {
 |----------|----------|------|----------|------|
 | 新用户注册（OAuth 首次登录） | welcome | transactional | `services/user.ts` saveUser 后 | v1 |
 | 邮箱验证码 | verification_code | transactional | `/api/user/send-verification`（仅存 hash + 原子消费） | v1 |
-| 支付成功（积分充值） | payment_success | transactional | `services/order.ts` handleOrderPayment 后 | v1 |
+| 支付成功（积分充值） | payment_success | transactional | **webhook 路径**：`handlePaymentEvent` 收到 `handle_order_payment` RPC 返回 `'paid'` 后发送（⚠️ P2-B，第十轮修正：原表写 `services/order.ts` handleOrderPayment 后——该函数在多渠道改造后退化为历史存档、支付路径无调用方（docs/05 §2.6），按原表字面实现会导致支付成功邮件永远不发） | v1 |
 | 积分低于阈值（如 <10） | credit_low | transactional | `services/credit.ts` decreaseCredits 后检查 | v1 |
 | 积分耗尽 | credit_exhausted | transactional | 同上（余额 == 0） | v1 |
 | **订阅续费前 3/7 天** | subscription_renewal_reminder | transactional | 订阅模块调度（Vercel Cron） | 预留 |

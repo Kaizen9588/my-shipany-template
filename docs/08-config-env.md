@@ -218,10 +218,11 @@ export const config = {
 |------|------|------|
 | `CREEM_API_KEY` | Creem 支付 | ✅ 6.1 已落地 |
 | `CREEM_WEBHOOK_SECRET` | Creem Webhook 验证 | ✅ 6.1 已落地 |
-| `WAFFO_API_KEY` | Waffo 支付 | ✅ 6.1 已落地 |
-| `WAFFO_PRIVATE_KEY` | Waffo 商户 RSA 私钥 | ✅ 6.1 已落地 |
-| `WAFFO_PUBLIC_KEY` | Waffo 公钥（webhook 验签） | ✅ 6.1 已落地 |
-| `WAFFO_MERCHANT_ID` | Waffo 商户 ID | ✅ 6.1 已落地 |
+| `WAFFO_API_KEY` | ~~Waffo 支付~~ **已废弃**：2026-08-27 Pancake 迁移，SDK d.ts 无引用 | ⚠️ 废弃（代码与 .env.example 已移除） |
+| `WAFFO_PRIVATE_KEY` | Waffo 商户 RSA 私钥（PEM；Pancake 请求签名用） | ✅ 6.1 落地 / 2026-08-27 沿用于 Pancake |
+| `WAFFO_PRIVATE_KEY_BASE64` | 同上之 BASE64 变体（CI/Docker 无法存多行 PEM 时注入，优先级更高） | ✅ 2026-08-27 新增（可选） |
+| `WAFFO_PUBLIC_KEY` | ~~Waffo 公钥（webhook 验签）~~ **已废弃**（Pancake 验签公钥内置于 SDK） | ⚠️ 废弃（代码与 .env.example 已移除） |
+| `WAFFO_MERCHANT_ID` | Waffo 商户 ID（`MER_` 前缀；Pancake 两大凭据之一） | ✅ 6.1 落地 / 2026-08-27 沿用于 Pancake |
 | `RESEND_API_KEY` | Resend 邮件发送 | ✅ 6.2 已落地 |
 | `EMAIL_FROM` | 发件人地址 | ✅ 6.2 已落地 |
 | `CREDIT_LOW_THRESHOLD` | 积分低余额提醒阈值 | ✅ 6.2 已落地 |
@@ -246,6 +247,8 @@ export const config = {
 > 已废弃：
 > - `NEXT_PUBLIC_PAYMENT_PROVIDER` — 渠道启用状态改由 `payment_settings` 表管理（见 [支付架构](./payment/provider-abstraction.md)）
 > - `SENTRY_DSN` — 错误监控改由 PostHog 承担（见 [埋点方案](./11-telemetry-analytics.md)）
+> - `WAFFO_API_KEY` / `WAFFO_PUBLIC_KEY` — 2026-08-27 迁移至 Waffo Pancake 后废弃
+>   （凭据收敛为 MERCHANT_ID + PRIVATE_KEY[_BASE64]，见 [操作指南 §三](./payment/waffo-operations-guide.md)）
 
 ## 6. 环境变量配置检查清单
 

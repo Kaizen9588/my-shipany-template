@@ -61,7 +61,7 @@
     "@uiw/react-md-editor": "^4.0.5",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.2",
-    "@waffo/waffo-node": "^3.0.1",
+    "@waffo/pancake-ts": "^0.19.1",
     "ai": "^4.1.64",
     "bcryptjs": "^3.0.3",
     "canvas-confetti": "^1.9.3",

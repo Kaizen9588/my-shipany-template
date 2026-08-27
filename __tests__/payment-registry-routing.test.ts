@@ -24,9 +24,8 @@ describe("lib/payment 路由（6.1）", () => {
     process.env.STRIPE_PRIVATE_KEY = "sk_test";
     process.env.STRIPE_PUBLIC_KEY = "pk_test";
     process.env.CREEM_API_KEY = "creem_key";
-    process.env.WAFFO_API_KEY = "waffo_key";
+    // Waffo Pancake：凭据收敛为 MERCHANT_ID + PRIVATE_KEY（旧 API_KEY/PUBLIC_KEY 已废弃）
     process.env.WAFFO_PRIVATE_KEY = "private";
-    process.env.WAFFO_PUBLIC_KEY = "public";
     process.env.WAFFO_MERCHANT_ID = "merchant";
     mockHealthy.mockReturnValue(true);
   });

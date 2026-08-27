@@ -9,8 +9,9 @@ import { fireAndForgetAudit } from "@/lib/audit";
  * POST /api/admin/refund —— 订单退款（6.8，6.21 完善）
  *
  * 按 payment_provider 分发：
- * - Stripe/Waffo：调渠道退款 API 全自动（适配器 refund）→ processRefund 扣积分
- * - Creem：无退款 API → 返回 Dashboard 手动退款指引（refund.created webhook 同步扣积分）
+ * - Stripe：调渠道退款 API 全自动（适配器 refund）→ processRefund 扣积分
+ * - Creem / Waffo(Pancake)：无商户退款 API → 返回 Dashboard 手动退款指引
+ *   （退款成功 webhook 同步扣积分，process_order_refund 幂等）
  */
 export async function POST(req: Request) {
   try {
@@ -35,24 +36,23 @@ export async function POST(req: Request) {
       return respErr(`unknown payment provider: ${providerId}`);
     }
 
-    // Creem 无退款 API：返回手动退款指引
+    // Creem / Waffo(Pancake) 无商户退款 API：返回手动退款指引
     if (!provider.capabilities.refund_api || !provider.refund) {
       fireAndForgetAudit({
         admin_uuid: admin.uuid || "",
         action: "admin.order.refund_manual",
         target_type: "order",
         target_uuid: order_no,
-        detail: "creem: manual refund via dashboard required",
+        detail: `${providerId}: manual refund via dashboard required`,
       });
       return respData({
         refunded: false,
         manual: true,
-        message:
-          "该渠道（Creem）无退款 API，请在 Creem Dashboard 手动退款，系统将通过 refund.created webhook 同步扣回积分",
+        message: `该渠道（${providerId}）无商户退款 API，请在渠道 Dashboard 手动退款，系统将通过退款成功 webhook 同步扣回积分`,
       });
     }
 
-    // Stripe/Waffo：调用渠道退款 API，然后本地扣积分 + 标记 refunded
+    // Stripe：调用渠道退款 API，然后本地扣积分 + 标记 refunded
     await provider.refund({ order_no, amount });
     const { deducted_credits } = await processRefund({
       order_no,

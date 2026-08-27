@@ -87,6 +87,12 @@
 
 > ⚠️ **同一账户语义**：API Key 认证与 Session 认证都映射到**同一个 user_uuid**。第三方用 API Key 调用 AI 时，积分从该账户余额扣减，与浏览器 session 调用共享同一积分池。API Key 是账户的授权凭证，不是独立计费单元。
 
+> ⚠️ **P3-4（第十轮，2026-08-26）——对外 sk- API 与 CSRF/CORS 的边界未定义**：
+> middleware 的 Origin 校验豁免清单未列 `/api/v1/*`；Bearer token 的非浏览器调用天然不带 Origin 头，
+> 能否通过取决于豁免规则的未声明细节；session 用户调 `/api/v1/*` 时防 CSRF 由哪层负责也没有矩阵。
+> 向第三方开放前必须把 `/api/v1/*` 端点族的 CSRF/CORS 契约写明并测试
+> （如：带 Bearer 且无 cookie 时跳过 CSRF 校验；全局规则见 boundary-spec §三）。
+
 ---
 
 ## 接口清单
@@ -165,7 +171,7 @@ NextAuth.js 自动处理的认证端点，不是自定义 API。
 3. 按 method 路由到渠道（`getEnabledProviders()`）
 4. 生成 order_no，INSERT orders（status="created", payment_provider=渠道）
 5. 调渠道 Provider `createCheckout()`（Stripe 传 price_data、Creem 传 product_id、Waffo 传动态金额）
-6. 渠道 session id 回写订单行（如 `orders.stripe_session_id`，无渠道专属表）
+6. 渠道 session id 回写：Stripe 写 `orders.stripe_session_id` 列；Creem/Waffo 各写专属表 `creem_orders.creem_checkout_id` / `waffo_orders.acquiring_order_id`（迁移 0007 已建，见 docs/03——本行原「无渠道专属表」与 docs/03 §多渠道支付表结构矛盾，第十轮修正）
 7. 返回 checkout_url 给前端跳转
 
 ---

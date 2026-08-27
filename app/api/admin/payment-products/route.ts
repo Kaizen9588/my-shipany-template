@@ -55,6 +55,7 @@ export async function PUT(req: Request) {
       }
       if (typeof prod.creem_product_id === "string") fields.creem_product_id = prod.creem_product_id;
       if (typeof prod.stripe_price_id === "string") fields.stripe_price_id = prod.stripe_price_id;
+      if (typeof prod.waffo_product_id === "string") fields.waffo_product_id = prod.waffo_product_id;
       if (Object.keys(fields).length > 0) {
         await updatePaymentProduct(prod.product_id, fields);
       }

@@ -130,7 +130,7 @@
 | 个人资料 | ✅ | `app/[locale]/(console)/settings` |
 | 用量统计 | ✅ | `app/[locale]/(console)/usage` |
 | 通知中心 | ✅ | `app/[locale]/(console)/notifications` |
-| 订阅管理 | ✅ | `app/[locale]/(console)/subscription` |
+| 订阅管理 | ⚠️ 存疑（第十轮 P2-D） | `app/[locale]/(console)/subscription`——本行原标 ✅，与本文件 §五「订阅 ⚠️ v1 不启用」直接矛盾，且 docs/06 §4 的控制台导航清单里没有该入口。需实测核实页面是否真实存在后统一口径 |
 
 ## 九、后台管理
 
@@ -156,7 +156,7 @@
 | PostHog 埋点 | ✅ | `lib/telemetry/*`（服务端 + 客户端） |
 | GA4 | ✅ | `components/analytics/google-analytics.tsx` |
 | OpenPanel | ✅ | `components/analytics/open-panel.tsx` |
-| 错误监控 | ✅ 已实现 | PostHog 错误追踪（`lib/telemetry/server.ts`） |
+| 错误监控 | ⚠️ 口径矛盾（第十轮 P2-D） | 本行原标「✅ 已实现」，但 docs/11 §一标「错误监控 ❌ 无」、§十一把错误追踪列入 v2 规划——同仓两份文档对同一能力给了相反结论（与第九轮识别的「错误 ✅」同类增量）。需实测 `lib/telemetry/server.ts` 是否真的捕获错误后统一口径 |
 | 会话回放 | ✅ 已实现 | PostHog `session_recording`（遮罩输入） |
 | 关键事件持久化 | ⚠️ 不可靠 | `op_events` 存在但 fire-and-forget；支付/退款/调账等关键事件需 transactional outbox |
 | 对账与补偿监控 | ❌ 未完成 | 无渠道-本地每日对账、补偿积压监控、资损告警（P1） |

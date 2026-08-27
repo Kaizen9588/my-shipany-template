@@ -52,7 +52,7 @@ export interface PaymentProvider {
   id: string; // "stripe" | "creem" | "waffo" | "paypal"
   supported_methods: PaymentMethod[];
   capabilities: {
-    refund_api: boolean; // Creem=false，Stripe/Waffo=true
+    refund_api: boolean; // Stripe=true；Creem=false；Waffo（Pancake）=false，退款走 Dashboard 手动 + refund.succeeded webhook
     subscription: boolean;
     portal: boolean;
   };
@@ -61,8 +61,11 @@ export interface PaymentProvider {
   createCheckout(params: CheckoutParams): Promise<CheckoutResult>;
   /** 验签 + 归一化；验签失败抛错，非业务事件返回 null */
   parseWebhook(req: Request): Promise<PaymentEvent | null>;
-  /** 各渠道 webhook 响应体要求（Waffo 必须 {"message":"success"}） */
-  webhookResponseBody(success: boolean): object;
+  /**
+   * 各渠道 webhook 响应体要求。返回 object 走 JSON；返回 string 走 text/plain
+   * （Pancake 官方契约：200 + 纯文本 "OK"，不再是旧代 {"message":"success"}）
+   */
+  webhookResponseBody(success: boolean): object | string;
   refund?(params: { order_no: string; amount?: number }): Promise<void>;
   cancelSubscription?(providerSubId: string): Promise<void>;
   createPortal?(customerId: string): Promise<string>;
