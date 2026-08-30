@@ -55,3 +55,6 @@ skills-lock.json
 
 # qoder better-harness review artifacts (local tooling cache)
 .qoder/
+
+# workbuddy session memory (local collaboration tooling state)
+.workbuddy-ai/
