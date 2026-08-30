@@ -125,6 +125,14 @@ export function trackCriticalEvent(...)
 > 而「收到告警」正是 §4.2c 渠道处置 SOP 的第一步，整条人工决策链路依赖它。
 > **修法**：critical 级告警改为同步发送或经 outbox 投递；其余通知挂 Next.js `after()`；boundary-spec §四的「fire-and-forget」纪律补执行模型约束。
 > 注意与 N-4 的关系：N-4 是持久化问题（事件落库不丢），P1-A 是调度问题（副作用根本没机会跑），两个都要关。
+>
+> ✅ **调度问题已部分关闭（2026-08-30 第七批，见 handoff §1.14）**：新增
+> `lib/after-response.ts` `runAfterResponse()`（Next 16 `after()` 稳定 API），
+> 审计（`fireAndForgetAudit`）、运营事件（`recordOpEvent`）、告警外呼（`trackCriticalEvent`
+> → `notifyChannel`）、邮件（`fireAndForgetEmail`）、支付成功通知/邮件全部经它调度——
+> 请求作用域内在「响应完成后、函数冻结前」的平台保证窗口执行，响应失败/redirect/notFound 仍执行。
+> **边界**：`after()` 只解决「根本没机会跑」（P1-A），不提供持久化重试；进程崩溃/断电仍会丢
+> 事件，「全量不能丢」仍需 Transactional Outbox（N-4，需新表，归迁移批次）落地后才算完全关闭。
 
 **接入点清单**（v1 只接资金与安全相关事件，不贪多；2026-08 状态：5 类已接入 + 1 类仅落库不推送，2 类预留）：
 
@@ -367,3 +375,62 @@ export async function notifyChannel(message: NotifyMessage): Promise<void>;
 - 不做多实例 Redis 抑制——v1 内存 Map，注释标明升级路径（与 ratelimit/health 同一模式）
 - 不做 Slack/Telegram——飞书/企微满足诉求，Notifier 接口留着扩展位
 - 不做日志全文检索（ELK 式）——op_events 是结构化运营事件，不是应用日志；应用日志仍看 Vercel
+
+---
+
+## 八、运营指标只读接口（飞书多维表格「数据接入」数据源）
+
+> 用途：把运营、告警、异常、退款数据喂给**飞书多维表格大屏**。
+> 整体思路是**飞书主动来拉**，不是项目主动推飞书——项目只对外暴露只读接口，飞书端「数据接入」配置定时拉取。
+
+### 8.1 端点
+
+| 端点 | 内容 | 字段 |
+|------|------|------|
+| `GET /api/metrics?days=30` | 按日聚合指标 + 顶部 KPI | `series[].{date,new_users,new_orders,gmv,credits_consumed}`、`kpi.{total_users,total_revenue,monthly_gmv,credits_balance,today_new_users,today_orders,active_users_7d,credits_consumed_total}` |
+| `GET /api/metrics/events?days=7&level=all&limit=200` | 事件流水（op_events） | `events[].{timestamp,type,level,source,subject,message}` |
+
+- `GET /api/metrics` 复用 `services/stats.ts`（30 天用户/收入/积分消耗趋势），不另写重复查询。
+- `GET /api/metrics/events` 直接读 `op_events` 表（退款 `payment.refund_processed`、支付告警 `provider_unhealthy` / `provider_recovered` / `amount_mismatch` 等），无需新造事件表。
+- **多项目与单位**：接口返回 `site`（读 `NEXT_PUBLIC_PROJECT_NAME`）标识项目；金额单位为**美元**（`gmv` / `monthly_gmv` / `total_revenue` 均以美元计）；`daily_credits` / `credits_consumed` 为积分消耗。飞书侧每张表都带 `项目` 字段，同一多维表可塞多项目、用飞书筛选区分；换项目只改查询逻辑，接口/表/大屏结构不变。
+
+### 8.2 鉴权与限流（`lib/metrics-auth.ts`）
+
+出于安全，对外接口绝不能裸奔：
+
+- **鉴权**：唯一门禁是环境变量 `METRICS_ACCESS_SECRET`（`openssl rand -hex 32` 生成的长随机串）。请求须带 `Authorization: Bearer <METRICS_ACCESS_SECRET>`。比对用常数时间（防长度/前缀侧信道）。
+- **生产 fail-fast**：部署环境未配置 `METRICS_ACCESS_SECRET` → 接口直接拒绝返回 500，暴露部署缺陷而非静默放行；本地开发未配置时可便捷调试。
+- **限流（防滥刷）**：全局每 60s 上限 + 单 IP 尽力限流（`lib/ratelimit.ts`，有 Upstash 则多实例共享）。因 `TRUSTED_PROXY=none` 时 `getClientIp` 恒为 `127.0.0.1`，单 IP 限流退化为聚合生效，故以全局窗口为主。
+- **只读无副作用**：仅 GET 聚合，不发任何外发请求；不涉及 URL 请求，无 SSRF。
+- **密钥纪律**：只从环境变量读；不进源码/示例/.env.example（占位留空）/日志/文档回显；不要把密钥填进飞书截图/分享内容。
+
+### 8.3 飞书多维表格接入步骤（手动）
+
+1. 生成密钥：`openssl rand -hex 32`，设为 `METRICS_ACCESS_SECRET` 并部署。
+2. 建一个「运营大屏」多维表格，建议 3 张表（表名/字段全中文，金额单位为美元，均带 `项目` 字段区分多项目）：
+   - `每日指标`（拉 `/api/metrics`）：`项目` / `统计粒度`(select: 日|周|月) / `日期` / `新增注册` / `支付单数` / `成交金额(美元)` / `积分消耗`
+   - `核心指标`（拉 `/api/metrics` 的 `kpi`）：`项目` / `指标` / `数值` / `更新时间`（存各项目累计值，KPI 卡据此读数）
+   - `事件流水`（拉 `/api/metrics/events`）：`项目` / `时间` / `事件类型` / `级别` / `来源` / `对象` / `详情`
+3. 多维表格「数据接入 / 数据源」→ 新建 HTTP/API 数据源 → 填接口 URL。
+4. 在数据源的**鉴权/请求头**里填 `Authorization: Bearer <METRICS_ACCESS_SECRET>`（飞书支持自定义请求头；这步决定本方案可行性）。
+5. 触发同步：手动点「同步」，或设定时自动拉。数据进表后建**运营大屏**仪表盘：
+   - 顶部 3 个 KPI 卡（用户注册总数 / 成交金额总数 / 积分消耗总数）→ 绑 `核心指标`，按 `指标`+`项目` 筛选
+   - 中部「项目信息」文字块：当前项目名 + 上线时间
+   - 底部 3 张趋势图（用户注册趋势 / 成交金额趋势 / 支付单数趋势）→ 绑 `每日指标`，按 `项目`+`统计粒度=日` 筛选（时间轴铺到近 30 天）
+   - 另 3 张月度趋势（月度成交金额 / 月度新增注册 / 月度支付单数）→ 绑 `每日指标`，按 `项目`+`统计粒度=月` 筛选（12 个月长周期）
+   - 事件列表按 `级别` 着色
+   - **查看周/月**：在 `每日指标` 表视图里按 `统计粒度` 筛选「周 / 月」行即可；大屏图表默认日粒度，月度另有专图。
+   - **多项目切换**：同一大屏内各图表块带 `项目` 筛选，切换项目时把这个筛选值改掉（或改数据接入查询的项目条件），各图即只显示对应项目；`核心指标` 表每行带项目名，保证 KPI 卡隔离正确。
+
+> 同步频率由飞书数据接入决定（分钟级，非秒级）——满足「非实时、可手动刷新看趋势」，不满足「事件触发即写」。
+> 若将来要事件级准实时直推，才需要应用内直连飞书 Open API（见 .env.example 被注释保留的 LARK/BITABLE 占位，出网代码需过 Mimosa 审查）。
+
+### 8.4 已落地检查
+
+- [x] `lib/metrics-auth.ts`：鉴权 + 限流（常数时间比较、生产 fail-fast）
+- [x] `app/api/metrics/route.ts`：按日 series + KPI（复用 services/stats.ts）
+- [x] `app/api/metrics/events/route.ts`：op_events 事件流水
+- [x] `.env.example`：`METRICS_ACCESS_SECRET` 占位（留空，无真实值）
+- [ ] 生产配置 `METRICS_ACCESS_SECRET` 并验证 200/401/429
+- [x] 飞书多维表格建表（每日指标/核心指标/事件流水）+ 运营大屏（10 块：3 KPI + 项目信息 + 3 日趋势 + 3 月趋势，含多项目 `项目` 字段与日/周/月 `统计粒度`、上线时间示例）
+- [ ] 对接真实数据接入：`METRICS_ACCESS_SECRET` + URL 配置 `Authorization` 请求头并首次同步

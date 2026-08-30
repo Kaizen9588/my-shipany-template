@@ -1,5 +1,5 @@
 import { respData, respErr } from "@/lib/resp";
-import { getUserUuid } from "@/services/user";
+import { auth } from "@/auth";
 import {
   PasswordChangeError,
   changeUserPassword,
@@ -15,7 +15,10 @@ import {
  */
 export async function POST(req: Request) {
   try {
-    const user_uuid = await getUserUuid();
+    // pending_activation 管理员尚未是 active，不能走通用 getUserUuid()；
+    // 仅此受控端点允许其使用会话完成首次改密。
+    const session = await auth();
+    const user_uuid = session?.user?.uuid || "";
     if (!user_uuid) {
       return respErr("no auth", 401);
     }

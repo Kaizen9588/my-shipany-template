@@ -19,7 +19,7 @@
 | 13 | [AI 网关闭环](./13-ai-gateway.md) | 核心收费闭环：鉴权→余额校验→预估一次扣清→模型路由→失败退款，幂等/状态机/补偿设计 | ⚠️ No-Go（幂等 + 崩溃补偿） |
 | 14 | [免费试用额度](./14-anonymous-trial.md) | 匿名演示限流（纯 IP 维度，指纹方案已废弃，换 IP 可绕过为已知边界） | ⚠️ No-Go（失败退还 + 无输入限制可单 IP 无限调用，P0-4） |
 | 15 | [专业模板完整度清单](./15-professional-checklist.md) | 工程化/Security/支付/AI/营销/控制台/后台/监控/部署 完整度评估（三态标记） | ⚠️ 多项 No-Go |
-| 16 | [可观测性与告警设计](./16-observability-alerting.md) | 日志采集（op_events）+ 支付渠道告警 + 飞书/企微通知 + Cron 安全 | ⚠️ 部分待建（outbox + 对账） |
+| 16 | [可观测性与告警设计](./16-observability-alerting.md) | 日志采集（op_events）+ 支付渠道告警 + 飞书/企微通知 + Cron 安全 + 飞书多维表格大屏数据源（§八） | ⚠️ 部分待建（outbox + 对账 + 大屏待生产配置） |
 | B | [项目边界规范](./boundary-spec.md) | 禁止提交/密钥安全/API 越权/代码工程/Git 工作流/No-Go 缺口清单 | ⚠️ 多项 No-Go |
 
 > **整体生产就绪结论**：模板骨架完整度高，但**资金与计费闭环不满足真实收费标准（No-Go）**。
@@ -101,7 +101,7 @@
 |---|------|------|-----------|
 | P0-1 | 退款/拒付对已消费积分无回收路径，方案 A/B 都不闭环 | 阻断 | [05 §4.3](./05-payment-credits-flow.md) + [03 退款表](./03-database-schema.md) |
 | P0-2 | `decrease_credits`「行锁串行化」论证不成立 | 阻断 | [03 §3/§存储过程](./03-database-schema.md) + [05 §2.4](./05-payment-credits-flow.md) |
-| P0-3 | 自动迁移向生产库种入公开 `admin@shipany.local/123456/super_admin` 弱口令 | 阻断 | [boundary-spec §二/§九](./boundary-spec.md) + [03 迁移清单](./03-database-schema.md) + [07 §5.2.1](./07-deployment.md) |
+| P0-3 | ~~自动迁移向生产库种入公开默认超级管理员~~ | ✅ 已关闭（2026-08-30） | 0012 取消建号、0019 禁用历史固定 hash、显式环境变量一次性引导；见 [boundary-spec §二/§九](./boundary-spec.md) |
 | P0-4 | 匿名 demo「失败退还次数 + 无输入限制」= 单 IP 绕过每日 3 次 | 阻断 | [14 §2.5/§五](./14-anonymous-trial.md) + [13 §八](./13-ai-gateway.md) |
 | P1-5 | 幂等键作用域自相矛盾（全局 UNIQUE vs 按用户作用域） | P1-高 | [02 幂等性](./02-api-reference.md) + [03 ai_requests](./03-database-schema.md) + [13 §四](./13-ai-gateway.md) |
 | P1-6 | 两条互斥建库路径（install.sql vs 迁移 0000 基线） | P1-高 | [07 §2.1/§5.2](./07-deployment.md) + [03 概述](./03-database-schema.md) |

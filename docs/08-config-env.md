@@ -129,8 +129,8 @@ export const config = {
 | `NEXT_PUBLIC_DEFAULT_THEME` | ❌ | `light` | 默认主题：`light` / `dark` |
 | `NEXT_PUBLIC_LOCALE_DETECTION` | ❌ | `false` | 是否自动检测浏览器语言 |
 | `ADMIN_EMAILS` | ❌ | - | 管理员邮箱，逗号分隔 |
-| `ADMIN_BOOTSTRAP_EMAIL` | ❌（建议生产启用） | - | **第九轮 P0-3 建议新增**：仅当显式设置时才由迁移 0012 创建初始管理员；未设置则不建号 |
-| `ADMIN_BOOTSTRAP_PASSWORD` | ❌（建议生产启用） | - | **第九轮 P0-3 建议新增**：初始管理员密码；未设置时迁移内用 `gen_random_uuid()` 随机生成，只写一次启动日志 |
+| `ADMIN_BOOTSTRAP_EMAIL` | ❌ | - | **P0-3 已落地**：仅显式设置时才由运行时引导创建初始管理员；未设置则不建号 |
+| `ADMIN_BOOTSTRAP_PASSWORD` | ❌ | - | 初始管理员临时密码；未设置时应用生成随机强密码并仅写一次受限启动日志 |
 
 ### 5.2 数据库 (Supabase)
 
@@ -241,8 +241,8 @@ export const config = {
 | `NEXT_OUTPUT` | `standalone` 时启用 standalone 输出（Docker 构建用，P-1.6） | ✅ P-1.6 已落地 |
 | `UPSTASH_REDIS_REST_URL` | 限流 Redis | ✅ 6.18 已落地 |
 | `UPSTASH_REDIS_REST_TOKEN` | 限流 Redis Token | ✅ 6.18 已落地 |
-| `ADMIN_BOOTSTRAP_EMAIL` | 初始管理员邮箱（条件建号开关） | 🚧 第九轮 P0-3 建议新增 |
-| `ADMIN_BOOTSTRAP_PASSWORD` | 初始管理员一次性密码（未设置则随机生成） | 🚧 第九轮 P0-3 建议新增 |
+| `ADMIN_BOOTSTRAP_EMAIL` | 初始管理员邮箱（条件建号开关） | ✅ P0-3 已落地 |
+| `ADMIN_BOOTSTRAP_PASSWORD` | 初始管理员一次性密码（未设置则随机生成） | ✅ P0-3 已落地 |
 
 > 已废弃：
 > - `NEXT_PUBLIC_PAYMENT_PROVIDER` — 渠道启用状态改由 `payment_settings` 表管理（见 [支付架构](./payment/provider-abstraction.md)）

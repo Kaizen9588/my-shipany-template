@@ -32,6 +32,9 @@ export type PaymentEventType =
   | "payment_succeeded"
   | "payment_failed"
   | "refund_succeeded"
+  | "dispute_opened"
+  | "dispute_won"
+  | "dispute_lost"
   | "subscription_activated"
   | "subscription_canceled"
   | "subscription_renewed";
@@ -45,6 +48,10 @@ export interface PaymentEvent {
   amount: number;
   /** 实付币种（ISO，大小写不敏感）——与本地订单比对（R1） */
   currency?: string;
+  /** 渠道 ID（适配器填自己的 id）——退款登记 refunds.provider 用（P0-1） */
+  provider?: string;
+  /** 渠道退款/争议对象 ID（如 Stripe refund.id）——refunds.provider_refund_id 幂等键（P0-1） */
+  provider_ref_id?: string;
   raw: unknown; // 原始 payload 存 order_detail
 }
 

@@ -4,10 +4,12 @@ import { stripeProvider } from "./providers/stripe";
 import { creemProvider } from "./providers/creem";
 import { waffoProvider } from "./providers/waffo";
 import { getIsoTimestr } from "@/lib/time";
-import { getSupabaseClient } from "@/models/db";
+import { serverClient } from "@/models/db";
 import { fireAndForgetEmail } from "@/lib/email";
+import { runAfterResponse } from "@/lib/after-response";
 import { createNotification } from "@/models/notification";
-import { processRefund } from "@/services/refund";
+import { registerRefundRequest } from "@/services/refund";
+import { handleDisputeEvent } from "@/services/dispute";
 import { TelemetryEvents, trackServer } from "@/lib/telemetry/server";
 import { trackCriticalEvent } from "@/lib/oplog";
 
@@ -33,7 +35,8 @@ export async function handlePaymentEvent(event: PaymentEvent): Promise<void> {
       }
 
       const paid_at = getIsoTimestr();
-      const supabase = getSupabaseClient();
+      // 支付落账是资金操作，走 service_role（serverClient），绕过 RLS（N-3）
+      const supabase = serverClient();
       const { data, error } = await supabase.rpc("handle_order_payment", {
         p_order_no: event.order_no,
         p_paid_at: paid_at,
@@ -79,12 +82,14 @@ export async function handlePaymentEvent(event: PaymentEvent): Promise<void> {
 
       // 6.14：站内通知（支付成功）
       if (event.user_uuid) {
-        void createNotification({
-          user_uuid: event.user_uuid,
-          type: "payment",
-          title: "Payment received",
-          content: `Order ${event.order_no} paid, credits added.`,
-        });
+        runAfterResponse(() =>
+          createNotification({
+            user_uuid: event.user_uuid,
+            type: "payment",
+            title: "Payment received",
+            content: `Order ${event.order_no} paid, credits added.`,
+          })
+        );
       }
 
       // 6.5：支付成功服务端埋点（t3）
@@ -98,8 +103,8 @@ export async function handlePaymentEvent(event: PaymentEvent): Promise<void> {
         },
       });
 
-      // 6.2：支付成功邮件（fire-and-forget）
-      void (async () => {
+      // 6.2：支付成功邮件（fire-and-forget，经 after() 调度冻结安全）
+      runAfterResponse(async () => {
         try {
           const { data: order } = await supabase
             .from("orders")
@@ -122,7 +127,7 @@ export async function handlePaymentEvent(event: PaymentEvent): Promise<void> {
         } catch (e) {
           console.error("[payment] payment success email failed:", e);
         }
-      })();
+      });
 
       return data;
     }
@@ -132,12 +137,52 @@ export async function handlePaymentEvent(event: PaymentEvent): Promise<void> {
       return;
 
     case "refund_succeeded": {
-      // 6.21：退款事件（webhook 触发）→ 扣回积分 + 标记 refunded
+      // P0-1（docs/05 §4.3）：webhook 到达只「登记退款事实」（refund_requested 中间态
+      // + refunds 退款单 + 债务化准入），不再直接扣积分/终态化——终态由后台人工/回收流程闭合。
+      // admin 退款路径不受影响（processRefund 直回收 + 终态）。
       if (!event.order_no) {
         console.warn("[payment] refund event missing order_no");
         return;
       }
-      await processRefund({ order_no: event.order_no, amount: event.amount });
+      if (!event.user_uuid) {
+        // 没有 user_uuid 无法登记欠款归属：不终态化也不回收，告警人工核查
+        trackCriticalEvent({
+          event_type: "payment.refund_event_missing_user",
+          severity: "critical",
+          source: "webhook",
+          subject_uuid: event.order_no,
+          detail: { provider: event.provider || "", amount: event.amount },
+        });
+        return;
+      }
+      await registerRefundRequest({
+        order_no: event.order_no,
+        user_uuid: event.user_uuid,
+        provider: event.provider || "",
+        provider_refund_id: event.provider_ref_id || "",
+        amount: event.amount,
+        currency: event.currency || "USD",
+        reason: "refund succeeded webhook",
+        initiated_by: "customer",
+      });
+      return;
+    }
+
+    case "dispute_opened":
+    case "dispute_won":
+    case "dispute_lost": {
+      // N-13 争议/拒付链路（docs/05 §7）：归一化状态 + 冻结/解冻资金与积分
+      if (!event.order_no) {
+        console.warn("[payment] dispute event missing order_no");
+        return;
+      }
+      await handleDisputeEvent({
+        order_no: event.order_no,
+        user_uuid: event.user_uuid,
+        type: event.type as "dispute_opened" | "dispute_won" | "dispute_lost",
+        amount: event.amount,
+        raw: event.raw,
+      });
       return;
     }
 

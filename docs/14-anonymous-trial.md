@@ -169,6 +169,15 @@ POST /api/v1/ai/demo
 
 > 退还实现：失败时对 `anonymous_usage.count` 减 1（需保证不出现负数，RPC 内 `GREATEST(count-1, 0)`）。
 
+> ✅ **P0-4 已关闭（2026-08-30）**：四条修法均已落地在 `app/api/v1/ai/demo/route.ts`——
+> ① 字段白名单（仅 `prompt`，未知字段 400 不计次）+ 字节上限（`DEMO_MAX_PROMPT_BYTES` 默认 8KB），
+>   超限 413 且照常消耗次数；② 退还仅限「已确认上游未产生费用」的错误（本地异常、连接失败、
+>   provider 5xx，按 `APICallError.statusCode` 4xx/5xx 分类），provider 4xx 一律计次；
+> ③ 同一 IP 当日失败次数单独计数封顶（复用 `anonymous_usage` 表，key=`fail:<iphash>`，
+>   上限 `DEMO_FAILURE_DAILY_LIMIT` 默认 10），分钟级 IP 限流改走统一 `rateLimit()`
+>   （Upstash 缺失时内存兜底，不 fail-open）；④ §五表格见下方更新。
+> 回归测试：`__tests__/ai-demo-guard.test.ts`。
+>
 > ⚠️ **P0-4（第九轮对抗式审查，2026-08-26）——「失败退还次数」+「输入无大小限制」= 单 IP 绕过每日 3 次**：
 > RPC 先自增、失败路径再 `GREATEST(count-1, 0)` 减回——**闸门只对成功的调用计数，而攻击者可以让 100% 的调用失败**：
 > 单 IP 发超大 prompt（无 schema、无字节上限）→ provider 因超上下文返回 400 → 服务端判为「模型报错」→ 退还次数，count 回 0 → 循环。
@@ -256,7 +265,7 @@ DELETE FROM anonymous_usage WHERE usage_date < CURRENT_DATE - INTERVAL '30 days'
 | 清 cookie / 隐私模式 | ✅ 防 | 额度在服务端，与 cookie 无关 |
 | 换 IP（同设备） | ❌ **不防** | 额度键为纯 IP，换 IP 即重置；代理池可规模化绕过 |
 | 换浏览器/换设备（同 IP） | ✅ 防 | 同 IP 共享额度 |
-| 不换 IP，制造 100% 失败调用（超长输入 + 失败退还） | ❌ **不防** | 闸门只对成功调用计数，失败路径 `GREATEST(count-1,0)` 退还，count 可始终回 0（P0-4，见 §2.5） |
+| 不换 IP，制造 100% 失败调用（超长输入 + 失败退还） | ✅ 防（2026-08-30） | 超限输入 413 照常计次；provider 4xx 计次不退还；当日失败次数封顶（`DEMO_FAILURE_DAILY_LIMIT`，默认 10）；详见 §2.5 P0-4 已关闭说明 |
 | 反向代理未配 TRUSTED_PROXY | ⚠️ 过度拦截 | 全流量共享 127.0.0.1 一个键，部署必须正确配置 |
 | 注册奖励刷取（new_user 送 10 积分 × 一次性邮箱批量注册） | ❌ **不防（原先未声明）** | 登录送积分与匿名限次是两条独立防线：注册奖励维度无每 IP 发放上限、无一次性邮箱域名拦截设计。本表此前只覆盖匿名层，掩盖了这一层边界（第十轮 P3-8 补入）。按「挡普通用户而非黑产」教义可接受，但应如实列出；上线前建议至少加「每 IP 每日 new_user 发放次数上限」（复用 anonymous_usage 表模式） |
 

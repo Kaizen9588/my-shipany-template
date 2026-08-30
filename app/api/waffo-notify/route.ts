@@ -2,6 +2,7 @@ import { waffoProvider } from "@/lib/payment";
 import { handlePaymentEvent } from "@/lib/payment";
 import { trackCriticalEvent } from "@/lib/oplog";
 import { logger } from "@/lib/logger";
+import { guardWebhookRequest, requestWithRawBody } from "@/lib/webhook-guard";
 
 /**
  * POST /api/waffo-notify —— Waffo Pancake Webhook
@@ -22,9 +23,17 @@ function toWebhookResponse(success: boolean, status: number): Response {
 }
 
 export async function POST(req: Request) {
+  // N-5：body 上限防护（Waffo 事件重试≤5 次且数据量小；超限直接拒绝，不验签不打告警）
+  const guard = await guardWebhookRequest(req);
+  if (!guard.ok) {
+    return toWebhookResponse(false, guard.status || 413);
+  }
+
   let event: Awaited<ReturnType<typeof waffoProvider.parseWebhook>>;
   try {
-    event = await waffoProvider.parseWebhook(req);
+    event = await waffoProvider.parseWebhook(
+      requestWithRawBody(req, guard.rawBody || "")
+    );
   } catch (e: any) {
     logger.error(e, { route: "POST /api/waffo-notify", stage: "parseWebhook" });
     trackCriticalEvent({

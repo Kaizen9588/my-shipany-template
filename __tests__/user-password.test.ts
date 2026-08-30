@@ -74,7 +74,8 @@ describe("services/user-password（默认管理员强制改密）", () => {
     mockFindUser.mockResolvedValue({
       uuid: "u1",
       password_hash: passwordHash,
-      email: "admin@shipany.local",
+      email: "admin@example.com",
+      status: "pending_activation",
     });
 
     await changeUserPassword({
@@ -90,6 +91,7 @@ describe("services/user-password（默认管理员强制改密）", () => {
     // update 参数：写入了新哈希 + 清除了 must_change_password
     expect(updateArg).toMatchObject({
       must_change_password: false,
+      status: "active",
       password_hash: expect.any(String),
       password_updated_at: expect.any(String),
     });

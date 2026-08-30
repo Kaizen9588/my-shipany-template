@@ -6,20 +6,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import {
   NOTIFY_EVENTS,
   type NotifyEventRule,
 } from "@/lib/notify/events";
 
-interface NotifyConfig {
-  feishuWebhookUrl: string;
-  feishuSecret: string;
-  wecomWebhookUrl: string;
+interface NotifyConfigView {
+  feishuWebhookUrlSet: boolean;
+  feishuWebhookUrlMasked: string;
+  feishuSecretSet: boolean;
+  feishuSecretMasked: string;
+  wecomWebhookUrlSet: boolean;
+  wecomWebhookUrlMasked: string;
   notifyMinSeverity: "info" | "warn" | "error" | "critical";
 }
 
-const SEVERITIES: Array<NotifyConfig["notifyMinSeverity"]> = [
+type SecretDraftKey = "feishuWebhookUrl" | "feishuSecret" | "wecomWebhookUrl";
+
+const SEVERITIES: Array<NotifyConfigView["notifyMinSeverity"]> = [
   "info",
   "warn",
   "error",
@@ -30,19 +36,38 @@ export default function NotifySettingsForm({
   initial,
   initialRules,
 }: {
-  initial: NotifyConfig;
+  initial: NotifyConfigView;
   initialRules: Record<string, NotifyEventRule>;
 }) {
   const router = useRouter();
-  const [form, setForm] = useState<NotifyConfig>(initial);
+  const [severity, setSeverity] = useState(initial.notifyMinSeverity);
+  // N-1：页面不再持有 secret 原文，三个敏感字段只保存「新输入的草稿」，
+  // 留空提交表示保留现值。
+  const [drafts, setDrafts] = useState<Record<SecretDraftKey, string>>({
+    feishuWebhookUrl: "",
+    feishuSecret: "",
+    wecomWebhookUrl: "",
+  });
   const [rules, setRules] = useState<Record<string, NotifyEventRule>>(
     initialRules
   );
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  // N-6：告警通道/密钥变更影响生产告警可达性，保存必须带理由（服务端强制校验）
+  const [reason, setReason] = useState("");
 
-  const set = (key: keyof NotifyConfig, value: string) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+  const setDraft = (key: SecretDraftKey, value: string) => {
+    setDrafts((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const placeholderFor = (key: SecretDraftKey, fallback: string): string => {
+    const masked =
+      key === "feishuWebhookUrl"
+        ? initial.feishuWebhookUrlMasked
+        : key === "feishuSecret"
+          ? initial.feishuSecretMasked
+          : initial.wecomWebhookUrlMasked;
+    return masked ? `已配置（${masked}），留空表示不修改` : fallback;
   };
 
   const setRule = (eventType: string, partial: Partial<NotifyEventRule>) => {
@@ -53,12 +78,26 @@ export default function NotifySettingsForm({
   };
 
   const save = async () => {
+    if (reason.trim().length < 5) {
+      toast.error("请填写变更理由（至少 5 个字符，将写入审计日志）");
+      return;
+    }
     setSaving(true);
     try {
+      const body: Record<string, unknown> = {
+        notifyMinSeverity: severity,
+        eventRules: rules,
+        reason: reason.trim(),
+      };
+      for (const key of ["feishuWebhookUrl", "feishuSecret", "wecomWebhookUrl"] as SecretDraftKey[]) {
+        if (drafts[key].trim()) {
+          body[key] = drafts[key].trim();
+        }
+      }
       const resp = await fetch("/api/admin/notify-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, eventRules: rules }),
+        body: JSON.stringify(body),
       });
       const { code, message } = await resp.json();
       if (code !== 0) {
@@ -66,6 +105,8 @@ export default function NotifySettingsForm({
         return;
       }
       toast.success("告警配置已保存");
+      setDrafts({ feishuWebhookUrl: "", feishuSecret: "", wecomWebhookUrl: "" });
+      setReason("");
       router.refresh();
     } catch (e) {
       toast.error("保存失败");
@@ -95,15 +136,31 @@ export default function NotifySettingsForm({
 
   return (
     <div className="max-w-3xl space-y-8">
+      <div className="space-y-1">
+        <Label htmlFor="notify-reason">变更理由（必填，写入审计日志）</Label>
+        <Textarea
+          id="notify-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          required
+          minLength={5}
+          maxLength={200}
+          placeholder="例如：更换值班机器人，旧 webhook 轮换"
+          className="max-w-xl"
+        />
+      </div>
       <div className="space-y-5">
         <div className="space-y-2">
           <Label htmlFor="feishu-url">飞书机器人 Webhook</Label>
           <Input
             id="feishu-url"
             type="url"
-            placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
-            value={form.feishuWebhookUrl}
-            onChange={(e) => set("feishuWebhookUrl", e.target.value)}
+            placeholder={placeholderFor(
+              "feishuWebhookUrl",
+              "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+            )}
+            value={drafts.feishuWebhookUrl}
+            onChange={(e) => setDraft("feishuWebhookUrl", e.target.value)}
           />
         </div>
 
@@ -111,9 +168,9 @@ export default function NotifySettingsForm({
           <Label htmlFor="feishu-secret">飞书签名密钥（可留空）</Label>
           <Input
             id="feishu-secret"
-            value={form.feishuSecret}
-            placeholder="群设置开启签名校验时填"
-            onChange={(e) => set("feishuSecret", e.target.value)}
+            value={drafts.feishuSecret}
+            placeholder={placeholderFor("feishuSecret", "群设置开启签名校验时填")}
+            onChange={(e) => setDraft("feishuSecret", e.target.value)}
           />
         </div>
 
@@ -122,9 +179,12 @@ export default function NotifySettingsForm({
           <Input
             id="wecom-url"
             type="url"
-            placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
-            value={form.wecomWebhookUrl}
-            onChange={(e) => set("wecomWebhookUrl", e.target.value)}
+            placeholder={placeholderFor(
+              "wecomWebhookUrl",
+              "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+            )}
+            value={drafts.wecomWebhookUrl}
+            onChange={(e) => setDraft("wecomWebhookUrl", e.target.value)}
           />
         </div>
 
@@ -132,9 +192,9 @@ export default function NotifySettingsForm({
           <Label htmlFor="severity">默认可通知的最低级别</Label>
           <select
             id="severity"
-            value={form.notifyMinSeverity}
+            value={severity}
             onChange={(e) =>
-              set("notifyMinSeverity", e.target.value as NotifyConfig["notifyMinSeverity"])
+              setSeverity(e.target.value as NotifyConfigView["notifyMinSeverity"])
             }
             className="w-full rounded-md border px-3 py-1.5 text-sm"
           >

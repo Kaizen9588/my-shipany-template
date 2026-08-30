@@ -1,5 +1,5 @@
 import { countUsers } from "@/models/user";
-import { getSupabaseClient } from "@/models/db";
+import { serverClient } from "@/models/db";
 
 /**
  * 后台数据看板统计（6.6）
@@ -7,7 +7,8 @@ import { getSupabaseClient } from "@/models/db";
  * 图表：30 天用户增长 / 30 天收入 / 30 天积分消耗趋势
  */
 export async function getAdminStats() {
-  const supabase = getSupabaseClient();
+  // 后台统计跨用户读全表，走 service_role（serverClient），绕过 RLS（N-3）
+  const supabase = serverClient();
   const now = new Date();
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 
 interface SettingRow {
@@ -28,6 +29,8 @@ export default function PaymentSettingsForm({
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<SettingRow[]>(settings);
+  // N-6：渠道启停/优先级是资金路径配置，保存必须带理由（服务端强制校验）
+  const [reason, setReason] = useState("");
 
   const toggle = (provider: string, enabled: boolean) => {
     setRows((prev) =>
@@ -41,12 +44,17 @@ export default function PaymentSettingsForm({
   };
 
   const save = async () => {
+    if (reason.trim().length < 5) {
+      toast.error("请填写变更理由（至少 5 个字符，将写入审计日志）");
+      return;
+    }
     setSaving(true);
     try {
       const resp = await fetch("/api/admin/payment-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          reason: reason.trim(),
           settings: rows.map((r) => ({
             provider: r.provider,
             enabled: r.enabled,
@@ -60,6 +68,7 @@ export default function PaymentSettingsForm({
         return;
       }
       toast.success("支付渠道设置已保存（即时生效）");
+      setReason("");
       router.refresh();
     } catch (e) {
       toast.error("保存失败");
@@ -70,6 +79,19 @@ export default function PaymentSettingsForm({
 
   return (
     <div className="space-y-8">
+      <div className="space-y-1">
+        <Label htmlFor="payment-reason">变更理由（必填，写入审计日志）</Label>
+        <Textarea
+          id="payment-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          required
+          minLength={5}
+          maxLength={200}
+          placeholder="例如：Waffo 渠道临时下线排查"
+          className="max-w-xl"
+        />
+      </div>
       <div>
         <h4 className="mb-3 font-medium">渠道启用与优先级</h4>
         <div className="grid gap-3 md:grid-cols-3">

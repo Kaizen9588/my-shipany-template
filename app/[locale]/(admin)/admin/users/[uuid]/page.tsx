@@ -3,10 +3,12 @@ import { findUserByUuid, updateUserByAdmin } from "@/models/user";
 import { getCreditsByUserUuid } from "@/models/credit";
 import { getUserCredits, adjustCreditsByAdmin } from "@/services/credit";
 import { requireAdmin } from "@/lib/auth";
+import { parseReason } from "@/lib/admin-reason";
 import { fireAndForgetAudit } from "@/lib/audit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import moment from "moment";
 
 /**
@@ -37,21 +39,31 @@ export default async function UserDetailPage({
     if (!["user", "operator", "admin", "super_admin"].includes(role)) {
       throw new Error("invalid role");
     }
+    // N-6：改角色是授权变更，理由必填并写入审计
+    const parsed = parseReason(formData.get("reason"));
+    if (!parsed.ok) {
+      throw new Error(`reason required: ${parsed.error}`);
+    }
     await updateUserByAdmin(uuid, { role });
     fireAndForgetAudit({
       admin_uuid: adminUser.uuid || "",
       action: "admin.user.update",
       target_type: "user",
       target_uuid: uuid,
-      detail: JSON.stringify({ role }),
+      detail: JSON.stringify({ role, reason: parsed.reason }),
     });
     redirect(`/admin/users/${uuid}`);
   }
 
-  async function toggleStatus() {
+  async function toggleStatus(formData: FormData) {
     "use server";
     // 2.7：封禁/解封是 admin 级操作
     const adminUser = await requireAdmin("admin");
+    // N-6：封禁影响用户访问与在期权益，理由必填并写入审计
+    const parsed = parseReason(formData.get("reason"));
+    if (!parsed.ok) {
+      throw new Error(`reason required: ${parsed.error}`);
+    }
     const next = currentUser.status === "banned" ? "active" : "banned";
     await updateUserByAdmin(uuid, { status: next });
     fireAndForgetAudit({
@@ -59,7 +71,7 @@ export default async function UserDetailPage({
       action: "admin.user.update",
       target_type: "user",
       target_uuid: uuid,
-      detail: JSON.stringify({ status: next }),
+      detail: JSON.stringify({ status: next, reason: parsed.reason }),
     });
     redirect(`/admin/users/${uuid}`);
   }
@@ -69,21 +81,25 @@ export default async function UserDetailPage({
     // 2.7：调整积分是资金操作，需 admin 级
     const adminUser = await requireAdmin("admin");
     const creditsNum = parseInt(String(formData.get("credits") || "0"), 10);
-    const remark = String(formData.get("remark") || "");
+    // N-6：调整积分是资金操作，理由必填（与 /api/admin/user/credits 同规则）
+    const parsed = parseReason(formData.get("reason"));
+    if (!parsed.ok) {
+      throw new Error(`reason required: ${parsed.error}`);
+    }
     if (!creditsNum || creditsNum === 0) {
       throw new Error("invalid credits");
     }
     await adjustCreditsByAdmin({
       user_uuid: uuid,
       credits: creditsNum,
-      remark,
+      remark: parsed.reason,
     });
     fireAndForgetAudit({
       admin_uuid: adminUser.uuid || "",
       action: "admin.user.adjust_credits",
       target_type: "user",
       target_uuid: uuid,
-      detail: JSON.stringify({ credits: creditsNum, remark }),
+      detail: JSON.stringify({ credits: creditsNum, reason: parsed.reason }),
     });
     redirect(`/admin/users/${uuid}`);
   }
@@ -123,8 +139,16 @@ export default async function UserDetailPage({
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="remark">备注</Label>
-            <Input id="remark" name="remark" placeholder="备注" />
+            <Label htmlFor="reason">理由（必填，写入审计日志）</Label>
+            <Textarea
+              id="reason"
+              name="reason"
+              required
+              minLength={5}
+              maxLength={200}
+              placeholder="例如：客诉补偿，工单 #1234"
+              className="w-64"
+            />
           </div>
           <Button type="submit">应用</Button>
         </form>
@@ -132,23 +156,51 @@ export default async function UserDetailPage({
 
       <div className="rounded-lg border p-4">
         <h4 className="mb-3 font-medium">管理员操作</h4>
-        <div className="flex flex-wrap gap-2">
-          <form action={updateRole}>
-            <select
-              name="role"
-              defaultValue={user.role || "user"}
-              className="rounded-md border px-3 py-1.5 text-sm"
-            >
-              <option value="user">user</option>
-              <option value="operator">operator</option>
-              <option value="admin">admin</option>
-              <option value="super_admin">super_admin</option>
-            </select>
-            <Button type="submit" className="ml-2" size="sm">
+        <div className="flex flex-wrap gap-6">
+          <form action={updateRole} className="flex items-end gap-2">
+            <div className="space-y-1">
+              <Label htmlFor="role">角色</Label>
+              <select
+                id="role"
+                name="role"
+                defaultValue={user.role || "user"}
+                className="rounded-md border px-3 py-1.5 text-sm"
+              >
+                <option value="user">user</option>
+                <option value="operator">operator</option>
+                <option value="admin">admin</option>
+                <option value="super_admin">super_admin</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="role-reason">理由（必填）</Label>
+              <Input
+                id="role-reason"
+                name="reason"
+                required
+                minLength={5}
+                maxLength={200}
+                placeholder="例如：运营转管理员，工单 #5678"
+                className="w-64"
+              />
+            </div>
+            <Button type="submit" size="sm">
               Update Role
             </Button>
           </form>
-          <form action={toggleStatus}>
+          <form action={toggleStatus} className="flex items-end gap-2">
+            <div className="space-y-1">
+              <Label htmlFor="status-reason">理由（必填）</Label>
+              <Input
+                id="status-reason"
+                name="reason"
+                required
+                minLength={5}
+                maxLength={200}
+                placeholder="例如：恶意退款，封禁调查"
+                className="w-64"
+              />
+            </div>
             <Button type="submit" variant="destructive" size="sm">
               {user.status === "banned" ? "解封" : "封禁"}
             </Button>

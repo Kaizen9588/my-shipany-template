@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({ client: vi.fn() }));
+
 vi.mock("@/models/db", () => ({
-  getSupabaseClient: vi.fn(),
+  getSupabaseClient: mocks.client,
+  serverClient: mocks.client,
+  userClient: mocks.client,
 }));
 
 import {

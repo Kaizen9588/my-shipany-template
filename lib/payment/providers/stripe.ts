@@ -89,6 +89,18 @@ export const stripeProvider: PaymentProvider = {
 
     const event = await stripe.webhooks.constructEventAsync(body, sign, secret);
 
+    // 通过 payment_intent 反查本地订单（退款 / 争议共用）——Charger 的 metadata 存了 order_no / user_uuid 幂等键
+    const sessionByPaymentIntent = async (
+      paymentIntent: string | null | undefined
+    ): Promise<Stripe.Checkout.Session | undefined> => {
+      if (!paymentIntent) {
+        return undefined;
+      }
+      return stripe.checkout.sessions
+        .list({ payment_intent: paymentIntent, limit: 1 })
+        .then((r) => r.data[0]);
+    };
+
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
@@ -113,12 +125,7 @@ export const stripeProvider: PaymentProvider = {
           typeof charge.payment_intent === "string"
             ? charge.payment_intent
             : charge.payment_intent?.id || "";
-        if (!paymentIntent) {
-          return null;
-        }
-        const session = await stripe.checkout.sessions
-          .list({ payment_intent: paymentIntent, limit: 1 })
-          .then((r) => r.data[0]);
+        const session = await sessionByPaymentIntent(paymentIntent);
         if (!session?.metadata?.order_no) {
           return null;
         }
@@ -128,7 +135,46 @@ export const stripeProvider: PaymentProvider = {
           user_uuid: session.metadata.user_uuid || "",
           credits: 0,
           amount: charge.amount_refunded || 0,
+          provider: "stripe",
+          provider_ref_id: charge.refunds?.data?.[0]?.id || "",
           raw: charge,
+        };
+      }
+
+      // N-13：card 争议（chargeback）。created → 冻结；closed(status won/lost) → 解冻/拒付成立
+      case "charge.dispute.created": {
+        const dispute = event.data.object as Stripe.Dispute;
+        const session = await sessionByPaymentIntent(
+          typeof dispute.payment_intent === "string"
+            ? dispute.payment_intent
+            : dispute.payment_intent?.id
+        );
+        return {
+          type: "dispute_opened",
+          order_no: session?.metadata?.order_no || "",
+          user_uuid: session?.metadata?.user_uuid || "",
+          credits: 0,
+          amount: dispute.amount,
+          currency: dispute.currency,
+          raw: dispute,
+        };
+      }
+
+      case "charge.dispute.closed": {
+        const dispute = event.data.object as Stripe.Dispute;
+        const session = await sessionByPaymentIntent(
+          typeof dispute.payment_intent === "string"
+            ? dispute.payment_intent
+            : dispute.payment_intent?.id
+        );
+        return {
+          type: dispute.status === "lost" ? "dispute_lost" : "dispute_won",
+          order_no: session?.metadata?.order_no || "",
+          user_uuid: session?.metadata?.user_uuid || "",
+          credits: 0,
+          amount: dispute.amount,
+          currency: dispute.currency,
+          raw: dispute,
         };
       }
 

@@ -74,6 +74,49 @@ export async function getNotifyConfig(): Promise<NotifyConfig> {
   };
 }
 
+// ---- N-1：密钥脱敏出口 ----
+
+/**
+ * 对外展示视图：只含「是否已配置」和末四位掩码，绝不回显原文。
+ * webhook URL 本身内嵌机器人 token，与 secret 同级对待。
+ */
+export interface NotifySecretView {
+  set: boolean;
+  masked: string;
+}
+
+function toSecretView(value: string): NotifySecretView {
+  const v = (value || "").trim();
+  return {
+    set: v.length > 0,
+    masked: v.length > 0 ? `****${v.slice(-4)}` : "",
+  };
+}
+
+/** GET /api/admin/notify-settings 与后台页面的统一脱敏出口 */
+export function toNotifyConfigView(config: NotifyConfig): {
+  feishuWebhookUrlSet: boolean;
+  feishuWebhookUrlMasked: string;
+  feishuSecretSet: boolean;
+  feishuSecretMasked: string;
+  wecomWebhookUrlSet: boolean;
+  wecomWebhookUrlMasked: string;
+  notifyMinSeverity: NotifyConfig["notifyMinSeverity"];
+} {
+  const feishuUrl = toSecretView(config.feishuWebhookUrl);
+  const feishuSecret = toSecretView(config.feishuSecret);
+  const wecomUrl = toSecretView(config.wecomWebhookUrl);
+  return {
+    feishuWebhookUrlSet: feishuUrl.set,
+    feishuWebhookUrlMasked: feishuUrl.masked,
+    feishuSecretSet: feishuSecret.set,
+    feishuSecretMasked: feishuSecret.masked,
+    wecomWebhookUrlSet: wecomUrl.set,
+    wecomWebhookUrlMasked: wecomUrl.masked,
+    notifyMinSeverity: config.notifyMinSeverity,
+  };
+}
+
 // ---- 事件级通知规则（6.23：可配置哪些事件触发机器人告警） ----
 
 const DEFAULT_RULES: Record<string, NotifyEventRule> = Object.fromEntries(

@@ -1,13 +1,15 @@
 import { EmailMessage, EmailProvider, EmailResult } from "./types";
 import { resendProvider } from "./providers/resend";
+import { runAfterResponse } from "@/lib/after-response";
 
 /**
  * 统一邮件入口（6.2，docs/10 §2.3）
  *
  * 业务代码只调 sendEmail / fireAndForgetEmail，不感知 provider。
  *
- * ⚠️ 事务性邮件必须 **fire-and-forget**（void sendEmail(...)）：
- * 严禁同步 await 拖慢登录/支付主流程，发送失败不阻塞主流程。
+ * ⚠️ 事务性邮件必须 **fire-and-forget**（fireAndForgetEmail(...)）：
+ * 严禁同步 await 拖慢登录/支付主流程，发送失败不阻塞主流程；
+ * 调度经 runAfterResponse（after()），响应返回后仍被平台保证执行。
  */
 const providers: EmailProvider[] = [resendProvider];
 
@@ -34,8 +36,12 @@ export async function sendEmail(
  * Fire-and-forget 发送：不 await、错误在内部消化，绝不阻塞主流程。
  */
 export function fireAndForgetEmail(message: EmailMessage): void {
-  void sendEmail(message).catch((e) => {
-    console.error("[email] fire-and-forget failed:", message.template, e);
+  runAfterResponse(async () => {
+    try {
+      await sendEmail(message);
+    } catch (e) {
+      console.error("[email] fire-and-forget failed:", message.template, e);
+    }
   });
 }
 

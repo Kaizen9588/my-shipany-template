@@ -2,6 +2,7 @@ import { creemProvider } from "@/lib/payment";
 import { handlePaymentEvent } from "@/lib/payment";
 import { trackCriticalEvent } from "@/lib/oplog";
 import { logger } from "@/lib/logger";
+import { guardWebhookRequest, requestWithRawBody } from "@/lib/webhook-guard";
 
 /**
  * POST /api/creem-notify —— Creem Webhook（6.1，docs/payment/creem-integration.md §3.4）
@@ -10,9 +11,17 @@ import { logger } from "@/lib/logger";
  * 验签/解析失败发射 payment.webhook_invalid_signature（docs/16 §5.4）。
  */
 export async function POST(req: Request) {
+  // N-5：body 上限防护（防止超大/畸形请求打爆内存与日志告警）
+  const guard = await guardWebhookRequest(req);
+  if (!guard.ok) {
+    return Response.json({ error: guard.reason }, { status: guard.status });
+  }
+
   let event: Awaited<ReturnType<typeof creemProvider.parseWebhook>>;
   try {
-    event = await creemProvider.parseWebhook(req);
+    event = await creemProvider.parseWebhook(
+      requestWithRawBody(req, guard.rawBody || "")
+    );
   } catch (e: any) {
     logger.error(e, { route: "POST /api/creem-notify", stage: "parseWebhook" });
     trackCriticalEvent({

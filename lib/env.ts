@@ -27,6 +27,9 @@ const optionalSchema = z.object({
   AUTH_GITHUB_ID: z.string().optional(),
   AUTH_GITHUB_SECRET: z.string().optional(),
   ADMIN_EMAILS: z.string().optional(),
+  // 初始超级管理员：仅显式配置邮箱时创建，未配置则绝不建号（P0-3）
+  ADMIN_BOOTSTRAP_EMAIL: z.string().email().optional(),
+  ADMIN_BOOTSTRAP_PASSWORD: z.string().optional(),
   // 支付
   STRIPE_PUBLIC_KEY: z.string().optional(),
   STRIPE_PRIVATE_KEY: z.string().optional(),

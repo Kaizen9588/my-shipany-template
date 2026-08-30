@@ -10,6 +10,14 @@ export enum OrderStatus {
   Refunded = "refunded",
   /** 渠道实付金额/币种与订单不符（迁移 0010），待人工核查 */
   Mismatch = "mismatch",
+  /** P0-1：退款已登记但回收流程未闭合（中间态） */
+  RefundRequested = "refund_requested",
+  /** P0-1：退款回收需人工决策（已消费超额被债务化） */
+  RefundBlocked = "refund_blocked",
+  /** N-13：争议进行中（冻结消费，保留余额） */
+  Disputed = "disputed",
+  /** N-13：拒付成立（资金已划走，账号受限） */
+  ChargedBack = "charged_back",
 }
 
 export async function insertOrder(order: Order) {

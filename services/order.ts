@@ -1,5 +1,5 @@
 import { getIsoTimestr } from "@/lib/time";
-import { getSupabaseClient } from "@/models/db";
+import { serverClient } from "@/models/db";
 import { findOrderByOrderNo } from "@/models/order";
 import { fireAndForgetEmail } from "@/lib/email";
 import { trackCriticalEvent } from "@/lib/oplog";
@@ -30,7 +30,8 @@ export async function handleOrderSession(session: Stripe.Checkout.Session) {
     const paid_detail = JSON.stringify(session);
     const paid_at = getIsoTimestr();
 
-    const supabase = getSupabaseClient();
+    // 支付落账是资金操作，走 service_role（serverClient），绕过 RLS（N-3）
+    const supabase = serverClient();
     const { data, error } = await supabase.rpc("handle_order_payment", {
       p_order_no: order_no,
       p_paid_at: paid_at,

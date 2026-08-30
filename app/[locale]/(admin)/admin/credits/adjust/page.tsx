@@ -1,15 +1,18 @@
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
+import { parseReason } from "@/lib/admin-reason";
 import { adjustCreditsByAdmin } from "@/services/credit";
 import { findUserByEmail } from "@/models/user";
 import { fireAndForgetAudit } from "@/lib/audit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 /**
  * 后台手动调整积分（6.9）
  * 按邮箱定位用户（或直接 user_uuid），增减积分并备注。
+ * N-6：调整积分是资金操作，理由必填（与 /api/admin/user/credits 同规则）。
  */
 export default function AdjustCreditsPage() {
   async function adjust(formData: FormData) {
@@ -19,7 +22,10 @@ export default function AdjustCreditsPage() {
     const email = String(formData.get("email") || "").trim().toLowerCase();
     const user_uuid = String(formData.get("user_uuid") || "").trim();
     const creditsNum = parseInt(String(formData.get("credits") || "0"), 10);
-    const remark = String(formData.get("remark") || "").slice(0, 200);
+    const parsed = parseReason(formData.get("reason"));
+    if (!parsed.ok) {
+      throw new Error(`reason required: ${parsed.error}`);
+    }
 
     if (!creditsNum || creditsNum === 0) {
       throw new Error("invalid credits");
@@ -40,7 +46,7 @@ export default function AdjustCreditsPage() {
     await adjustCreditsByAdmin({
       user_uuid: targetUuid,
       credits: creditsNum,
-      remark,
+      remark: parsed.reason,
     });
 
     fireAndForgetAudit({
@@ -48,7 +54,7 @@ export default function AdjustCreditsPage() {
       action: "admin.credits.adjust",
       target_type: "user",
       target_uuid: targetUuid,
-      detail: JSON.stringify({ credits: creditsNum, remark }),
+      detail: JSON.stringify({ credits: creditsNum, reason: parsed.reason }),
     });
 
     redirect("/admin/credits");
@@ -75,8 +81,15 @@ export default function AdjustCreditsPage() {
           <Input id="credits" name="credits" type="number" required placeholder="例如 100 / -50" />
         </div>
         <div className="space-y-1">
-          <Label htmlFor="remark">Remark（备注）</Label>
-          <Input id="remark" name="remark" placeholder="原因/说明" />
+          <Label htmlFor="reason">Reason（操作理由，必填，写入审计日志）</Label>
+          <Textarea
+            id="reason"
+            name="reason"
+            required
+            minLength={5}
+            maxLength={200}
+            placeholder="例如：客诉补偿，工单 #1234"
+          />
         </div>
         <Button type="submit">应用调整</Button>
       </form>

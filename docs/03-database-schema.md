@@ -4,9 +4,9 @@
 
 - **数据库类型**：PostgreSQL（Supabase 托管；本地开发可用 Supabase CLI，见 [07-deployment.md §5.2](./07-deployment.md)）
 - **客户端**：@supabase/supabase-js（无 ORM，直接调用 Supabase Client）；迁移执行用 `pg` 直连 `DATABASE_URL`
-- **建表脚本**：`data/migrations/0000_install_base.sql`（基础 7 表：users/orders/credits/affiliates/apikeys/posts/notifications，一次性执行）；其余表全部由迁移增量创建（data/install.sql 为旧版全能脚本，与迁移基线存在出入，勿再参考）
-- **迁移机制**：`data/migrations/*.sql` 按文件名序号执行，`schema_migrations` 版本表保证幂等；服务启动时 `instrumentation.ts` 自动执行，手动 `pnpm migrate`（见 `lib/migrate.ts`）
-- **迁移清单**（0000-0017）：基础建表 / 支付配置表 / 积分原子扣减 / 支付事务化 / 外键索引 / 匿名额度 / 密码登录 / 多渠道 / RBAC+审计 / 站内通知 / 金额比对 / 退款原子化 / 默认管理员 / system_settings / op_events / apikeys 前缀 / 匿名额度 off-by-one / 迟付恢复+联盟首付
+- **建表脚本**：唯一建库路径是 `data/migrations/0000_install_base.sql` 起的顺序迁移；`data/install.sql` 是历史脚本，禁止用于新库或生产库
+- **迁移机制**：`pnpm migrate` 是唯一可写 schema 的入口，按文件名序号执行并使用 `schema_migrations` 记录版本、事务级 advisory lock 串行化多实例；应用启动时 `instrumentation.ts` 仅只读校验版本，发现缺失迁移立即拒绝启动（见 `lib/migrate.ts`）
+- **迁移清单**（0000-0019）：基础建表 / 支付配置表 / 积分原子扣减 / 支付事务化 / 外键索引 / 匿名额度 / 密码登录 / 多渠道 / RBAC+审计 / 站内通知 / 金额比对 / 退款原子化 / 安全管理员引导字段 / system_settings / op_events / apikeys 前缀 / 匿名额度 off-by-one / 迟付恢复+联盟首付 / 历史默认账号禁用
 - **表数量**：16 张（迁移 0000 基础 7 张 + 迁移新增 9 张，含 system_settings、op_events）
 - **存储过程**：资金与额度相关写操作全部下沉数据库原子执行（见文末「存储过程」一节），应用层不做 check-then-write
 
@@ -18,10 +18,10 @@
 
 > ⚠️ **第九轮对抗式审查（2026-08-26）新增阻断项，详见文末「存储过程」与「问题清单」**：
 > - **P0-2**：`decrease_credits` 的「行锁串行化」论证不成立（INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化，保护资金的并发安全声明未经论证）。
-> - **P0-3**：自动迁移 0012 会向生产库种入全网公开的 `admin@shipany.local / 123456 / super_admin` 弱口令（「首次强制改密」只是登录后跳转，账号在迁移执行完那一刻即可用公开凭据登录，谁先登谁改密）。
+> - **P0-3（已关闭，2026-08-30）**：0012 不再种入公开管理员，0019 会禁用历史固定 hash 账号；初始管理员仅在显式设置 `ADMIN_BOOTSTRAP_EMAIL` 的受控迁移阶段创建。
 > - **P1-5**：`ai_requests.request_id` 若做成全局 `UNIQUE` 会变成「客户端可控的公共键空间」，需改为 `UNIQUE(user_uuid, request_id)`。
-> - **P1-6**：建库路径三处并存（`install.sql` vs 迁移 0000 基线），`docs/07` 仍要求先手工执行 `install.sql`，需统一。
-> - **P1-7**：启动时自动迁移无并发锁、无事务边界、无回滚、无发布顺序约定，`03` 问题清单却把「无迁移工具」标 ✅。
+> - **P1-6（已关闭，2026-08-30）**：新库只运行 `pnpm migrate`；检测到未登记的历史 `users` 表会 fail-fast，避免 `install.sql` 与 0000 基线混用。
+> - **P1-7（部分关闭，2026-08-30）**：迁移器已加事务级 advisory lock、单事务回滚和运行时只读版本校验；`CONCURRENTLY` 索引的专用发布步骤与 expand-contract 规则仍待补齐。
 > - **P2-1**：`orders.expired_at` 在下单时刻冻结，有效期应从 `paid_at` 起算。
 
 ## ER 关系图
@@ -266,6 +266,13 @@ CREATE TABLE credits (
 4. INSERT 一条负数 credits 记录（expired_at 为 NULL，order_no 指向 FIFO 首笔来源）
 ```
 
+> ✅ **P0-2 快修已落地（2026-08-30，迁移 `0020_decrease_credits_user_lock.sql`）**：`decrease_credits`
+> 入口先取用户级事务 advisory lock（`pg_advisory_xact_lock(736925141, hashtext(user_uuid))`，
+> 两段 int4 键避免与迁移器全局锁撞键；事务级在 pooler 事务模式下安全），再执行原 FOR UPDATE + SUM + FIFO 流程。
+> 并发回归测试 `__tests__/credit-concurrency.test.ts`（静态断言进默认 CI；真实并发双花用例设
+> `TEST_DATABASE_URL` 后运行）。**注意：目标库应用 0020 前，旧定义的双花窗口仍然存在。**
+> 正解（credit_lots 批次模型）仍是长期方向，见下方原始分析与问题清单 #13。
+>
 > ⚠️ **P0-2（第九轮，2026-08-26）**：上述第 1 步「行锁锁定该用户全部积分记录（串行化并发扣减）」的论证**不成立**。
 > 扣减写的是 **INSERT 一条负数流水**，不是 UPDATE 已有行；`SELECT ... FOR UPDATE` 只锁查询快照里**已存在**的行，
 > 对并发插入的新行没有谓词锁/间隙锁。所以「锁 + SUM 校验 + INSERT 负数」在 append-only 账本上不等价于串行化。
@@ -631,7 +638,7 @@ CREATE INDEX idx_ai_requests_status ON ai_requests(status) WHERE status IN ('ref
 | 11 | 缺少 RLS 策略 | 高 | 待落地 | 所有用户表应启用 RLS；终端用户 client 走 anon/authenticated + RLS，服务端走 service role bypass |
 | 12 | 备份无加密与脱敏 | 高 | 待落地 | backup.ts 对 orders/credits 用 select("*")，可能泄露 PII；需加密、保留期限、恢复演练 |
 | 13 | **`decrease_credits` 并发安全声明未经论证（P0-2）** | **阻断** | **No-Go** | INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化；需 advisory lock 或迁 credit_lots 后 UPDATE 原子扣减，并发回归测试进 CI |
-| 14 | **自动迁移向生产库种入公开弱口令（P0-3）** | **阻断** | **No-Go** | 迁移 0012 无条件创建 `admin@shipany.local / 123456 / super_admin`；需条件建号 + 随机密码 + pending_activation + 生产不建号 |
+| 14 | ~~自动迁移向生产库种入公开弱口令（P0-3）~~ | ~~阻断~~ | ✅ 已关闭（0012/0019） | 0012 不再建号；0019 禁用历史固定 hash 账号；仅 `ADMIN_BOOTSTRAP_EMAIL` 显式开启一次性 pending_activation 引导 |
 | 15 | **建库路径三处并存（P1-6）** | 高 | 待统一 | `install.sql`（03 标「勿再参考」）与迁移 0000 基线、README 粘贴路径并存，`docs/07` 仍要求先手工执行 install.sql；需统一为「空库只跑 migrations」并加基线断言 |
 | 16 | **订单/支付事件缺少争议状态（P2-2）** | 中 | 待补 | `orders.status` 无 `disputed/charged_back`，`PaymentEventType` 无争议类型，收到渠道 dispute 事件无处归一化 |
 
@@ -686,6 +693,7 @@ CREATE INDEX idx_ai_requests_status ON ai_requests(status) WHERE status IN ('ref
 > ⚠️ **P0-2（第九轮，2026-08-26）**：「FOR UPDATE 串行化并发扣减」的论证不成立，分析见 §3「积分扣减算法」下方与问题清单 #13。
 > 这是 DB 层的 check-then-write（与本文开篇「应用层禁止 check-then-write」的约定是同一结构），在 append-only 账本上
 > 必须靠 advisory lock 或迁 credit_lots 后 `UPDATE ... WHERE remaining >= x` 才能成立，不能靠「实现细节可能刚好对」。
+> ✅ 快修（advisory lock）已随迁移 0020 落地，见上方 §3 说明；credit_lots 正解仍待做。
 
 > ⚠️ **P1-7（第九轮，2026-08-26）——迁移机制的并发与发布顺序**：`schema_migrations` 只保证同一进程重复启动不重跑，
 > 不解决多进程同秒启动；迁移失败后是否继续启动也没定义。`CREATE OR REPLACE FUNCTION` 并发执行会撞 `tuple concurrently updated`。

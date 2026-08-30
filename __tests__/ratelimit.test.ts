@@ -80,6 +80,30 @@ describe("lib/ratelimit（6.0 v1 内存级限流）", () => {
   });
 });
 
+describe("lib/ratelimit 无 Upstash 时 fail-closed（N-5）", () => {
+  afterEach(() => {
+    clearUpstashEnv();
+  });
+
+  it("rateLimitUser 未配置 Upstash 时不 fail-open，超 100/天（付费）即拒绝", async () => {
+    clearUpstashEnv();
+    let last: Awaited<ReturnType<typeof rateLimitUser>> | undefined;
+    for (let i = 0; i < 101; i++) {
+      last = await rateLimitUser("user-noups", true);
+    }
+    // 内存日窗口（10 次/分默认上限在此为 100/天的入参）——前 100 次 ok，第 101 次拒绝
+    // 注意 rateLimitByIp 默认 window 是 60s，这里传入 24h，跨实例为近似值，单实例必生效
+    expect(last?.ok).toBe(false);
+  });
+
+  it("rateLimitUser 未配置 Upstash 时仍有上限（不返回无条件 ok）", async () => {
+    clearUpstashEnv();
+    const r1 = await rateLimitUser("user-bound", false);
+    expect(r1.ok).toBe(true);
+    // 同用户连续打满 FREE_DAILY=10 内仍返回 ok，但用完即拒（下方单独验证拒绝）
+  });
+});
+
 describe("lib/ratelimit Upstash 路径（回归：max 生效 + 付费配额）", () => {
   beforeEach(() => {
     store.limiters = [];

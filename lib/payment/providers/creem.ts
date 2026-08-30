@@ -7,7 +7,7 @@ import {
   PaymentProvider,
 } from "../types";
 import { getPaymentProducts } from "@/models/payment";
-import { getSupabaseClient } from "@/models/db";
+import { serverClient } from "@/models/db";
 
 /**
  * Creem 支付渠道适配器（6.1，docs/payment/creem-integration.md）
@@ -61,8 +61,8 @@ export const creemProvider: PaymentProvider = {
       customer: { email: params.user_email },
     });
 
-    // 存入 creem_orders 渠道专属表
-    const supabase = getSupabaseClient();
+    // 存入 creem_orders 渠道专属表（渠道表仅服务端写入，走 service_role，N-3）
+    const supabase = serverClient();
     const { error } = await supabase.from("creem_orders").insert({
       order_no: params.order_no,
       creem_checkout_id: checkout.id || "",
@@ -134,6 +134,27 @@ export const creemProvider: PaymentProvider = {
         user_uuid: metadata.user_uuid || obj.user_uuid || "",
         credits: 0,
         amount: obj.amount || 0,
+        provider: "creem",
+        provider_ref_id: obj.id || "",
+        raw: event,
+      };
+    }
+
+    // N-13：争议（chargeback）开启。Creem SDK 只有 dispute.created 一个事件类型，
+    // 无 won/lost 解纷事件——merchant 需在 Dashboard 人工处理，本地至少归一化「开争议→冻结」。
+    if (event?.eventType === "dispute.created") {
+      const obj = event.object || {};
+      // dispute.entity 的 checkout / order 可能是内嵌对象（带 metadata），也可能是 id 字符串
+      const checkout = typeof obj.checkout === "object" && obj.checkout ? obj.checkout : {};
+      const order = typeof obj.order === "object" && obj.order ? obj.order : {};
+      const metadata = checkout.metadata || order.metadata || obj.metadata || {};
+      return {
+        type: "dispute_opened",
+        order_no: metadata.order_no || checkout.order_no || order.order_no || obj.order_no || "",
+        user_uuid: metadata.user_uuid || checkout.user_uuid || order.user_uuid || obj.user_uuid || "",
+        credits: 0,
+        amount: obj.amount || 0,
+        currency: obj.currency || "",
         raw: event,
       };
     }

@@ -62,6 +62,8 @@ export async function changeUserPassword(params: {
       password_hash: passwordHash,
       password_updated_at: getIsoTimestr(),
       must_change_password: false,
+      // 仅首次引导管理员会处于 pending_activation；完成强制改密后才开放完整访问。
+      ...(user.status === "pending_activation" ? { status: "active" } : {}),
     })
     .eq("uuid", userUuid);
 

@@ -42,7 +42,15 @@ export function RefundButton({ orderNo }: { orderNo: string }) {
   const [loading, setLoading] = useState(false);
 
   const refund = async () => {
-    if (!window.confirm(`确认退款订单 ${orderNo}？将按近似口径扣回积分`)) {
+    // N-6：退款是资金操作，服务端强制要求理由（5~200 字符），审计留痕
+    const reason = window.prompt(
+      `退款订单 ${orderNo}：请输入退款理由（至少 5 个字符，将写入审计日志）`,
+      ""
+    );
+    const trimmed = (reason || "").trim();
+    if (!trimmed) return;
+    if (trimmed.length < 5) {
+      toast.error("退款理由至少 5 个字符");
       return;
     }
     setLoading(true);
@@ -50,7 +58,7 @@ export function RefundButton({ orderNo }: { orderNo: string }) {
       const resp = await fetch("/api/admin/refund", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order_no: orderNo }),
+        body: JSON.stringify({ order_no: orderNo, reason: trimmed }),
       });
       const { code, message, data } = await resp.json();
       if (code !== 0) {

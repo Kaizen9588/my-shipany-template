@@ -27,6 +27,40 @@ interface WindowEntry {
 
 const windows = new Map<string, WindowEntry>();
 
+// 审查修复（内存泄漏）：内存降级 Map 只增不删——公网流量下攻击者可用海量随机 IP
+// （TRUSTED_PROXY 配置为真实代理时）把 Map 撑到 OOM。写入时惰性清理：
+// 每 256 次写入全量扫一遍过期项，同时给 Map 设硬上限（超限先丢已过期项，
+// 再超丢「窗口最早重置」的项——丢限流记录只是放宽个别攻击者的计数，不会误伤正常用户）。
+const WINDOWS_MAX_ENTRIES = 10_000;
+const CLEANUP_INTERVAL = 256;
+let writesSinceCleanup = 0;
+
+function evictExpired(now: number, force = false): void {
+  if (!force) {
+    writesSinceCleanup += 1;
+    if (writesSinceCleanup < CLEANUP_INTERVAL) return;
+    writesSinceCleanup = 0;
+  }
+  for (const [key, entry] of windows) {
+    if (entry.resetAt <= now) {
+      windows.delete(key);
+    }
+  }
+  while (windows.size >= WINDOWS_MAX_ENTRIES) {
+    // 已无过期项仍超限：按窗口最早重置的先丢（最早过期 ≈ 最不活跃）
+    let earliestKey: string | null = null;
+    let earliestResetAt = Infinity;
+    for (const [key, entry] of windows) {
+      if (entry.resetAt < earliestResetAt) {
+        earliestResetAt = entry.resetAt;
+        earliestKey = key;
+      }
+    }
+    if (!earliestKey) break;
+    windows.delete(earliestKey);
+  }
+}
+
 export function rateLimitByIp(
   ip: string,
   max: number = DEFAULT_MAX,
@@ -36,6 +70,7 @@ export function rateLimitByIp(
   const entry = windows.get(ip);
 
   if (!entry || entry.resetAt <= now) {
+    evictExpired(now);
     windows.set(ip, { count: 1, resetAt: now + windowMs });
     return { ok: true, remaining: max - 1 };
   }
@@ -148,7 +183,12 @@ export async function rateLimitUser(
       };
     } catch (e) {
       console.error("[ratelimit] upstash daily failed:", e);
+      // 回落到内存实现：N-5 要求高成本端点无分布式限流时仍 fail-closed，
+      // 不能让 Upstash 抖动导致日配额被绕过。单实例有效，跨实例为近似值。
+      return rateLimitByIp(user_uuid, max, 24 * 60 * 60 * 1000);
     }
   }
-  return { ok: true };
+  // 未配置 Upstash：N-5 修复——此前直接 {ok:true}（fail-open），
+  // 现在给内存日窗口兜底，至少单实例下日配额不落空。
+  return rateLimitByIp(user_uuid, max, 24 * 60 * 60 * 1000);
 }

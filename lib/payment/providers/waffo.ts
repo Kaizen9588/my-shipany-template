@@ -9,8 +9,9 @@ import {
   PaymentEvent,
   PaymentProvider,
 } from "../types";
-import { getSupabaseClient } from "@/models/db";
+import { serverClient } from "@/models/db";
 import { getPaymentProducts } from "@/models/payment";
+import { findOrderByOrderNo } from "@/models/order";
 
 /**
  * Waffo 支付渠道适配器（Pancake 新一代模型，2026-08 从 @waffo/waffo-node 迁移）
@@ -97,8 +98,8 @@ export const waffoProvider: PaymentProvider = {
       // 不传 cancel_url：create-session 无该参数，取消在收银台上完成
     });
 
-    // 存入 waffo_orders 渠道专属表（acquiring_order_id 待 webhook order.completed 落地）
-    const supabase = getSupabaseClient();
+    // 存入 waffo_orders 渠道专属表（渠道表仅服务端写入，走 service_role，N-3）
+    const supabase = serverClient();
     const { error } = await supabase.from("waffo_orders").insert({
       order_no: params.order_no,
       acquiring_order_id: "",
@@ -158,17 +159,32 @@ export const waffoProvider: PaymentProvider = {
         };
       }
       case WebhookEventType.RefundSucceeded: {
+        // Waffo 退款事件不带 user identity（orderMetadata 不保证有 user_uuid），
+        // 从本地订单反查——缺了它 webhook 只能告警、无法登记欠款归属（审查修复）
+        let refundUserUuid = String(meta.user_uuid || "");
+        if (!refundUserUuid && orderNo) {
+          try {
+            const order = await findOrderByOrderNo(orderNo);
+            refundUserUuid = order?.user_uuid || "";
+          } catch {
+            // 反查失败按缺 user_uuid 处理（上层会告警人工核查）
+          }
+        }
         return {
           type: "refund_succeeded",
           order_no: orderNo,
-          user_uuid: "",
+          user_uuid: refundUserUuid,
           credits: 0,
           amount: displayToCents(data.amount),
+          provider: "waffo",
+          provider_ref_id: String(event.id || ""),
           raw: event,
         };
       }
       default:
-        // refund.failed 记录即可（本地订单已终态化依赖 succeeded）；订阅族 v1 不启用
+        // N-13 边界：Pancake v0.19 webhook 枚举无 dispute/chargeback 事件类型
+        //（仅 Dashboard 通知设置里暴露 notifyChargeback，无 webhook 归一化入口）。
+        // 拒付由渠道内置防御承担 + Dashboard 人工处理；本地无事件可归一化，仅告警关注。
         console.log("[waffo] unhandled webhook eventType:", event.eventType);
         return null;
     }

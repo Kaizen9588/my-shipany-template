@@ -11,7 +11,7 @@
 
 ### 认证与用户
 - **NextAuth.js v5**：Google / GitHub OAuth + Google One-Tap
-- **默认管理员**：首次初始化会创建 `admin@shipany.local / 123456`（`super_admin`），首次登录强制改密
+- **初始管理员引导**：仅显式配置 `ADMIN_BOOTSTRAP_EMAIL` 时创建一次 `pending_activation` 超级管理员；无公开默认凭据，首次登录必须改密
 - **邮箱密码登录**（Credentials Provider + bcrypt，含登录失败锁定）
 - 邮箱验证码（注册验证 / 密码重置复用）
 - JWT Session，OAuth 登录自动建号并赠送 10 积分
@@ -161,38 +161,31 @@ DATABASE_URL = "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.sup
 ### 3. 初始化数据库
 
 ```bash
-# 方式一：启动时自动迁移（instrumentation.ts 自动执行 data/migrations/*.sql 与基线表 0000_install_base.sql）
-pnpm dev
-
-# 方式二：手动执行迁移（脚本会自动读取 .env.local 中的 DATABASE_URL）
+# 唯一建库入口：脚本会自动读取 .env.local 中的 DATABASE_URL
 pnpm migrate
 
-# 方式三：直接在 Supabase SQL Editor 执行（仅空库推荐，需按序粘贴）
-# 1) data/migrations/0000_install_base.sql（基线表）
-# 2) data/migrations/0001_payment_products.sql
-# 3) ... 依序执行 data/migrations/*.sql
+# 应用启动时只校验迁移版本；若有 pending migration 会拒绝启动
+pnpm dev
 ```
 
-> 迁移仅在 `DATABASE_URL` 配置后执行；仅预览 Landing Page 时可不配置数据库。
+> 迁移仅在 `DATABASE_URL` 配置后执行；仅预览 Landing Page 时可不配置数据库。不要执行 `data/install.sql` 或手工粘贴迁移，以免触发基线一致性检查失败。
 
-### 🧑‍💻 第一次运行：用默认管理员登录
-初始化完成（迁移 0012）后会自动生成一条**默认超级管理员**：
+### 🧑‍💻 第一次运行：创建初始管理员
 
-| 项 | 值 |
-|---|---|
-| 邮箱 | `admin@shipany.local` |
-| 密码 | `123456` |
-| 角色 | `super_admin` |
-| 首次登录 | 会强制跳转到 `/change-password`，必须先改密码 |
+默认情况下，迁移**不会**创建管理员账号。需要创建首个超级管理员时，在受控部署环境中配置：
 
-操作步骤：
-1. 打开 `http://localhost:3000/auth/signin`
-2. 选择 **Email & Password**，输入 `admin@shipany.local` / `123456`
-3. 系统自动跳转到改密页，设置新密码（至少 8 位，含字母和数字）
-4. 保存后重新登录，访问 `http://localhost:3000/admin` 进入后台
+```env
+ADMIN_BOOTSTRAP_EMAIL = "admin@example.com"
+# 建议直接设置高强度一次性密码；留空时服务只会在受限启动日志输出随机临时密码。
+ADMIN_BOOTSTRAP_PASSWORD = "ReplaceWithAStrongTemporaryPassword123"
+```
 
-> ⚠️ **生产环境必须第一时间改掉默认密码**；本地 dev 使用 `pnpm dev` 即可，
-> 自托管 `next start` 时需在环境变量里额外设置 `AUTH_TRUST_HOST=true`。
+首次迁移会创建一条 `pending_activation` 的 `super_admin` 账号；它只能进入改密流程。打开
+`http://localhost:3000/auth/signin` 后使用上述凭据登录，系统会跳转至 `/change-password`。
+完成强制改密后账号自动激活，可访问 `/admin`。
+
+> ⚠️ 临时密码、启动日志和环境变量都属于敏感信息，不能提交到仓库或发送到公开渠道。
+> 自托管 `next start` 时还需设置 `AUTH_TRUST_HOST=true`。
 
 ### 4. 启动开发服务器
 

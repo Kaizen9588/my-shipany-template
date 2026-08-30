@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/models/db", () => ({ getSupabaseClient: vi.fn() }));
+const mocks = vi.hoisted(() => ({ client: vi.fn() }));
+
+vi.mock("@/models/db", () => ({
+  getSupabaseClient: mocks.client,
+  serverClient: mocks.client,
+  userClient: mocks.client,
+}));
 vi.mock("@/models/notification", () => ({ createNotification: vi.fn() }));
 vi.mock("@/lib/email", () => ({ fireAndForgetEmail: vi.fn() }));
 vi.mock("@/lib/telemetry/server", () => ({
@@ -10,7 +16,12 @@ vi.mock("@/lib/telemetry/server", () => ({
   },
   trackServer: vi.fn(),
 }));
-vi.mock("@/services/refund", () => ({ processRefund: vi.fn() }));
+vi.mock("@/services/refund", () => ({
+  processRefund: vi.fn(),
+  registerRefundRequest: vi.fn(),
+}));
+vi.mock("@/services/dispute", () => ({ handleDisputeEvent: vi.fn() }));
+vi.mock("@/lib/oplog", () => ({ trackCriticalEvent: vi.fn() }));
 vi.mock("@/lib/payment/providers/stripe", () => ({
   stripeProvider: {},
 }));
@@ -28,12 +39,16 @@ import { handlePaymentEvent } from "@/lib/payment";
 import { getSupabaseClient } from "@/models/db";
 import { createNotification } from "@/models/notification";
 import { trackServer } from "@/lib/telemetry/server";
-import { processRefund } from "@/services/refund";
+import { registerRefundRequest } from "@/services/refund";
+import { handleDisputeEvent } from "@/services/dispute";
 
 const mockGetClient = getSupabaseClient as unknown as ReturnType<typeof vi.fn>;
 const mockNotify = createNotification as unknown as ReturnType<typeof vi.fn>;
 const mockTrack = trackServer as unknown as ReturnType<typeof vi.fn>;
-const mockRefund = processRefund as unknown as ReturnType<typeof vi.fn>;
+const mockRegisterRefund = registerRefundRequest as unknown as ReturnType<
+  typeof vi.fn
+>;
+const mockDispute = handleDisputeEvent as unknown as ReturnType<typeof vi.fn>;
 
 describe("lib/payment handlePaymentEvent（R1 金额比对契约）", () => {
   beforeEach(() => {
@@ -103,9 +118,9 @@ describe("lib/payment handlePaymentEvent（R1 金额比对契约）", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("refund_succeeded 分发到 processRefund", async () => {
+  it("refund_succeeded 只登记 refund_requested 中间态（P0-1：不直接回收/终态化）", async () => {
     mockGetClient.mockReturnValue({ rpc: vi.fn() });
-    mockRefund.mockResolvedValueOnce({ deducted_credits: 100 });
+    mockRegisterRefund.mockResolvedValueOnce({ refund_no: "ref-1" });
 
     await handlePaymentEvent({
       type: "refund_succeeded",
@@ -113,12 +128,37 @@ describe("lib/payment handlePaymentEvent（R1 金额比对契约）", () => {
       user_uuid: "u1",
       credits: 0,
       amount: 9900,
+      currency: "USD",
+      provider: "stripe",
+      provider_ref_id: "re_123",
       raw: {},
     });
 
-    expect(mockRefund).toHaveBeenCalledWith(
-      expect.objectContaining({ order_no: "o1", amount: 9900 })
+    expect(mockRegisterRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        order_no: "o1",
+        user_uuid: "u1",
+        provider: "stripe",
+        provider_refund_id: "re_123",
+        amount: 9900,
+        initiated_by: "customer",
+      })
     );
+  });
+
+  it("refund_succeeded 缺 user_uuid：不登记不回收，告警人工核查", async () => {
+    mockGetClient.mockReturnValue({ rpc: vi.fn() });
+
+    await handlePaymentEvent({
+      type: "refund_succeeded",
+      order_no: "o1",
+      user_uuid: "",
+      credits: 0,
+      amount: 9900,
+      raw: {},
+    });
+
+    expect(mockRegisterRefund).not.toHaveBeenCalled();
   });
 
   it("缺 order_no 的支付事件抛错", async () => {
@@ -134,5 +174,44 @@ describe("lib/payment handlePaymentEvent（R1 金额比对契约）", () => {
         raw: {},
       })
     ).rejects.toThrow("missing order_no");
+  });
+
+  it("dispute_lost 分发到 handleDisputeEvent（N-13 争议拒付）", async () => {
+    mockGetClient.mockReturnValue({ rpc: vi.fn() });
+
+    await handlePaymentEvent({
+      type: "dispute_lost",
+      order_no: "o1",
+      user_uuid: "u1",
+      credits: 0,
+      amount: 9900,
+      raw: { id: "dis_1" },
+    });
+
+    expect(mockDispute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        order_no: "o1",
+        user_uuid: "u1",
+        type: "dispute_lost",
+        amount: 9900,
+      })
+    );
+  });
+
+  it("dispute_opened 缺 order_no 时告警并跳过（不崩）", async () => {
+    mockGetClient.mockReturnValue({ rpc: vi.fn() });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handlePaymentEvent({
+      type: "dispute_opened",
+      order_no: "",
+      user_uuid: "",
+      credits: 0,
+      amount: 100,
+      raw: {},
+    });
+
+    expect(mockDispute).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

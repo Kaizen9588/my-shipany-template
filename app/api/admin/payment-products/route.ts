@@ -5,6 +5,8 @@ import {
   getPaymentProducts,
   updatePaymentProduct,
 } from "@/models/payment";
+import { parseReason } from "@/lib/admin-reason";
+import { validatePricingFields } from "@/lib/pricing-guard";
 
 /**
  * GET/PUT /api/admin/payment-products
@@ -29,8 +31,16 @@ export async function PUT(req: Request) {
   try {
     const admin = await requireAdmin("admin");
     const body = await req.json();
-    const { products = [] } = body || {};
+    const { products = [], reason } = body || {};
 
+    // N-6：定价写入落在收款金额权威源（P0-定价-1），必须带理由
+    const parsed = parseReason(reason);
+    if (!parsed.ok) {
+      return respErr(`pricing update reason required: ${parsed.error}`);
+    }
+
+    // P0-定价-1：`payment_products` 是运行时定价真相源，写入必须过不变量校验
+    // （与 /api/admin/payment-settings 共用 lib/pricing-guard，双入口同规则）。
     for (const prod of products) {
       if (!prod?.product_id) {
         continue;
@@ -38,20 +48,27 @@ export async function PUT(req: Request) {
       const fields: Record<string, unknown> = {};
       // 复审 2：先 floor 再校验 —— 此前 0.5 可通过「>0 校验」后被 floor 成 0，
       // 落库 0 元/0 积分行（资损面）。消费侧 getCheckoutProduct 不再二次断言。
-      if (typeof prod.amount === "number") {
-        const amount = Math.floor(prod.amount);
-        if (amount <= 0) return respErr("amount must be a positive integer");
-        fields.amount = amount;
+      const amount = typeof prod.amount === "number" ? Math.floor(prod.amount) : undefined;
+      const credits = typeof prod.credits === "number" ? Math.floor(prod.credits) : undefined;
+      const validMonths =
+        typeof prod.valid_months === "number" ? Math.floor(prod.valid_months) : undefined;
+      if (
+        amount !== undefined ||
+        credits !== undefined ||
+        validMonths !== undefined
+      ) {
+        const err = validatePricingFields({
+          amount,
+          credits,
+          valid_months: validMonths,
+        });
+        if (err) return respErr(err);
       }
-      if (typeof prod.credits === "number") {
-        const credits = Math.floor(prod.credits);
-        if (credits <= 0) return respErr("credits must be a positive integer");
-        fields.credits = credits;
-      }
-      if (typeof prod.valid_months === "number") {
-        const valid_months = Math.floor(prod.valid_months);
-        if (valid_months <= 0) return respErr("valid_months must be a positive integer");
-        fields.valid_months = valid_months;
+      if (amount !== undefined) fields.amount = amount;
+      if (credits !== undefined) fields.credits = credits;
+      if (validMonths !== undefined) fields.valid_months = validMonths;
+      if (prod.currency && prod.currency !== "USD") {
+        return respErr("v1 only supports USD currency");
       }
       if (typeof prod.creem_product_id === "string") fields.creem_product_id = prod.creem_product_id;
       if (typeof prod.stripe_price_id === "string") fields.stripe_price_id = prod.stripe_price_id;
@@ -66,7 +83,10 @@ export async function PUT(req: Request) {
       action: "admin.payment_products.update",
       target_type: "config",
       target_uuid: "",
-      detail: JSON.stringify({ productIds: products.map((p: any) => p?.product_id) }),
+      detail: JSON.stringify({
+        productIds: products.map((p: any) => p?.product_id),
+        reason: parsed.reason,
+      }),
     });
 
     return respData({ updated: true });

@@ -15,7 +15,7 @@ export interface User {
   password_updated_at?: string;
   /** 6.10 RBAC：super_admin / admin / operator / user */
   role?: string;
-  /** 账号状态：active / banned（6.7 用户管理） */
+  /** 账号状态：active / pending_activation / banned / deleted（6.7 + P0-3） */
   status?: string;
   /** 默认管理员首次登录强制改密（0012_default_admin.sql） */
   must_change_password?: boolean;

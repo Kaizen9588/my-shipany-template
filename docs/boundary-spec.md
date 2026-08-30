@@ -30,7 +30,7 @@
 | 用户 API Key 存 SHA-256 hash，创建时只展示一次明文 | ✅ 已落地 |
 | 邮箱验证码不应明文存库；应存 hash 并定期清理过期记录 | ✅ 已落地（仅存 SHA-256 hash + 原子消费，`cleanupVerificationCodes` 挂 cron） |
 | `AUTH_SECRET` 必须由部署者自己生成，禁止共用默认示例值 | ✅ `.env.example` 已置空 + 文档说明 |
-| 数据库迁移不能写真实生产密钥；默认管理员 `123456` 仅作模板初始化并要求首次强制改密 | ❌ No-Go（P0-3） | **第九轮：迁移 0012 无条件创建 `admin@shipany.local/123456/super_admin`，「首次强制改密」只是登录后跳转，账号在迁移执行完即可用公开凭据登录，谁先登谁改密；生产冷启动即把公开弱口令种进生产库（CWE-1392）。** 需条件建号 + 随机密码 + pending_activation + 生产不建号，README 删逐字凭据。 |
+| 数据库迁移不能写真实生产密钥；不得内置公开默认管理员 | ✅ P0-3 已关闭 | 0012 只添加字段且绝不建号；0019 禁用历史固定 hash 默认账号。仅 `ADMIN_BOOTSTRAP_EMAIL` 显式开启一次性 `pending_activation` 引导，密码由配置提供或随机生成后只写入受限启动日志；README 无公开凭据。 |
 | 告警 webhook 可存 `system_settings`，但页面不回显完整 secret | ⚠️ API 层未脱敏（P0） | **当前 API 直接返回完整配置（`models/notify.ts` 中 `return respData({ ...config })`），与本规范冲突。GET 必须只返回 `has_secret`、掩码末四位；只支持替换/清空，不明文回显。** 见第九节「待关闭的边界缺口」。 |
 
 ---
@@ -42,11 +42,11 @@
 | 后台必须是管理员才能访问，非管理员一律 403 | ✅ `requireAdmin()` |
 | 管理员分级：operator/admin/super_admin；operator 不能自我提权、不能授 super_admin | ✅ `requireAdmin(level)` + `hasAdminLevel`（lib/auth.ts） |
 | 被封禁的管理员不能继续操作后台 | ✅ 已落地（status≠active 实时查库拦截） |
-| 支付金额/定价只信服务端，客户端传的价格一律忽略 | ⚠️ 定价真相源矛盾（P1-8） | checkout 只收 product_id；但「价格以 `payment_products` 表优先、`data/pricing.ts` 为回退」与 `docs/05:27`/`docs/15:45` 宣称 `data/pricing.ts` 是「单一真相源」互相矛盾。需先钉死真相源，再重定级管理员定价写入风险。 |
+| 支付金额/定价只信服务端，客户端传的价格一律忽略 | ✅ 已钉死真相源（2026-08-30） | checkout 只收 product_id；运行时权威源 = `payment_products` 表，`data/pricing.ts` 仅初始化种子/回退。写入路径已加不变量校验（金额/积分/有效期上限、币种仅 USD、积分≤金额），见 `docs/05` §1.2 落地块 + `app/api/admin/payment-products/route.ts`。 |
 | 支付回调必须验签；金额/币种必须比对，不匹配不充值并告警 | ✅ 已落地 |
 | 积分扣减必须事务 + 行锁 + 余额校验，不能透支 | ⚠️ ❌ No-Go（P0-2） | **第九轮：「行锁串行化」论证不成立**——INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化（DB 层的 check-then-write）。需 advisory lock 或迁 credit_lots 后 `UPDATE ... WHERE remaining >= x`，并发回归测试进 CI。 |
 | **资金 RPC 必须在数据库层有强制权限边界** | ⚠️ ❌ No-Go（P0） | **三个资金函数（decrease_credits / handle_order_payment / process_order_refund）位于 public schema，迁移未显式 REVOKE/GRANT。在 Supabase 默认配置下，anon/authenticated 可能直接调用。** 必须移到 private schema，仅授权 service_role 执行，并启用 RLS。 |
-| **管理员高风险操作必须审计持久化 + 最小权限** | ⚠️ 部分 | 退款、调账、定价、通知密钥、用户角色、封禁应有：CSRF 防护、二次确认、理由、前后值、操作者、审批。`op_events` 当前为 fire-and-forget，不能作为"全量不能丢"的唯一实现。 |
+| **管理员高风险操作必须审计持久化 + 最小权限** | ⚠️ 部分 | 退款、调账、定价、通知密钥、用户角色、封禁已有：最小权限（operator/admin/super_admin 分级）+ 服务端强制理由（N-6，`lib/admin-reason.ts`）+ reason 入 `audit_logs.detail`。仍缺：CSRF 防护、审批队列、`op_events` 持久化（N-4 outbox）。 |
 | 退款必须幂等，不能重复扣回积分 | ✅ 已落地 |
 | Webhook 签名非法应告警 | ✅ 已接入：三个 notify 路由验签失败发射 `payment.webhook_invalid_signature`（critical） |
 | AI 网关：鉴权 → 限流 → 402 → 原子扣费 → 失败退款 | ⚠️ 部分落地 | 缺少幂等键、状态机和崩溃补偿（P0），真实收费前必须完成；失败退款只在进程内存中执行 |
@@ -68,8 +68,8 @@
 | 后台管理页面统一直用中文；前台默认英文 | 后台仅给管理员使用 |
 | 通知链路必须 fire-and-forget，失败不能阻塞业务主流程 | ⚠️ 执行模型欠规定（P1-A，第十轮） | 「不阻塞」已落地；但未规定响应返回后未 await 的副作用如何存续——Vercel serverless 下裸 fire-and-forget 不保证执行。需统一挂 Next.js `after()`；critical 告警同步发送或经 transactional outbox（详见 docs/16 §3.3 P1-A）。N-4 管「落库不丢」，P1-A 管「有没有开始跑」，缺一不可 |
 | 新增支付渠道：写 adapter + registry 注册，不动核心 checkout/webhook 逻辑 | ✅ |
-| 高风险端点限流缺失时必须 fail-closed | ⚠️ 待加固 | `lib/ratelimit.ts` 在未配置 Upstash 时返回 `{ ok: true }`（fail-open）。AI 生成、验证码、支付创建、webhook 等高成本/高风险端点，生产环境缺少可靠限流时应明确失败，不能静默放行。 |
-| Webhook 必须有 body size 限制 + 速率限制 | ⚠️ 待加固 | 非法签名请求可能造成日志/告警 DoS。需限制 body 大小（如 64KB）、IP 维度限流，验签失败快速拒绝不打 full alert。 |
+| 高风险端点限流缺失时必须 fail-closed | ✅ 已加固（2026-08-30，N-5） | AI 生成、验证码、支付创建、webhook 现已全部 fail-closed：`rateLimit`/`rateLimitUser` 无 Upstash 时内存兜底，checkout 加 per-IP/per-user 限流，见 N-5 行。 |
+| Webhook 必须有 body size 限制 + 速率限制 | ⚠️ 部分加固（2026-08-30） | body 64KB 上限已落地（`lib/webhook-guard.ts`，三 notify 路由接入）。**速率限制刻意不做**：webhook 来源是渠道服务器，默认 `TRUSTED_PROXY=none` 下 getClientIp 恒回 127.0.0.1（所有渠道共一个桶），限流会在高峰拒收真实支付事件——漏收一次支付事件比日志轰炸严重，见 `lib/webhook-guard.ts` 注释。验签失败路径已克制告警（见 docs/16 §5.4）。 |
 | `NEXT_PUBLIC_*` 数量克制，服务端 secret 不进客户端 bundle | ✅ |
 | 单测、`tsc`、`pnpm build`、lint 通过后才能提交 | ✅ 当前 43 文件 / 179 用例（数字随测试演进，以 `pnpm test` 实际输出为准） |
 | 改 Next.js 相关代码前先读 `node_modules/next/dist/docs/` | ✅ AGENTS.md |
@@ -83,19 +83,19 @@
 
 | # | 缺口 | 所在模块 | 风险 | 整改要求 |
 |---|------|----------|------|----------|
-| N-1 | 通知配置 API 回显完整 Webhook Secret | `app/api/admin/notify-settings` / `models/notify.ts` | 低权限管理员会话、抓包、日志系统都可能拿到密钥；可伪造告警、污染运营 | GET 只返回 `has_secret` + 掩码末四位；PUT 只支持替换/清空；读取仅限 server-side 发送模块；操作审计 |
-| N-2 | 资金 RPC 无数据库层权限边界 | `data/migrations/` 0002/0010/0011 | anon/authenticated 可能直接调用充值/扣费/退款函数 | 移入 private schema；REVOKE PUBLIC；仅授权 service_role；RLS 启用；CI 断言权限 |
-| N-3 | 服务端/客户端 client 不分离 | `models/db.ts` | 服务端 key 可能泄露到客户端路径；RLS 形同虚设 | 显式 `serverClient` 与 `userClient`；userClient 永不使用 service_role |
+| N-1 | ~~通知配置 API 回显完整 Webhook Secret~~ | `app/api/admin/notify-settings` / `models/notify.ts` | ~~低权限管理员会话、抓包、日志系统都可能拿到密钥~~ | ✅ 已关闭（2026-08-30）：GET 与后台页面 RSC payload 只含 `*_set` 标志 + `****末四位`（`toNotifyConfigView` 统一出口）；PUT 留空即保留现值、显式 null 才清空、掩码占位串被忽略；测试 `__tests__/notify-settings-mask.test.ts` |
+| N-2 | 资金 RPC 无数据库层权限边界 | `data/migrations/` 0002/0010/0011 | anon/authenticated 可能直接调用充值/扣费/退款函数 | ⚠️ 部分关闭（2026-08-30）：应用侧客户端分离落地（见 N-3）+ 新增 `__tests__/db-rbac-static.test.ts` 静态断言，兜住“资金 RPC 调用点误走 anon/user”的回归。**库级迁移未做**（把三个资金函数移入 `private` schema + REVOKE PUBLIC + 仅授权 service_role + RLS）——因目标 Supabase 库不可达无法验证，且需同步改全部 RPC 调用点；连库后按 docs/03 §「生产必须满足的数据库权限基线」执行 |
+| N-3 | ~~服务端/客户端 client 不分离~~ | `models/db.ts` | ~~服务端 key 可能泄露到客户端路径；RLS 形同虚设~~ | ✅ 已关闭（2026-08-30）：`models/db.ts` 拆出显式 `serverClient()`（service_role，仅受控服务端路径）/ `userClient()`（anon，走 RLS）；资金/支付/退款/后台统计等特权路径已切到 `serverClient()`；`getSupabaseClient()` 保留为兼容入口（语义不变）。静态断言 `__tests__/db-rbac-static.test.ts`。剩余 userClient(anon) 主导的用户端 API（profile/avatar/verify-code 等）仍走兼容入口，待 RLS 策略完备后迁移 |
 | N-4 | `op_events` fire-and-forget 丢失 | `lib/oplog.ts` | 支付、退款、调账等关键审计事件可能丢失，无法事后追溯 | 使用 transactional outbox；事件有唯一 id、重试次数、最后错误；通知失败不丢事件 |
-| N-5 | 限流 fail-open | `lib/ratelimit.ts` | 多实例或 Upstash 未配置时，高成本端点无任何保护 | 高成本端点在无分布式限流时 fail-closed；或生产启动校验关键依赖 |
-| N-6 | 管理员高风险操作无二次确认与审批 | 后台管理 | 误操作、被盗号可造成重大资金损失 | 退款/调账/定价/密钥/角色/封禁需理由、二次确认、审批、审计持久化 |
-| N-7 | 默认管理员弱口令（P0-3） | 迁移 0012 / README | 生产冷启动即种入公开 `admin@shipany.local/123456/super_admin`，谁先登谁改密 | 条件建号 + 随机密码 + pending_activation + 生产不建号；README 删逐字凭据 |
-| N-8 | `decrease_credits` 行锁串行化论证不成立（P0-2） | `data/migrations/0002` | 并发扣减可能双花/透支，资金资损且运营侧不可见 | advisory lock 或迁 credit_lots 后 UPDATE 原子扣减；并发回归测试进 CI |
-| N-9 | 匿名 demo 失败退还 + 无输入限制可绕过每日次数（P0-4） | `/api/v1/ai/demo` | 单 IP 100% 失败并退还次数，不换 IP 无限调用 | 扣次数前输入硬校验（413 且照常计次）+ 退还仅限无费用错误 + fail-closed IP 限流 |
-| N-10 | 退款对已消费积分无回收路径（P0-1） | `process_order_refund` | 全额退款 + 已消费积分 = 白嫖成立 | 退款准入校验 + 债务化（credit_debts）+ refund_requested/refund_blocked 人工态 |
-| N-11 | 迁移无并发锁/事务/回滚/发布顺序（P1-7） | `lib/migrate.ts` | 多实例同秒启动撞 `tuple concurrently updated` | advisory_xact_lock + 同事务 + fail-fast + CONCURRENTLY + expand-contract |
-| N-12 | 建库路径三处并存（P1-6） | `docs/07` / install.sql | 首次启动 `relation already exists` 崩溃 | 统一为「空库只跑 migrations」；install.sql 入 legacy；基线断言 fail-fast |
-| N-13 | 争议/拒付链路缺失（P2-2） | PaymentEventType / orders.status | 收到 dispute 事件无处归一化，已消费积分不追回、账号不冻结 | PaymentEventType 加 3 类争议事件 + orders 加 disputed/charged_back + 冻结消费 + 复用 N-10 回收路径 |
+| N-5 | 限流 fail-open | `lib/ratelimit.ts` | 多实例或 Upstash 未配置时，高成本端点无任何保护 | ✅ 已关闭（2026-08-30）：①`rateLimitUser` 未配置/抖动时不再 `{ok:true}`，回落内存日窗口（fail-closed）；②checkout 加 per-IP + per-user 限流；③webhook 三路由加 body 64KB 上限（`lib/webhook-guard.ts`）。AI/验证码端点本就 fail-closed。测试：`__tests__/ratelimit.test.ts`（fail-closed 分支）、`__tests__/webhook-guard.test.ts` |
+| N-6 | 管理员高风险操作无二次确认与审批 | 后台管理 | 误操作、被盗号可造成重大资金损失 | ⚠️ 部分关闭（2026-08-30）：**服务端强制理由**已落地——退款（`/api/admin/refund`）、积分调账（`/api/admin/user/credits`）、用户角色/封禁（`/api/admin/user`）、定价（`/api/admin/payment-products`）、支付渠道（`/api/admin/payment-settings`）、告警密钥（`/api/admin/notify-settings`）统一走 `lib/admin-reason.ts` `parseReason`（trim 后 5~200 字符），reason 写入 `audit_logs.detail`；后台 UI（RefundButton prompt、credits adjust、用户详情角色/封禁/调账、pricing/payment/notify 表单）已同步收集 reason；users 页三个 server action 直调 service 的路径同样校验。测试：`__tests__/payment-products-guard.test.ts`。**仍待办**：审批队列/双人复核（需新表，归迁移批次）+ `op_events` 持久化（N-4 outbox） |
+| N-7 | ~~默认管理员弱口令（P0-3）~~ | 0012 / 0019 / README | ~~生产冷启动种入公开凭据~~ | ✅ 已关闭：无默认账号；显式环境变量才创建一次 pending_activation 引导，历史固定 hash 已禁用 |
+| N-8 | ~~`decrease_credits` 行锁串行化论证不成立（P0-2）~~ | `data/migrations/0002` / `0020` | ~~并发扣减可能双花/透支~~ | ⚠️ 代码已关闭、待应用（2026-08-30）：迁移 `0020_decrease_credits_user_lock.sql` 在余额校验前加用户级事务 advisory lock（两段 int4 键，与迁移器全局锁不撞键，pooler 事务模式可用）；并发回归测试 `__tests__/credit-concurrency.test.ts`（静态断言始终跑，真实并发用例需 `TEST_DATABASE_URL`）。**数据库尚未应用 0020 前不得开放真实收费** |
+| N-9 | ~~匿名 demo 失败退还 + 无输入限制可绕过每日次数（P0-4）~~ | `/api/v1/ai/demo` | ~~单 IP 100% 失败并退还次数，不换 IP 无限调用~~ | ✅ 已关闭（2026-08-30）：字段白名单 + `DEMO_MAX_PROMPT_BYTES` 字节上限（413 照常计次）；退还仅限无上游费用错误（`APICallError` 4xx 计次）；当日失败次数封顶 `DEMO_FAILURE_DAILY_LIMIT`（复用 anonymous_usage，key=`fail:<iphash>`）；分钟级限流走 `rateLimit()` 不 fail-open；测试 `__tests__/ai-demo-guard.test.ts` |
+| N-10 | 退款对已消费积分无回收路径（P0-1） | `process_order_refund` | 全额退款 + 已消费积分 = 白嫖成立 | ⚠️ 部分关闭（2026-08-30）：新增 `credit_debts` + `debt_regulate_order_refund` 债务化（迁移 0021）+ `refund_blocked` + 账号 `restricted`；`processRefund` 在扣回量 < 订单发放积分时自动债务化；**webhook 中间态已接线**（迁移 0022 `register_order_refund_request` + `services/refund.ts` `registerRefundRequest`——`refund_succeeded` 只登记 `refund_requested` + 债务化准入，不直接扣积分/终态化，终态由后台闭合）。**迁移 0021/0022 未应用**（待连库），credit_lots 精确批次准入/回收工作台/部分退款规则仍待补 |
+| N-11 | ~~迁移无并发锁/事务/回滚/发布顺序（P1-7）~~ | `lib/migrate.ts` / 部署流程 | ~~多实例同秒启动撞 DDL~~ | ⚠️ 部分关闭：advisory_xact_lock、同事务回滚、运行时 fail-fast 与先迁移后发布已落地；`CREATE INDEX CONCURRENTLY` 专用 job 和 expand-contract 执行模板仍待补齐 |
+| N-12 | ~~建库路径三处并存（P1-6）~~ | `docs/07` / `lib/migrate.ts` | ~~首次启动 relation already exists 崩溃~~ | ✅ 已关闭：空库只跑 `pnpm migrate`；install.sql 设为历史脚本；检测到未登记 `users` 基线即 fail-fast |
+| N-13 | 争议/拒付链路缺失 | PaymentEventType / orders.status | 收到 dispute 事件无处归一化，已消费积分不追回、账号不冻结 | ✅ 已关闭（2026-08-30）：`PaymentEventType` 加 `dispute_opened/won/lost`；`orders.status` 加 `disputed/charged_back`；`services/dispute.ts` 归一化状态机；**渠道解析器已归一化**——Stripe `charge.dispute.created/closed`（won/lost）全链路，Creem `dispute.created`→opened（Waffo Pancake v0.19 无 dispute webhook 事件，Dashboard-notified 为已知边界）。测试：`__tests__/dispute.test.ts`、`__tests__/provider-dispute.test.ts`、`__tests__/payment-event.test.ts`。仍待办：联盟奖励冻结、争议收入确认（见 handoff §5） |
 
 ---
 

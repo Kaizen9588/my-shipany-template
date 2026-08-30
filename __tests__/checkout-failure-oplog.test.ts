@@ -14,6 +14,7 @@ vi.mock("@/lib/payment/health", () => ({
   recordProviderSuccess: vi.fn(),
 }));
 vi.mock("@/lib/oplog", () => ({ fireAndForgetOpEvent: vi.fn() }));
+vi.mock("@/lib/ip", () => ({ getClientIp: vi.fn(async () => "1.2.3.4") }));
 
 import { getUserEmail, getUserUuid } from "@/services/user";
 import { insertOrder } from "@/models/order";

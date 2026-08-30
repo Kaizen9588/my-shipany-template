@@ -185,29 +185,22 @@ pnpm dev
 #### 5.2.1 云端项目（生产/联调）
 
 1. 创建 Supabase 项目：https://supabase.com
-2. **在 SQL Editor 中执行一次 `data/install.sql`**（创建基础 6 表；不可重复执行，无 IF NOT EXISTS）
-3. 获取连接信息填入 `.env.local`：
+2. 获取连接信息填入部署环境变量：
    - Settings -> API -> Project URL -> `SUPABASE_URL`
    - Settings -> API -> anon public -> `SUPABASE_ANON_KEY`
    - Settings -> API -> service_role -> `SUPABASE_SERVICE_ROLE_KEY`
    - Settings -> Database -> Connection string（pooler/transaction 模式）-> `DATABASE_URL`
-4. **其余表/RPC 无需手动执行**：首次 `pnpm dev`（或部署）时 `instrumentation.ts`
-   自动按序执行 `data/migrations/0000-0017`（`schema_migrations` 版本表保证幂等，
-   重复启动只补漏不重跑）；也可手动 `pnpm migrate`
+3. **在部署发布应用实例之前执行** `pnpm migrate`。该命令从 `data/migrations/0000` 开始建库、记录 `schema_migrations` 版本，并在同一事务中持有 advisory lock；失败会整体回滚。
+4. 仅当迁移成功后再启动或扩容应用。`instrumentation.ts` 只读检查版本，发现任何 pending migration 会拒绝服务启动，绝不在冷启动时执行 DDL。
 
-> 顺序硬约束：必须先跑 `install.sql` 再让迁移跑起来--迁移 0004 的外键依赖基础表。
+> **唯一建库路径**：空库只运行 `pnpm migrate`。禁止执行 `data/install.sql`，也禁止手工粘贴单个迁移。若迁移器发现已有 `users` 表但没有 `schema_migrations`，会 fail-fast，防止两条建库路径混用。
 
-> ⚠️ **P1-7（第九轮，2026-08-26）——启动时自动迁移无并发锁/事务/回滚/发布顺序**：`schema_migrations` 只解决同一进程重复启动不重跑，
-> 不解决多进程同秒启动；而本文件首选 Vercel + push 即自动部署 + `docs/08` 推荐 pooler 事务模式，三者叠加正是「多实例 + 运行时自动迁移 + pooler」的默认形态。
-> `CREATE OR REPLACE FUNCTION` 并发执行会撞 `tuple concurrently updated`。修法：迁移器入口 `pg_advisory_xact_lock(固定key)`（事务级）；
-> 每条迁移与 `INSERT INTO schema_migrations` 同事务；失败 fail-fast；把迁移从 `instrumentation.ts` 剥离为流水线前置步骤，
-> 运行时只校验「schema 版本 ≥ 代码要求版本」；建索引一律 `CONCURRENTLY`；补 expand-contract 规则。
+> **发布顺序（P1-7）**：先以单个受控 job 运行 `pnpm migrate`，再发布应用实例；回滚应用代码不得回滚已经提交的 schema。新增破坏性字段/约束时采用 expand-contract 两次发布。普通迁移在事务中串行化；需要 `CREATE INDEX CONCURRENTLY` 的未来大表索引必须拆为专用、非事务迁移 job，不能混入当前迁移器。
 >
-> ⚠️ **P0-3（第九轮，2026-08-26）——自动迁移向生产库种入公开弱口令**：迁移 0012 会在服务首次冷启动时把
-> `admin@shipany.local / 123456 / super_admin` 写进生产库，「首次强制改密」只是登录后的跳转，谁先登谁改密。
-> 生产实例在部署者首次登录前（通常几小时）暴露 super_admin。修法：0012 改为条件建号（仅 `ADMIN_BOOTSTRAP_EMAIL` 显式设置时创建），
-> 密码取 `ADMIN_BOOTSTRAP_PASSWORD` 或 `gen_random_uuid()` 随机生成只写一次启动日志，建号时 `status='pending_activation'`，
-> `NODE_ENV=production` 默认不建号改由 CLI 人工执行；README 删除逐字凭据。完整分析见 boundary-spec §二/§九。
+> ✅ **P0-3 已关闭（2026-08-30）**：迁移 0012 不再写入任何管理员；历史固定默认账号由迁移 0019
+> 识别其原始 hash 后禁用。只有显式设置 `ADMIN_BOOTSTRAP_EMAIL` 时，运行时引导才会创建一次
+> `status='pending_activation'` 的超级管理员；密码优先取 `ADMIN_BOOTSTRAP_PASSWORD`，未设置时生成随机临时密码并仅写入受限启动日志。
+> 未配置邮箱时，生产和本地环境都不会创建账号。首次强制改密成功后账号自动转为 `active`。完整边界见 boundary-spec §二/§九。
 
 #### 5.2.2 本地 Supabase（本地开发，Docker 或 CLI 二选一）
 
@@ -241,10 +234,9 @@ docker compose up -d
 **选择建议**：日常开发用 CLI（`supabase start/stop` 简单、Studio 可视化看表）；
 仅想跑个 Postgres 验证迁移时，甚至可以 `docker run -d -p 54322:5432 -e POSTGRES_PASSWORD=postgres postgres:17`
 再用 `DATABASE_URL` 指过去执行 `pnpm migrate`（项目不依赖 Supabase 专属扩展，
-`install.sql` + 全部迁移在纯 Postgres 上可执行）。
+全部表结构均由迁移 0000 起创建）。
 
-**建表**：本地库与云端一样，先在 Studio（http://localhost:54323）SQL Editor 执行
-`data/install.sql`，迁移 0000-0017 由 `pnpm dev` 自动补齐。
+**建表**：本地库与云端一样，配置 `DATABASE_URL` 后执行一次 `pnpm migrate`；`pnpm dev` 只校验迁移版本，不会自动建表。
 
 **注意**：本地 Auth（邮件验证码/OAuth 回调）需要额外配置回调地址，本地开发通常只测
 数据库 + 支付链路，OAuth 登录用云端项目更省事。

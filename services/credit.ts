@@ -11,7 +11,7 @@ import { findUserByUuid } from "@/models/user";
 import { getFirstPaidOrderByUserUuid } from "@/models/order";
 import { getIsoTimestr } from "@/lib/time";
 import { getSnowId } from "@/lib/hash";
-import { getSupabaseClient } from "@/models/db";
+import { serverClient } from "@/models/db";
 import { fireAndForgetEmail, shouldSendToday } from "@/lib/email";
 import { createNotification } from "@/models/notification";
 import { TelemetryEvents, trackServer } from "@/lib/telemetry/server";
@@ -94,7 +94,8 @@ export async function decreaseCredits({
   credits: number;
 }) {
   const trans_no = getSnowId();
-  const supabase = getSupabaseClient();
+  // 资金操作走 service_role（serverClient），绕过 RLS（N-3）：积分迁移由服务端权威执行
+  const supabase = serverClient();
   const { error } = await supabase.rpc("decrease_credits", {
     p_user_uuid: user_uuid,
     p_trans_type: trans_type,

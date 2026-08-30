@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/models/db";
+import { runAfterResponse } from "@/lib/after-response";
 
 export type OpSeverity = "info" | "warn" | "error" | "critical";
 
@@ -19,30 +20,33 @@ export interface OpEventRow extends OpEventInput {
 /**
  * 运营事件落库（docs/16 §3.3）
  * 与 logger/telemetry 同纪律：fire-and-forget、吞错、绝不阻塞业务主流程。
+ * 落库经 runAfterResponse 调度（serverless 冻结安全）。
  *
  * 注意：Supabase insert 是异步的，这里显式吞掉异常，调用方无需 await。
  */
-export async function recordOpEvent(input: OpEventInput): Promise<void> {
-  try {
-    const supabase = getSupabaseClient();
-    const { error } = await supabase.from("op_events").insert({
-      event_type: input.event_type,
-      severity: input.severity || "info",
-      source: input.source || "app",
-      subject_uuid: input.subject_uuid || "",
-      detail: input.detail || {},
-    });
-    if (error) {
-      console.error("[oplog] record failed:", error.message);
+export function recordOpEvent(input: OpEventInput): void {
+  runAfterResponse(async () => {
+    try {
+      const supabase = getSupabaseClient();
+      const { error } = await supabase.from("op_events").insert({
+        event_type: input.event_type,
+        severity: input.severity || "info",
+        source: input.source || "app",
+        subject_uuid: input.subject_uuid || "",
+        detail: input.detail || {},
+      });
+      if (error) {
+        console.error("[oplog] record failed:", error.message);
+      }
+    } catch (e) {
+      console.error("[oplog] record failed:", e);
     }
-  } catch (e) {
-    console.error("[oplog] record failed:", e);
-  }
+  });
 }
 
 /** fire-and-forget 写法（不需要 await 时用） */
 export function fireAndForgetOpEvent(input: OpEventInput): void {
-  void recordOpEvent(input);
+  recordOpEvent(input);
 }
 
 /** 检索运营事件（后台 /admin/logs） */
@@ -112,22 +116,30 @@ export async function aggregatePaymentEvents(
   return result;
 }
 
-/** 关键事件三连：落库 + 服务端埋点 + 机器人告警 */
+/** 关键事件三连：落库 + 服务端埋点 + 机器人告警（均经 after() 调度，冻结安全） */
 export function trackCriticalEvent(input: OpEventInput): void {
-  fireAndForgetOpEvent(input);
+  recordOpEvent(input);
   const severity = input.severity || "warn";
   if (severity === "critical" || severity === "warn" || severity === "error") {
-    void import("@/lib/notify").then(({ notifyChannel }) =>
-      notifyChannel({
-        title: `[${input.event_type}] ${input.subject_uuid || ""}`,
-        body: `事件：\`${input.event_type}\`\n`
-          + `级别：\`${severity}\`\n`
-          + (input.subject_uuid ? `关联对象：${input.subject_uuid}\n` : "")
-          + `详情：\`\`\`json\n${JSON.stringify(input.detail || {}, null, 2)}\n\`\`\``,
-        severity,
-        subject: input.subject_uuid || input.event_type,
-        eventType: input.event_type,
-      })
+    runAfterResponse(() =>
+      // 动态 import 也可能失败（chunk 加载失败/构建回滚），不加 catch 会变成
+      // unhandled rejection——告警丢就丢了，但不能因此炸掉 after() 链路
+      import("@/lib/notify")
+        .then(({ notifyChannel }) =>
+          notifyChannel({
+            title: `[${input.event_type}] ${input.subject_uuid || ""}`,
+            body: `事件：\`${input.event_type}\`\n`
+              + `级别：\`${severity}\`\n`
+              + (input.subject_uuid ? `关联对象：${input.subject_uuid}\n` : "")
+              + `详情：\`\`\`json\n${JSON.stringify(input.detail || {}, null, 2)}\n\`\`\``,
+            severity,
+            subject: input.subject_uuid || input.event_type,
+            eventType: input.event_type,
+          })
+        )
+        .catch((e) => {
+          console.error("[oplog] notify import/dispatch failed:", e);
+        })
     );
   }
 }

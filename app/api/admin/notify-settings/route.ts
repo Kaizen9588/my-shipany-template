@@ -1,11 +1,13 @@
 import { respData, respErr } from "@/lib/resp";
 import { requireAdmin } from "@/lib/auth";
+import { parseReason } from "@/lib/admin-reason";
 import { fireAndForgetAudit } from "@/lib/audit";
 import {
   getNotifyConfig,
   getNotifyEventRules,
   setNotifyEventRules,
   setSystemSetting,
+  toNotifyConfigView,
 } from "@/models/notify";
 import { sendTestNotification } from "@/lib/notify";
 
@@ -14,6 +16,10 @@ const VALID_SEVERITIES = ["info", "warn", "error", "critical"];
 /**
  * GET/PUT /api/admin/notify-settings —— 后台告警通知配置（飞书/企微）
  * POST ?action=test —— 发送一条测试告警
+ *
+ * N-1：GET 只回「是否已配置 + 末四位掩码」，不回显 webhook URL / secret 原文
+ * （会话、抓包、日志都可能泄露）。PUT 对这三个字段采用留空即保留现值的语义，
+ * 显式传 null 才清空。
  */
 export async function GET() {
   try {
@@ -22,7 +28,7 @@ export async function GET() {
       getNotifyConfig(),
       getNotifyEventRules(),
     ]);
-    return respData({ ...config, eventRules });
+    return respData({ ...toNotifyConfigView(config), eventRules });
   } catch (e: any) {
     if (e.message === "no admin access") {
       return respErr("no admin access", 403);
@@ -32,31 +38,67 @@ export async function GET() {
   }
 }
 
+/** 三个敏感字段的保存语义：undefined / "" 保留现值，null 清空，其余为新值 */
+function isSecretCleared(value: unknown): boolean {
+  return value === null;
+}
+
+function newSecretValue(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  if (s === "" || s.startsWith("****")) return null; // 掩码占位串原样回传时忽略
+  return s;
+}
+
 export async function PUT(req: Request) {
   try {
     const admin = await requireAdmin("admin");
     const body = await req.json();
     const {
-      feishuWebhookUrl = "",
-      feishuSecret = "",
-      wecomWebhookUrl = "",
+      feishuWebhookUrl,
+      feishuSecret,
+      wecomWebhookUrl,
       notifyMinSeverity = "warn",
       eventRules,
+      reason,
     } = body || {};
+
+    // N-6：告警通道/密钥变更影响生产告警可达性，必须带理由
+    const parsed = parseReason(reason);
+    if (!parsed.ok) {
+      return respErr(`notify settings reason required: ${parsed.error}`);
+    }
 
     if (!VALID_SEVERITIES.includes(notifyMinSeverity)) {
       return respErr("invalid severity");
     }
 
-    await Promise.all([
-      setSystemSetting("feishu_webhook_url", String(feishuWebhookUrl || "").trim()),
-      setSystemSetting("feishu_secret", String(feishuSecret || "").trim()),
-      setSystemSetting("wecom_webhook_url", String(wecomWebhookUrl || "").trim()),
+    const updates: Promise<void>[] = [
       setSystemSetting("notify_min_severity", notifyMinSeverity),
-    ]);
+    ];
+    const feishuUrl = newSecretValue(feishuWebhookUrl);
+    const feishuSecretNew = newSecretValue(feishuSecret);
+    const wecomUrl = newSecretValue(wecomWebhookUrl);
+    if (feishuUrl !== null) {
+      updates.push(setSystemSetting("feishu_webhook_url", feishuUrl));
+    }
+    if (feishuSecretNew !== null) {
+      updates.push(setSystemSetting("feishu_secret", feishuSecretNew));
+    }
+    if (wecomUrl !== null) {
+      updates.push(setSystemSetting("wecom_webhook_url", wecomUrl));
+    }
+    await Promise.all(updates);
 
-    if (eventRules && typeof eventRules === "object") {
-      await setNotifyEventRules(eventRules);
+    // 显式 null 才清空（留空是「不修改」，脱敏后 UI 不再持有原文）
+    if (isSecretCleared(feishuWebhookUrl)) {
+      await setSystemSetting("feishu_webhook_url", "");
+    }
+    if (isSecretCleared(feishuSecret)) {
+      await setSystemSetting("feishu_secret", "");
+    }
+    if (isSecretCleared(wecomWebhookUrl)) {
+      await setSystemSetting("wecom_webhook_url", "");
     }
 
     fireAndForgetAudit({
@@ -65,10 +107,11 @@ export async function PUT(req: Request) {
       target_type: "config",
       target_uuid: "",
       detail: JSON.stringify({
-        feishu: !!feishuWebhookUrl,
-        wecom: !!wecomWebhookUrl,
+        feishu: feishuUrl !== null || isSecretCleared(feishuWebhookUrl),
+        wecom: wecomUrl !== null || isSecretCleared(wecomWebhookUrl),
         notifyMinSeverity,
         eventRuleCount: eventRules ? Object.keys(eventRules).length : 0,
+        reason: parsed.reason,
       }),
     });
 

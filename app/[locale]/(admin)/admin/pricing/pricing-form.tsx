@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 
 interface ProductRow {
@@ -22,6 +23,8 @@ export default function PricingForm({ products }: { products: ProductRow[] }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<ProductRow[]>(products);
+  // N-6：定价是资金路径配置，保存必须带理由（服务端强制校验）
+  const [reason, setReason] = useState("");
 
   const setField = (
     productId: string,
@@ -34,12 +37,17 @@ export default function PricingForm({ products }: { products: ProductRow[] }) {
   };
 
   const save = async () => {
+    if (reason.trim().length < 5) {
+      toast.error("请填写变更理由（至少 5 个字符，将写入审计日志）");
+      return;
+    }
     setSaving(true);
     try {
       const resp = await fetch("/api/admin/payment-products", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          reason: reason.trim(),
           products: rows.map((p) => ({
             product_id: p.product_id,
             amount: Number(p.amount),
@@ -57,6 +65,7 @@ export default function PricingForm({ products }: { products: ProductRow[] }) {
         return;
       }
       toast.success("定价映射已保存（即时生效）");
+      setReason("");
       router.refresh();
     } catch (e) {
       toast.error("保存失败");
@@ -67,6 +76,19 @@ export default function PricingForm({ products }: { products: ProductRow[] }) {
 
   return (
     <div className="space-y-4">
+      <div className="space-y-1">
+        <Label htmlFor="pricing-reason">变更理由（必填，写入审计日志）</Label>
+        <Textarea
+          id="pricing-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          required
+          minLength={5}
+          maxLength={200}
+          placeholder="例如：季度调价，运营复核通过"
+          className="max-w-xl"
+        />
+      </div>
       {rows.map((p) => (
         <div key={p.product_id} className="rounded-lg border p-4">
           <div className="mb-2 font-medium">{p.product_id}</div>

@@ -9,6 +9,8 @@ import {
 } from "@/models/payment";
 import { getProviderHealthSnapshot } from "@/lib/payment/health";
 import { aggregatePaymentEvents } from "@/lib/oplog";
+import { parseReason } from "@/lib/admin-reason";
+import { validatePricingFields } from "@/lib/pricing-guard";
 
 /**
  * GET/PUT /api/admin/payment-settings
@@ -44,7 +46,13 @@ export async function PUT(req: Request) {
   try {
     const admin = await requireAdmin("admin");
     const body = await req.json();
-    const { settings = [], products = [] } = body || {};
+    const { settings = [], products = [], reason } = body || {};
+
+    // N-6：渠道启停/优先级与定价映射都是资金路径配置，必须带理由
+    const parsed = parseReason(reason);
+    if (!parsed.ok) {
+      return respErr(`payment settings reason required: ${parsed.error}`);
+    }
 
     // 渠道设置
     for (const s of settings) {
@@ -58,26 +66,26 @@ export async function PUT(req: Request) {
       }
     }
 
-    // 定价映射（M1 修复：与 /api/admin/payment-products 同规则 —— 金额/积分/有效期必须 > 0，
-    // 否则可把商品金额改成 0 制造「免费送积分」的资损配置；复审 2：先 floor 再校验，
-    // 防止 0.5 通过校验后被 floor 成 0）
+    // 定价映射（与 /api/admin/payment-products 完全同规则 —— 这里是同一真相源的
+    // 第二个写入入口，缺反套利校验就是旁路（1 分卖 100 万积分），审查修复：
+    // 双入口共用 lib/pricing-guard；先 floor 再校验防 0.5 绕过）
     for (const prod of products) {
       const fields: Record<string, unknown> = {};
-      if (typeof prod.amount === "number") {
-        const amount = Math.floor(prod.amount);
-        if (amount <= 0) return respErr("amount must be a positive integer");
-        fields.amount = amount;
+      const amount = typeof prod.amount === "number" ? Math.floor(prod.amount) : undefined;
+      const credits = typeof prod.credits === "number" ? Math.floor(prod.credits) : undefined;
+      const validMonths =
+        typeof prod.valid_months === "number" ? Math.floor(prod.valid_months) : undefined;
+      if (amount !== undefined || credits !== undefined || validMonths !== undefined) {
+        const err = validatePricingFields({
+          amount,
+          credits,
+          valid_months: validMonths,
+        });
+        if (err) return respErr(err);
       }
-      if (typeof prod.credits === "number") {
-        const credits = Math.floor(prod.credits);
-        if (credits <= 0) return respErr("credits must be a positive integer");
-        fields.credits = credits;
-      }
-      if (typeof prod.valid_months === "number") {
-        const valid_months = Math.floor(prod.valid_months);
-        if (valid_months <= 0) return respErr("valid_months must be a positive integer");
-        fields.valid_months = valid_months;
-      }
+      if (amount !== undefined) fields.amount = amount;
+      if (credits !== undefined) fields.credits = credits;
+      if (validMonths !== undefined) fields.valid_months = validMonths;
       if (typeof prod.creem_product_id === "string") fields.creem_product_id = prod.creem_product_id;
       if (typeof prod.stripe_price_id === "string") fields.stripe_price_id = prod.stripe_price_id;
       if (typeof prod.waffo_product_id === "string") fields.waffo_product_id = prod.waffo_product_id;
@@ -91,7 +99,7 @@ export async function PUT(req: Request) {
       action: "admin.payment_settings.update",
       target_type: "config",
       target_uuid: "",
-      detail: JSON.stringify({ settings, products }),
+      detail: JSON.stringify({ settings, products, reason: parsed.reason }),
     });
 
     return respData({ updated: true });

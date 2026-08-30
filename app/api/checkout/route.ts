@@ -11,6 +11,8 @@ import {
 } from "@/lib/payment/health";
 import { fireAndForgetOpEvent } from "@/lib/oplog";
 import { logger } from "@/lib/logger";
+import { getClientIp } from "@/lib/ip";
+import { rateLimit } from "@/lib/ratelimit";
 
 import { Order } from "@/types/order";
 
@@ -80,6 +82,25 @@ export async function POST(req: Request) {
     }
     if (!user_email) {
       return respErr("invalid user");
+    }
+
+    // N-5：支付创建是高成本/高风险端点，必须先限流（防自动下单打爆渠道）。
+    // per-user 10 次/分恒定生效；per-IP 20 次/分只在声明了可信代理（cloudflare/vercel，
+    // IP 真实可辨）时启用——TRUSTED_PROXY=none（默认）时 getClientIp 恒返 127.0.0.1，
+    // IP 桶是全站单桶，高峰会误拒正常买家（审查修复），此时用户维度已足够挡刷单。
+    const userRl = await rateLimit(`checkout:user:${user_uuid}`, 10);
+    if (!userRl.ok) {
+      return respErr("too many requests", 429);
+    }
+    const trustedProxy = (
+      process.env.TRUSTED_PROXY || "none"
+    ).toLowerCase();
+    if (trustedProxy === "cloudflare" || trustedProxy === "vercel") {
+      const ip = await getClientIp();
+      const ipRl = await rateLimit(`checkout:ip:${ip}`, 20);
+      if (!ipRl.ok) {
+        return respErr("too many requests", 429);
+      }
     }
 
     // 渠道路由（method → provider，服务端决策）

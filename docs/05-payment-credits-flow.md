@@ -24,7 +24,8 @@
 
 ### 1.2 定价方案配置
 
-**现状**：定价方案 i18n JSON 仅做文案展示；**金额/积分/有效期以服务端 `data/pricing.ts` 为单一真相源**。
+**现状**：定价方案 i18n JSON 仅做文案展示；**金额/积分/有效期的运行时权威源是 `payment_products` 表**（后台可热改），
+`data/pricing.ts` 仅作初始化种子与回退（缺失行时兜底）。谢绝「单一真相源」措辞——那是 P1-8 矛盾的一部分。
 
 > ⚠️ **P1-8（第九轮对抗式审查，2026-08-26）——定价真相源两份文档互相矛盾**：
 > 本文件（及 `docs/15`）宣称 `data/pricing.ts` 是「单一真相源」；但 `boundary-spec:45`、
@@ -34,6 +35,12 @@
 > `P-1.1` 那条 ✅（「杜绝 0 成本攻击」）的防线也只覆盖客户端，没覆盖后台。
 > **修法**：先钉死哪个是真相源（建议：`payment_products` 表为运行时权威，`data/pricing.ts` 仅作初始化种子/回退），
 > 再重定级 `P1-定价-1`，并给定价写入加不变量校验（最大金额、货币白名单、积分/价格比例上下限）+ 事务 + 审计 + 双人复核。
+
+> ✅ **P1-8 定价真相源已钉死（2026-08-30）**：**运行时权威源 = `payment_products` 表**，
+> `data/pricing.ts` 仅作初始化种子/缺失行回退。`P1-定价-1` 随之定为 P0 级（真相源即收款金额权威源），
+> 已在其承载路由 `app/api/admin/payment-products/route.ts` 落地写入不变量校验：
+> 金额/积分/有效期上限、积分 ≤ 金额（杜绝赠送定价）、币种仅 USD（v1 单一货币）——
+> 见本文「§4.4 P1-8 定价真相源」与 §5.1 表。仍缺：事务化批量写入、双人复核、货币多币种支持（v1 不做）。
 
 > ✅ **P-1.1 已修复**：Checkout API 只接收 `product_id`，从服务端 `data/pricing.ts` 查价，
 > 忽略客户端传入的 `amount`/`credits`/`currency`/`valid_months`，杜绝 0 成本攻击。
@@ -260,6 +267,11 @@ async function increaseCredits({ user_uuid, trans_type, credits, expired_at, ord
 > （路由层转 402）。负数记录 `expired_at` 恒为 NULL（永不过期，防「积分复活」）。
 > 以下旧版应用层实现仅作历史存档，说明 FIFO 思路与当年 BUG：
 
+> ✅ **P0-2 快修已落地（2026-08-30，迁移 `0020_decrease_credits_user_lock.sql`）**：`decrease_credits`
+> 入口先取用户级事务 advisory lock（两段 int4 键，pooler 事务模式安全），同一用户并发扣减完全串行化。
+> 并发回归测试 `__tests__/credit-concurrency.test.ts`。目标库应用 0020 前不得开放真实收费。
+> credit_lots 批次模型仍是长期正解。
+>
 > ⚠️ **P0-2（第九轮对抗式审查，2026-08-26）——`decrease_credits` 的「行锁串行化」论证不成立**：
 > 扣减的写入方式是 **INSERT 一条负数流水**，不是 UPDATE 已有行。`SELECT ... FOR UPDATE` 只锁查询快照里
 > **已存在**的行，对并发插入的新行没有谓词锁/间隙锁。所以「锁 + SUM 校验 + INSERT 负数」这套组合在
@@ -593,6 +605,27 @@ AffiliateRewardAmount = {
 > 5. 业务层兜底：退款条款写明「已消费积分不予退还」，争议举证材料（调用日志 + 消费流水）在 dispute 时可导出。
 > **客观边界**：损失上界是 COGS 不是收入（每轮仍需真实付款并过 MoR 反欺诈）；但 Creem 无退款 API、MoR 对消费者申诉极宽松，这条路随时会被触发。
 
+> ✅ **P0-1 部分落地（2026-08-30）**：迁移 `0021_refund_debt_dispute.sql` 新增
+> ①`credit_debts`（欠款账本：user_uuid/order_no/due_credits/status，UNIQUE(user_uuid,order_no)）、
+> ②`refunds`（退款单：provider_refund_id/amount_cents/status）、③`orders.status` 扩展
+> `refund_requested`/`refund_blocked`（CHECK 放宽）、④存储过程 `debt_regulate_order_refund`——
+> 超额扣回差额写欠款 + 订单置 `refund_blocked` + 账号置 `restricted`。
+> `services/refund.ts` 的 `processRefund` 在扣回量 < 订单发放积分时自动触发债务化，测试覆盖
+> `__tests__/refund.test.ts` + `__tests__/dispute.test.ts`。
+>
+> ✅ **webhook 中间态已接线（2026-08-30 第七批）**：迁移 `0022_webhook_refund_registration.sql`
+> 新增存储过程 `register_order_refund_request`（refunds 退款单 + 订单置 `refund_requested`
+> 中间态 + `debt_regulate_order_refund` 债务化准入，provider_refund_id/同订单 pending 幂等），
+> 并扩展 `process_order_refund` 接受 `refund_requested` 状态（登记后由后台闭合）。
+> `lib/payment/index.ts` 的 `refund_succeeded` 分支改为调 `services/refund.ts`
+> `registerRefundRequest`——**webhook 到达只登记事实，不再直接扣积分/终态化**；
+> 缺 `user_uuid` 的事件不登记不回收，告警人工核查。admin 退款路径（`/api/admin/refund`）
+> 保持 `processRefund` 直回收 + 终态（管理员已决策）。`PaymentEvent` 增加
+> `provider`/`provider_ref_id` 字段，三渠道适配器（stripe/creem/waffo）已填充。
+> **仍待办**：①迁移 0021/0022 未应用（待连库，见 handoff §1.4）；②部分退款/多次退款准入校验
+> 用 credit_lots 精确批次计算（当前为近似口径 + 债务化兜底）；③后台回收工作台
+> （消费 refund_requested/refund_blocked 队列的运营界面）随审批队列一起排产。
+
 ---
 
 ## 5. 生产安全门槛与待建能力
@@ -605,22 +638,22 @@ AffiliateRewardAmount = {
 | # | 风险 | 根因 | 验收标准 |
 |---|------|------|----------|
 | P0-积分-1 | 积分过期账本会在过期后改变历史消费结果 | 永久负数流水 + 净额模型无法区分批次 | 引入 credit_lots + credit_consumptions，跨批次消费/过期/退款后余额可审计且不凭空增减 |
-| P0-退款-1 | 部分退款与积分回收不一致 | `process_order_refund` 不区分退款金额，统一标 refunded | **退款准入校验 + 已消费额度债务化 + refund_blocked 人工态**三项齐备（原「v1 只允许全额退款，或完成 refunds 表 + 比例/批次扣回」验收标准有洞，照它关闭后资金口子依然敞着，见 §4.3 P0-1） |
+| P0-退款-1 | 部分退款与积分回收不一致 | `process_order_refund` 不区分退款金额，统一标 refunded | **退款准入校验 + 已消费额度债务化 + refund_blocked 人工态**三项齐备（原「v1 只允许全额退款，或完成 refunds 表 + 比例/批次扣回」验收标准有洞，照它关闭后资金口子依然敞着，见 §4.3 P0-1）。⚠️ 部分完成（2026-08-30）：债务化 + refund_blocked + restricted 落地（`credit_debts`/`refunds`/`debt_regulate_order_refund` + `processRefund` 债务化，见 §4.3 链接块）；**webhook 中间态已接线（迁移 0022 + `registerRefundRequest`，见 §4.3 第七批块）**；准入校验（credit_lots 精确批次）与回收工作台待补，迁移 0021/0022 未应用 |
 | P0-Webhook-1 | Webhook 缺少事件 inbox 与强绑定 | 仅凭订单号处理，无 provider_event_id 唯一约束，无原始 body 留存 | 统一 webhook_inbox 表，(provider, provider_event_id) 唯一，原始 body 持久化，处理可重试 |
 | P0-对账-1 | 远端支付成功、本地落库失败无可靠恢复 | 先建远端 checkout 再写本地，失败后渠道收入无对账单据 | 本地先建订单 + 幂等键；每日对账：渠道成功/退款清单 vs 本地订单/积分/退款；差异告警 + 人工修复 |
 | P0-金额-1 | 金额/币种空值可绕过校验 | `handle_order_payment` 参数为空时跳过校验 | 空金额/空币种一律失败并告警；金额统一为最小货币单位整数，禁止浮点 |
+| P0-定价-1 | 管理员定价写入落在收款金额权威源上（真相源钉死为 `payment_products` 后升级） | 逐条非事务；无上限/币种白名单/比例校验 | ✅ 已加固（2026-08-30）：`app/api/admin/payment-products/route.ts` PUT 加金额/积分/有效期上限 + 币种仅 USD + 积分≤金额；测试见 `__tests__/payment-products-guard.test.ts`。仍待办：事务化批量写入、双人复核 |
 
 ### 5.2 P1 高风险项
 
 | # | 风险 | 说明 |
 |---|------|------|
-| P1-定价-1 | 管理员定价更新缺少不变量校验 | 逐条执行非事务；无最大金额、货币白名单、积分最小单位、价格/积分比例校验；无双人复核 |
+| P1-定价-1 | ~~管理员定价更新缺少不变量校验~~ | ✅ 已加固（2026-08-30，重定为 P0 关闭项）：真相源钉死为 `payment_products`，写入路由已加金额/积分/有效期上限 + 币种白名单(USD) + 积分≤金额（详见上表 P0-定价-1 与 §1.2 落地块）。仍待办：事务化批量写入、双人复核、多币种（v1 不做） |
 | P1-Webhook-1 | Webhook 无重放/乱序防护 | 签名验了，但同一事件并发重放、乱序到达可能造成状态机错误；需 inbox + 幂等 + 状态校验 |
 | P1-联盟-1 | 联盟奖励只有记录、没有发放闭环 | 只写 `affiliates.completed` + `reward_amount`，无转积分/提现/退款回冲；v1 应自动转积分批次 |
 | P1-邀请-1 | 邀请绑定存在竞态 | 「读取→更新→插入」非事务；2 小时时效仅前端校验；并发可能产生重复邀请记录 |
 | P1-调账-1 | 管理员积分调账缺少双重控制 | 加减积分属于资产变更，应要求原因、工单号、上限、审批；统一 ledger API，禁止直接写表 |
 | P1-订单-1 | 远端 checkout 与本地订单创建顺序不当 | 先建远端 session 再写本地，失败时可能产生"孤儿 session"，需补偿查询 |
-| P1-定价-1 | 管理员定价更新缺少不变量校验（第九轮重定级：若 `payment_products` 表为真相源则升 P0） | 见 §1.2 P1-8；定价真相源未钉死前，该风险直接落在收款金额的权威源上 |
 
 ### 5.3 P2 中风险项
 
