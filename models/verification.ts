@@ -78,10 +78,12 @@ export async function consumeVerificationCode(
     return false;
   }
 
-  // 原子标记 used=true（仅当仍为未使用状态）
+  // 原子标记 used=true（仅当仍为未使用状态）。
+  // 注意：supabase-js 的 .update().select() 默认不返回 count（恒为 null），
+  // 必须显式 { count: "exact" }；否则这里永远 return false，注册/重置全挂。
   const { error: updateError, count } = await supabase
     .from("verification_codes")
-    .update({ used: true })
+    .update({ used: true }, { count: "exact" })
     .eq("id", data.id)
     .eq("used", false)
     .select("id");

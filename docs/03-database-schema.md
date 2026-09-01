@@ -10,12 +10,15 @@
 - **表数量**：16 张（迁移 0000 基础 7 张 + 迁移新增 9 张，含 system_settings、op_events）
 - **存储过程**：资金与额度相关写操作全部下沉数据库原子执行（见文末「存储过程」一节），应用层不做 check-then-write
 
-> ⚠️ **生产就绪状态（更新于 2026-09-01 连库收尾）**：~~资金 RPC 权限边界不成立~~
+> ✅ **生产就绪状态（更新于 2026-09-01 连库收尾）**：~~资金 RPC 权限边界不成立~~
 > **已关闭**——五个资金函数已迁入 `private` schema 并仅授权 service_role（迁移 0023），
 > `credits/orders/refunds/credit_debts` 已启用 RLS，真实并发用例 4/4 通过（P0-2）。
-> **剩余缺口**：public 其余业务表（users/apikeys/audit_logs 等约 15 表）RLS 未启用、
-> `apikeys.api_key` 等敏感列暴露（advisors 2026-09-01），开放收费/公开部署前必须补齐；
-> credit lots 精确批次改造仍未做。详见本文第 5 节与 handoff §1.17。
+> ~~public 其余业务表 RLS 未启用~~ **已关闭（迁移 0024）**——public 全部 19 张业务表
+> ENABLE RLS（deny-all）+ REVOKE anon/authenticated 表特权，anonymous_usage 两 RPC
+> search_path 钉死 + 仅授 service_role；连库验证 anon 直查全 401、应用关键路径回归通过。
+> 0024 回归同时暴露并修复两个预存 bug：0025（verification_codes.code 列宽不足，
+> 注册/重置全挂）+ consumeVerificationCode 未传 `{ count: "exact" }`（恒 false）。
+> **剩余缺口**：credit lots 精确批次改造仍未做。详见本文第 5 节与 handoff §1.17/§1.18。
 
 > ⚠️ **第九轮对抗式审查（2026-08-26）新增阻断项，详见文末「存储过程」与「问题清单」**：
 > - **P0-2**：`decrease_credits` 的「行锁串行化」论证不成立（INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化，保护资金的并发安全声明未经论证）。
@@ -636,7 +639,7 @@ CREATE INDEX idx_ai_requests_status ON ai_requests(status) WHERE status IN ('ref
 | 8 | ~~**资金 RPC 权限边界不成立（P0）**~~ | ~~阻断~~ | **已关闭（2026-09-01，迁移 0023）** | 五个资金函数迁入 `private` schema（含 `SET search_path` 防劫持），REVOKE PUBLIC/anon/authenticated、仅授 service_role；`credits/orders/refunds/credit_debts` 启用 RLS；应用 6 处调用点 `serverClient().schema("private")`；Dashboard Exposed schemas 加 `private`；连库验证 anon 三层被拒。注意：public 其余业务表（users/apikeys/audit_logs 等约 15 表）RLS 仍缺，见第 11 行与 handoff §1.17 |
 | 9 | **积分账本缺少批次追踪（P0）** | **阻断** | **No-Go** | 当前正负净额模型无法正确处理过期、退款和审计；需 credit_lots + credit_consumptions |
 | 10 | **缺少 Webhook inbox 与对账表（P0）** | **阻断** | **No-Go** | 无持久化事件队列，无法防重放、乱序、失败重试和每日对账 |
-| 11 | 缺少 RLS 策略 | 高 | 待落地 | 所有用户表应启用 RLS；终端用户 client 走 anon/authenticated + RLS，服务端走 service role bypass |
+| 11 | ~~缺少 RLS 策略~~ | ~~高~~ | ✅ 已关闭（2026-09-01，0023+0024） | public 全部 19 张业务表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated 表特权；资金 RPC 迁 private 仅授 service_role。当前应用无 anon/浏览器直连路径（服务端恒 service_role bypass），若未来接 Supabase Auth/anon 直连，必须先显式设计自访策略 |
 | 12 | 备份无加密与脱敏 | 高 | 待落地 | backup.ts 对 orders/credits 用 select("*")，可能泄露 PII；需加密、保留期限、恢复演练 |
 | 13 | **`decrease_credits` 并发安全声明未经论证（P0-2）** | **阻断** | **No-Go** | INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化；需 advisory lock 或迁 credit_lots 后 UPDATE 原子扣减，并发回归测试进 CI |
 | 14 | ~~自动迁移向生产库种入公开弱口令（P0-3）~~ | ~~阻断~~ | ✅ 已关闭（0012/0019） | 0012 不再建号；0019 禁用历史固定 hash 账号；仅 `ADMIN_BOOTSTRAP_EMAIL` 显式开启一次性 pending_activation 引导 |
@@ -667,9 +670,13 @@ CREATE INDEX idx_ai_requests_status ON ai_requests(status) WHERE status IN ('ref
    GRANT EXECUTE ON FUNCTION private.handle_order_payment TO service_role;
    GRANT EXECUTE ON FUNCTION private.process_order_refund TO service_role;
    ```
-3. **RLS 启用**：`orders`、`credits`、`affiliates`、`credit_lots` 等核心表全部启用 RLS。
-   - 终端用户：只能看自己的订单/积分/消费记录
-   - 管理员：通过 service role 或专用 admin role 访问
+3. **RLS 启用**（✅ 已达成，2026-09-01）：`orders`、`credits` 及 public 其余全部 19 张
+   业务表均已启用 RLS（0023/0024，deny-all + REVOKE anon/authenticated 表特权）。
+   - 当前形态：应用无 anon/浏览器直连路径、不用 Supabase Auth（NextAuth 自管 JWT），
+     服务端恒 service_role（bypassrls）读写，"终端用户只看自己行"的语义由服务端
+     session → uuid 承担
+   - 若未来接 Supabase Auth / anon 直连：必须先显式设计 `auth.uid()` 自访策略再放开，
+     不得依赖 deny-all 时的静默放行（fail-loud）
 4. **客户端分离**：代码中明确区分 `serverClient`（service_role，仅服务端）与
    `userClient`（anon/authenticated，随用户请求），禁止通用模块"有 service key 就切换"。
 5. **CI 断言**：每次迁移后检查 `information_schema.routine_privileges`，

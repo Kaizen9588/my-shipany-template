@@ -216,6 +216,19 @@
 
 **验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 242 用例通过**（3 并发用例已转真跑）；ESLint 0 errors（124 warnings 持平）。
 
+### 1.18 第十批：public 全表 RLS 收口（2026-09-01 连库）
+
+- **设计决策（deny-all，非逐表策略）**：动工前核实代码事实——应用**不存在 anon key / 浏览器端直连路径**（无 createBrowserClient/`@supabase/ssr`，`userClient()` 零调用点），全部读写经 Next.js 服务端 `getSupabaseClient()`，生产 service key 功能必填（docs/08）→ 运行时身份恒为 service_role（bypassrls）；且应用不用 Supabase Auth（NextAuth 自管 JWT），用户 uuid 不在 Supabase JWT 里，任何 `auth.uid()` 自访策略都不会命中。因此正确策略是**全拒 + 服务端特权**：与 0023 资金四表同 posture，未来接入 Supabase Auth/anon 直连时必须先显式设计策略（fail-loud）。
+- **迁移 0024**：其余 15 张 public 业务表 ENABLE RLS（deny-all）+ 全部 19 张业务表 REVOKE anon/authenticated 全部表权限（含 0023 资金四表补 REVOKE——0023 只 ENABLE 了 RLS 没回收 Supabase 默认表特权）；RLS 与 REVOKE 是两层独立防线（未来误加宽松 policy 也不会静默放开）。`schema_migrations` 经 DATABASE_URL（表属主）读写，不受影响。
+- **advisors WARN 收口**：`increment/decrement_anonymous_usage` 两 RPC `SET search_path` 钉死 + REVOKE PUBLIC/anon/authenticated + 仅 GRANT service_role——public schema 从此无任何 anon 可调用/可读对象。
+- **连库验证**：19/19 表 `relrowsecurity=t`；anon/authenticated 表权限查询归零；PostgREST anon 直查 users/payment_products/posts/system_settings/verification_codes 全 401；service 路径读写正常；dev 起服关键路径回归（健康检查/首页/搜索/验证码）。
+- **回归暴露并修复两个预存 bug（注册链路此前完全不可用）**：
+  - **0025**：`verification_codes.code` VARCHAR(10) → VARCHAR(64)。2.15 round-7 改为存 SHA-256 哈希（64 hex）但迁移未同步，插入报 22001，send-verification 全挂。
+  - **`consumeVerificationCode` 恒 false**：supabase-js `.update().select()` 不传 `{ count: "exact" }` 时 count 恒 null，代码 `if (!count) return false` 永远命中——验证码被标记 used 但路由报 invalid，注册/重置全挂。修 `models/verification.ts` 传 `{ count: "exact" }`。端到端复测：发码 → 校验 → 建号 → 赠 10 积分全通过，测试数据零残留。
+- **静态断言**：`db-rbac-static.test.ts` 增 4 用例（0024 全表 ALTER/REVOKE 完备 + RPC 收口；任何迁移不得把表权限 GRANT 回 anon/authenticated；0025 列宽；consume 必须带 count exact）。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 246 用例通过**；ESLint 0 errors（124 warnings 持平）。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -305,11 +318,11 @@
    - ~~P0-1:webhook 只登记 `refund_requested` 中间态~~（已接线，见 §1.14）：剩 credit_lots 精确批次准入校验、后台回收工作台；~~应用 0021/0022~~（0021/0022 已应用，2026-09-01）。
    - N-13 剩余:联盟奖励冻结、争议收入确认（运营层，代码状态机已闭环）。
 6. **~~N-6 高风险操作强制理由~~（服务端+UI 已关闭，见 §1.12）**：纯代码部分完成。剩余归迁移批次：审批队列/双人复核（需新表）+ 管理员操作 outbox 持久化（依赖 N-4）。
-7. **新 P1（advisors 扫描 2026-09-01）**：public 其余表 RLS 未启用（users/apikeys/audit_logs 等约 15 表，anon key 当前可全量读写）+ `apikeys.api_key`/`waffo_orders.session_id` 敏感列暴露。开放收费/公开部署前必须逐表配置 RLS（见 §1.17 advisors 小节）。
+7. **~~新 P1（advisors 扫描 2026-09-01）：public 其余表 RLS~~（已关闭，2026-09-01 连库）**：迁移 0024 对 public 全部 19 张业务表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated 全部表权限（含 0023 资金四表补 REVOKE），anonymous_usage 两 RPC EXECUTE 仅授 service_role + search_path 钉死；连库验证 anon 直查全部 401、权限归零、应用关键路径回归通过。附带修复两个回归暴露的预存 bug：0025（verification_codes.code 列宽 VARCHAR(10)→64，SHA-256 哈希存不进去，注册/重置全挂）+ `consumeVerificationCode` update 未传 `{ count: "exact" }`（恒 return false）。见 §1.18。
 8. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：新 P1 public 表 RLS + 敏感列（advisors 新发现）> P0-1 剩余（精确批次准入 + 回收工作台）> N-13 剩余（联盟奖励冻结、争议收入确认）> N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）。注：P0-2/N-2/P0-1 webhook 中间态/迁移应用（0019–0023）均已关闭。
+> **当前债务优先级（下一步）**：P0-1 剩余（credit_lots 精确批次准入 + 回收工作台）> N-13 剩余（联盟奖励冻结、争议收入确认）> N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）。注：P0-2/N-2/P0-1 webhook 中间态/public 表 RLS（0024）/迁移应用（0019–0025）均已关闭。
 
 ---
 

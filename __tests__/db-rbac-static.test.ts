@@ -127,6 +127,71 @@ describe("资金路径显式走 serverClient（N-2/N-3 静态断言）", () => {
   });
 });
 
+describe("public 表 RLS 全量收口（迁移 0024/0025 静态断言，第十批）", () => {
+  const publicTables = [
+    "users",
+    "apikeys",
+    "affiliates",
+    "notifications",
+    "verification_codes",
+    "anonymous_usage",
+    "payment_products",
+    "payment_settings",
+    "posts",
+    "system_settings",
+    "audit_logs",
+    "op_events",
+    "schema_migrations",
+    "creem_orders",
+    "waffo_orders",
+  ];
+  const fundTables = ["credits", "orders", "refunds", "credit_debts"];
+
+  it("迁移 0024 对全部 19 张 public 业务表 ENABLE RLS + REVOKE anon/authenticated", () => {
+    // SQL 有对齐填充空格，按空白折叠后匹配
+    const src = sourceOf("data/migrations/0024_public_tables_rls_deny_all.sql").replace(/\s+/g, " ");
+    for (const t of [...publicTables, ...fundTables]) {
+      // 资金四表 0023 已 ENABLE RLS，0024 只补 REVOKE——不重复 ALTER
+      if (!fundTables.includes(t)) {
+        expect(src).toContain(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
+      }
+      expect(src).toContain(`REVOKE ALL ON TABLE ${t} FROM anon, authenticated`);
+    }
+    // anonymous_usage RPC 权限收口：EXECUTE 仅授 service_role + search_path 钉死
+    for (const rpc of ["increment_anonymous_usage", "decrement_anonymous_usage"]) {
+      expect(src).toContain(`REVOKE ALL ON FUNCTION public.${rpc}`);
+      expect(
+        new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${rpc}\\([^)]*\\) TO service_role`).test(src),
+        `GRANT EXECUTE ... TO service_role for ${rpc}`
+      ).toBe(true);
+      expect(src).toContain(`ALTER FUNCTION public.${rpc}`);
+      expect(src).toContain("SET search_path");
+    }
+  });
+
+  it("任何迁移不得把 anon/authenticated 的表权限重新 GRANT 回 public 表", () => {
+    const dir = path.join(process.cwd(), "data/migrations");
+    const bad: string[] = [];
+    for (const name of readFileSyncNames(dir)) {
+      const src = readFileSync(path.join(dir, name), "utf8");
+      if (/GRANT\s+(SELECT|INSERT|UPDATE|DELETE|ALL)\b[^;]*\bTO\s+(anon|authenticated)\b/i.test(src)) {
+        bad.push(name);
+      }
+    }
+    expect(bad, `不得向 anon/authenticated 重新授权: ${bad.join(", ")}`).toEqual([]);
+  });
+
+  it("迁移 0025 修复 verification_codes.code 列宽（SHA-256 hex 需 64）", () => {
+    const src = sourceOf("data/migrations/0025_verification_code_hash_width.sql");
+    expect(src).toContain("ALTER TABLE verification_codes ALTER COLUMN code TYPE VARCHAR(64)");
+  });
+
+  it("consumeVerificationCode 的 update 显式请求 count（否则恒 false，注册/重置全挂）", () => {
+    const src = sourceOf("models/verification.ts");
+    expect(src).toContain('.update({ used: true }, { count: "exact" })');
+  });
+});
+
 function readFileSyncNames(dir: string): string[] {
   return readdirSync(dir).filter((n) => n.endsWith(".sql"));
 }
