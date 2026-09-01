@@ -208,6 +208,23 @@ export async function increaseCredits({
         : (null as unknown as string),
     };
     await insertCredit(new_credit);
+
+    // credit_lots 批次账本（迁移 0026）：发放必须同步建批次，退款精确准入依赖它。
+    // 批次幂等键 lot-'||trans_no 与流水 trans_no 同源；失败不阻塞发放主流程，
+    // 由 migrate 存量回填兜底（下次重跑 0030+ 或手动补）——但此处直接抛错更利于对账。
+    const supabase = serverClient().schema("private");
+    const { error: lotError } = await supabase.rpc("grant_credit_lot", {
+      p_trans_no: new_credit.trans_no,
+      p_user_uuid: user_uuid,
+      p_source_type: trans_type,
+      p_source_ref: order_no || "",
+      p_credits: credits,
+      p_expired_at: new_credit.expired_at || null,
+    });
+    if (lotError) {
+      console.log("grant credit lot failed: ", lotError);
+      throw lotError;
+    }
   } catch (e) {
     console.log("increase credits failed: ", e);
     throw e;
@@ -267,4 +284,21 @@ export async function adjustCreditsByAdmin({
     expired_at: null as unknown as string,
   };
   await insertCredit(credit);
+
+  if (credits > 0) {
+    // 正数发放同步建批次（0026）：负数扣减无批次语义，不需要。
+    const supabase = serverClient().schema("private");
+    const { error } = await supabase.rpc("grant_credit_lot", {
+      p_trans_no: credit.trans_no,
+      p_user_uuid: user_uuid,
+      p_source_type: CreditsTransType.SystemAdd,
+      p_source_ref: remark || "",
+      p_credits: credits,
+      p_expired_at: null,
+    });
+    if (error) {
+      console.log("grant credit lot failed: ", error);
+      throw error;
+    }
+  }
 }

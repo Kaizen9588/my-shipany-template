@@ -100,7 +100,11 @@ describe("services/credit adjustCreditsByAdmin（H1 回归）", () => {
 
   it("正数加积分 expired_at 必须为 NULL（此前传 \"\" 导致 timestamptz 解析失败）", async () => {
     const insert = vi.fn().mockResolvedValue({ data: null, error: null });
-    mockGetClient.mockReturnValue({ from: vi.fn().mockReturnValue({ insert }) });
+    // 0026：正数分支 insertCredit 后还要 grant_credit_lot（serverClient().schema("private").rpc）
+    mockGetClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ insert }),
+      schema: () => ({ rpc: vi.fn().mockResolvedValue({ data: null, error: null }) }),
+    });
 
     const { adjustCreditsByAdmin } = await import("@/services/credit");
     await adjustCreditsByAdmin({

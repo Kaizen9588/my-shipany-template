@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // mock 依赖，避免连真实 Supabase
-vi.mock("@/models/db", () => ({ getSupabaseClient: vi.fn() }));
+// 0026：insertCredit 后同步 grant_credit_lot（serverClient().schema("private").rpc），
+// mock 需支持 .schema() 链式调用
+vi.mock("@/models/db", () => ({
+  getSupabaseClient: vi.fn(),
+  serverClient: vi.fn(() => ({ schema: () => ({ rpc: vi.fn().mockResolvedValue({ data: null, error: null }) }) })),
+}));
 vi.mock("@/models/credit", () => ({
   findCreditByOrderNo: vi.fn(),
   getUserValidCredits: vi.fn(),

@@ -51,6 +51,10 @@ export default async function AdminLayout({
               title: "已支付订单",
               url: "/admin/paid-orders",
             },
+            {
+              title: "回收工作台",
+              url: "/admin/recovery",
+            },
           ],
         },
         {

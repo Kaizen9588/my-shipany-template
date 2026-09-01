@@ -229,6 +229,25 @@
 
 **验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 246 用例通过**；ESLint 0 errors（124 warnings 持平）。
 
+### 1.19 第十一批：credit_lots 批次账本 + 退款精确准入 + 回收工作台（2026-09-01 连库）
+
+- **设计（双账本叠加，非替换）**：`credits` 流水表保留为展示层真相源（usage 页/后台流水/stats/邮件零改动）；新增 `credit_lots` 批次账本（每次发放一个批次：total/remaining/expired_at/status），作为退款精确准入的权威账本。消费明细落 `credit_consumptions`（一次消费跨多批次可追溯）。
+- **迁移 0026**（已连库应用）：
+  - `credit_lots` / `credit_consumptions` 两新表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated（0024 同规）；
+  - `grant_credit_lot` RPC：统一发放批次入口，幂等键 `lot_no = 'lot-'||trans_no`；
+  - `decrease_credits` 重写：批次 FIFO（过期优先）+ `UPDATE ... WHERE remaining >= x` 行级原子（docs/03 #13 正解），advisory lock 保留覆盖空账本窗口；错误信息格式不变（`insufficient credits: %`）；
+  - `handle_order_payment` 重写：订单发放同步建批次（同 trans_no，幂等）；
+  - `process_order_refund` 重写：**精确准入**——回收量 = SUM(该订单批次 remaining)，过期批次 remaining 仍计入（防过期套利）；用户级 advisory lock 先于快照读取（与 decrease_credits 互斥）；扣完批次置 refunded；credits 负流水照旧；
+  - `settle_credit_debt` RPC：债务清偿最后一环——outstanding→settled + 用户无其他 outstanding 债务时 restricted→active；幂等（已 settled 返回 0）；清偿说明追加进 reason；
+  - 权限收口：5 个函数 REVOKE PUBLIC/anon/authenticated + 仅 GRANT service_role（0023 同规）。
+- **应用层接线**：`services/credit.ts` 的 `increaseCredits` 与 `adjustCreditsByAdmin`（正数分支）在 `insertCredit` 后调 `grant_credit_lot`（`serverClient().schema("private")`）；`services/refund.ts` 口径注释更新。
+- **回收工作台 `/admin/recovery`**（admin 导航「订单 → 回收工作台」）：队列一 refund_requested/refund_blocked 订单「闭合退款」（复用 `/api/admin/refund` 闭合语义，绝不触达渠道）；队列二 outstanding 债务「清偿」（新 `/api/admin/debt-settle` 路由，N-6 强制理由 + `admin.credit_debt.settle` 审计）。浏览器实测：登录→改密→页面渲染→导航入口全通过。
+- **真库 e2e 回归（事务内回滚，零残留）**：发放 100 → 消费 30（批次剩 70 + consumption 明细）→ 再发 50 花光 → 退 order-A 精确回收 20（批次剩余，而非近似口径）→ 债务登记 → settle 清偿 + 账号恢复 + 重复 settle 返回 0。
+- **测试**：`credit-concurrency.test.ts` seed 同步建批次（0026 后批次不随 credits 行自动创建）+ 清理含 lots/consumptions；`db-rbac-static.test.ts` 增第十一批 5 用例（0026 deny-all、grant/settle REVOKE/GRANT 成对、批次语义、双 advisory lock、发放路径同步建批次）；`credit.test.ts`/`credit-service.test.ts` mock 补 `.schema()` 链。
+- **迁移写法教训**：CREATE OR REPLACE 不能移除既有参数默认值——0023 的 `handle_order_payment`/`process_order_refund` 带参数 DEFAULT，0026 重写必须原样保留默认值。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 251 用例通过**（静态 250 + 真库并发 4/4）；ESLint 0 errors；`pnpm build` 通过。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -263,7 +282,7 @@
 
 | 优先级 | 未完成项 | 风险 / 验收目标 | 建议起点 |
 |---|---|---|---|
-| P0-1 | 退款对已消费积分无回收路径 | ⚠️ **部分关闭（2026-08-30，见 §1.7 + §1.14）**：债务化落地（`credit_debts`/`refunds`/`debt_regulate_order_refund` + `processRefund` 债务化，迁移 0021）；**webhook 中间态已接线**（迁移 0022 `register_order_refund_request` + `registerRefundRequest`，`refund_succeeded` 只登记 `refund_requested` 不再直接终态化）。剩余：credit_lots 精确批次准入校验、后台回收工作台、迁移 0021/0022 应用（待连库） | `docs/05-payment-credits-flow.md` §退款；`services/refund.ts`；`data/migrations/0021_refund_debt_dispute.sql`、`0022_webhook_refund_registration.sql` |
+| P0-1 | 退款对已消费积分无回收路径 | ✅ **已关闭（2026-09-01，连库，见 §1.19）**：迁移 0026 `credit_lots` 批次账本落地——退款按订单批次 remaining 精确回收（防「先消费再退款」稀释 + 防过期套利），缺口照旧债务化（0021）；webhook 中间态闭合入口 = 回收工作台 `/admin/recovery`（0022→工作台→processRefund）；债务清偿闭环 = `settle_credit_debt` + 工作台清偿按钮；真库 e2e 全链路通过 | `data/migrations/0026_credit_lots_refine.sql`、`services/refund.ts`、`services/credit.ts`、`app/[locale]/(admin)/admin/recovery/`、`app/api/admin/debt-settle/` |
 | ~~P0-2~~ | ~~`decrease_credits` 并发安全不成立~~ | **已关闭（2026-09-01，连库）**：迁移 0020 已应用，`TEST_DATABASE_URL` 真实并发用例 4/4 通过（见 §1.17） | `data/migrations/0020_decrease_credits_user_lock.sql`、`__tests__/credit-concurrency.test.ts` |
 | ~~P0-4~~ | ~~匿名 demo 可通过失败退还绕过次数~~ | **已关闭（2026-08-30）**：输入硬限制 413 计次、退还仅限无上游费用错误、当日失败封顶、限流不 fail-open（见 §1.4） | `app/api/v1/ai/demo/route.ts`、`__tests__/ai-demo-guard.test.ts` |
 | ~~N-1~~ | ~~管理员通知 API 回显完整 webhook secret~~ | **已关闭（2026-08-30）**：GET/RSC 只出 set 标志 + 末四位掩码，PUT 留空保留现值（见 §1.4） | `models/notify.ts`、`__tests__/notify-settings-mask.test.ts` |
@@ -319,10 +338,11 @@
    - N-13 剩余:联盟奖励冻结、争议收入确认（运营层，代码状态机已闭环）。
 6. **~~N-6 高风险操作强制理由~~（服务端+UI 已关闭，见 §1.12）**：纯代码部分完成。剩余归迁移批次：审批队列/双人复核（需新表）+ 管理员操作 outbox 持久化（依赖 N-4）。
 7. **~~新 P1（advisors 扫描 2026-09-01）：public 其余表 RLS~~（已关闭，2026-09-01 连库）**：迁移 0024 对 public 全部 19 张业务表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated 全部表权限（含 0023 资金四表补 REVOKE），anonymous_usage 两 RPC EXECUTE 仅授 service_role + search_path 钉死；连库验证 anon 直查全部 401、权限归零、应用关键路径回归通过。附带修复两个回归暴露的预存 bug：0025（verification_codes.code 列宽 VARCHAR(10)→64，SHA-256 哈希存不进去，注册/重置全挂）+ `consumeVerificationCode` update 未传 `{ count: "exact" }`（恒 return false）。见 §1.18。
-8. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
+8. **~~P0-1 剩余：credit_lots 批次账本 + 回收工作台~~（已关闭，2026-09-01 连库）**：迁移 0026 已应用（批次 FIFO 扣减 + 退款精确准入 + `settle_credit_debt` 清偿闭环）；回收工作台 `/admin/recovery` 上线（闭合 webhook 登记的退款 + 清偿债务 + 恢复账号）；真库 e2e 全链路（发放→消费→精确退款→债务→清偿）通过。见 §1.19。
+9. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：P0-1 剩余（credit_lots 精确批次准入 + 回收工作台）> N-13 剩余（联盟奖励冻结、争议收入确认）> N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）。注：P0-2/N-2/P0-1 webhook 中间态/public 表 RLS（0024）/迁移应用（0019–0025）均已关闭。
+> **当前债务优先级（下一步）**：N-13 剩余（联盟奖励冻结、争议收入确认）> N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）> P1（AI 请求状态机、webhook inbox/对账）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1/N-2/N-3/N-5/public 表 RLS（0024）/迁移应用（0019–0026）均已关闭。
 
 ---
 

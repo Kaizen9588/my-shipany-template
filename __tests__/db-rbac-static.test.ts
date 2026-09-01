@@ -192,6 +192,68 @@ describe("public 表 RLS 全量收口（迁移 0024/0025 静态断言，第十�
   });
 });
 
+describe("credit_lots 批次账本与退款精确准入（迁移 0026 静态断言，第十一批）", () => {
+  const sql = () =>
+    sourceOf("data/migrations/0026_credit_lots_refine.sql").replace(/\s+/g, " ");
+
+  it("0026 新表 deny-all：credit_lots / credit_consumptions ENABLE RLS + REVOKE anon/authenticated", () => {
+    const src = sql();
+    for (const t of ["credit_lots", "credit_consumptions"]) {
+      expect(src).toContain(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
+      expect(src).toContain(`REVOKE ALL ON TABLE ${t} FROM anon, authenticated`);
+    }
+  });
+
+  it("0026 批次函数迁 private + REVOKE/GRANT 成对（grant_credit_lot / settle_credit_debt）", () => {
+    const src = sql();
+    for (const rpc of ["grant_credit_lot", "settle_credit_debt"]) {
+      expect(src).toContain(`CREATE OR REPLACE FUNCTION private.${rpc}`);
+      expect(src).toContain(`REVOKE ALL ON FUNCTION private.${rpc}`);
+      expect(
+        new RegExp(`GRANT EXECUTE ON FUNCTION private\\.${rpc}\\([^)]*\\) TO service_role`).test(src),
+        `GRANT EXECUTE ... TO service_role for ${rpc}`
+      ).toBe(true);
+    }
+  });
+
+  it("0026 三个重写函数保持批次语义：FIFO 行级原子扣减 + 精确准入 + 同步建批次", () => {
+    const src = sql();
+    // decrease_credits：批次 FIFO（过期优先）+ 行级原子 UPDATE ... WHERE remaining >= x
+    const decIdx = src.indexOf("CREATE OR REPLACE FUNCTION private.decrease_credits");
+    const decBody = src.slice(decIdx, src.indexOf("-- ============ 6.", decIdx));
+    expect(decBody).toContain("ORDER BY expired_at ASC NULLS LAST, id ASC");
+    expect(decBody).toContain("remaining_credits >= v_take");
+    expect(decBody).toContain("INSERT INTO credit_consumptions");
+    // process_order_refund：按订单批次 SUM(remaining) 精确准入，锁先于快照
+    const refundIdx = src.indexOf("CREATE OR REPLACE FUNCTION private.process_order_refund");
+    const refundBody = src.slice(refundIdx, refundIdx + 6000);
+    expect(refundBody).toContain("source_type = 'order_pay'");
+    expect(refundBody).toContain("SUM(remaining_credits)");
+    expect(refundBody.indexOf("pg_advisory_xact_lock")).toBeGreaterThan(-1);
+    expect(refundBody.indexOf("pg_advisory_xact_lock")).toBeLessThan(
+      refundBody.indexOf("SUM(remaining_credits)")
+    );
+    // handle_order_payment：发放同步建批次（同 trans_no）
+    const handleIdx = src.indexOf("CREATE OR REPLACE FUNCTION private.handle_order_payment");
+    const handleBody = src.slice(handleIdx, src.indexOf("-- ============ 7.", handleIdx));
+    expect(handleBody).toContain("INSERT INTO credit_lots");
+  });
+
+  it("0026 保留 P0-2 用户级 advisory lock（decrease 与 refund 同键互斥）", () => {
+    const src = sql();
+    expect(src.match(/pg_advisory_xact_lock\(736925141, hashtext/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("发放路径（services/credit）insertCredit 后同步 grant_credit_lot，走 serverClient().schema(\"private\")", () => {
+    const src = sourceOf("services/credit.ts");
+    expect(src).toContain('"grant_credit_lot"');
+    const grantSeg = src.split("serverClient()").slice(1).find((s) => s.includes('"grant_credit_lot"'));
+    expect(grantSeg?.includes('.schema("private")')).toBe(true);
+    // adjustCreditsByAdmin 正数分支也要建批次
+    expect(src).toContain("if (credits > 0)");
+  });
+});
+
 function readFileSyncNames(dir: string): string[] {
   return readdirSync(dir).filter((n) => n.endsWith(".sql"));
 }

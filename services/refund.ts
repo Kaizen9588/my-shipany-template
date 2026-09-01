@@ -75,8 +75,9 @@ export async function registerRefundRequest({
  * admin 退款 API 与渠道退款 webhook 并发调用时只会扣一次积分；
  * 已 refunded 的订单幂等返回 0。
  *
- * 退款口径（6.1）：退款扣回全部剩余积分，近似口径 min(该订单积分, 当前余额)
- * （docs/12 §三.2：不做精确按订单追踪积分来源）
+ * 退款口径（6.1，迁移 0026 升级）：按 credit_lots 中该订单发放批次的
+ * remaining 精确回收（不再用近似口径 min(订单积分, 余额)），
+ * 「先消费 A 单、再退 B 单」不再稀释回收量；缺口部分由下方债务化兜底。
  */
 export async function processRefund({
   order_no,

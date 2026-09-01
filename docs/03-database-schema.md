@@ -18,7 +18,12 @@
 > search_path 钉死 + 仅授 service_role；连库验证 anon 直查全 401、应用关键路径回归通过。
 > 0024 回归同时暴露并修复两个预存 bug：0025（verification_codes.code 列宽不足，
 > 注册/重置全挂）+ consumeVerificationCode 未传 `{ count: "exact" }`（恒 false）。
-> **剩余缺口**：credit lots 精确批次改造仍未做。详见本文第 5 节与 handoff §1.17/§1.18。
+> ~~credit lots 精确批次改造仍未做~~ **已关闭（迁移 0026，2026-09-01 连库）**——
+> `credit_lots` 批次账本 + `credit_consumptions` 消费明细，批次 FIFO 扣减、退款按
+> 订单批次精确准入（防先消费再退款稀释 + 防过期套利）、`settle_credit_debt` 清偿闭环；
+> 真库 e2e 全链路通过。
+> **剩余缺口**：`apikeys.api_key` 等敏感列暴露（advisors 2026-09-01）。
+> 详见本文第 5 节与 handoff §1.17/§1.18/§1.19。
 
 > ⚠️ **第九轮对抗式审查（2026-08-26）新增阻断项，详见文末「存储过程」与「问题清单」**：
 > - **P0-2**：`decrease_credits` 的「行锁串行化」论证不成立（INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化，保护资金的并发安全声明未经论证）。
@@ -581,12 +586,14 @@ CREATE TABLE refunds (
 CREATE INDEX idx_refunds_order ON refunds(order_no);
 CREATE INDEX idx_refunds_provider ON refunds(provider, provider_refund_id);
 
-> ⚠️ **P0-1（第九轮，2026-08-26）——批次账本还缺「债务化」与「退款中间态」**：上面的 `credit_lots.remaining_credits`、
-> `credit_refunds.refunded_credits`、`refunds.credits_refunded` 全部是非负语义，全库没有任何负批次/欠款的表达。
-> 当「已消费积分 + 全额退款」发生时，扣回量为 0 却订单进终态 `refunded`，白嫖成立。需补：
-> 1. `orders` 增加 `refund_requested` / `refund_blocked`（以及争议链路需要的 `disputed` / `charged_back`）状态。
-> 2. `credit_lots` 增加 `debt` 类型，或独立 `credit_debts(user_uuid, order_no, credits, status)`，账号进 `restricted`。
-> 3. 退款准入校验：`refundable_amount = order.amount × (该订单批次 remaining_credits / 订单发放积分)`，超额走显式审批。
+> ✅ **P0-1（第九轮，2026-08-26）——已关闭（2026-09-01，迁移 0026 + 工作台，handoff §1.19）**：
+> 上面的 `credit_lots.remaining_credits` 非负语义保留；债务化不再用「负批次」表达，而是
+> 1. `orders` 已有 `refund_requested` / `refund_blocked` / `disputed` / `charged_back` 状态（0021）。
+> 2. 独立 `credit_debts(user_uuid, order_no, due_credits, status)`（0021）+ 账号 `restricted`；
+>    清偿闭环 `private.settle_credit_debt`（0026）：outstanding→settled + 无其他欠款时账号恢复 active。
+> 3. 退款准入（0026）：回收量 = SUM(该订单 credit_lots 批次 remaining_credits)（过期批次仍计入，
+>    防过期套利），缺口部分由 `services/refund.ts processRefund` 自动债务化；webhook 登记的
+>    `refund_requested` 由后台回收工作台 `/admin/recovery` 本地闭合（不触达渠道）。
 
 -- ============================================
 -- P1：AI 请求状态机（幂等 + 崩溃补偿）
@@ -637,11 +644,11 @@ CREATE INDEX idx_ai_requests_status ON ai_requests(status) WHERE status IN ('ref
 | 6 | 无软删除机制（除 posts/apikeys） | 中 | 待评估 | users/orders/credits/affiliates 无软删除；订单/积分因审计需求不应物理删除 |
 | 7 | ~~无数据库迁移工具~~ | ~~中~~ | ⚠️ 最小机制已落地，并发/回滚/发布顺序未覆盖 | `data/migrations/` + `schema_migrations` 只解决同进程重复启动；多进程同秒启动、失败 fail-fast、回滚、expand-contract、索引 CONCURRENTLY 均未定义（P1-7） |
 | 8 | ~~**资金 RPC 权限边界不成立（P0）**~~ | ~~阻断~~ | **已关闭（2026-09-01，迁移 0023）** | 五个资金函数迁入 `private` schema（含 `SET search_path` 防劫持），REVOKE PUBLIC/anon/authenticated、仅授 service_role；`credits/orders/refunds/credit_debts` 启用 RLS；应用 6 处调用点 `serverClient().schema("private")`；Dashboard Exposed schemas 加 `private`；连库验证 anon 三层被拒。注意：public 其余业务表（users/apikeys/audit_logs 等约 15 表）RLS 仍缺，见第 11 行与 handoff §1.17 |
-| 9 | **积分账本缺少批次追踪（P0）** | **阻断** | **No-Go** | 当前正负净额模型无法正确处理过期、退款和审计；需 credit_lots + credit_consumptions |
+| 9 | ~~**积分账本缺少批次追踪（P0）**~~ | ~~阻断~~ | ✅ 已关闭（2026-09-01，迁移 0026） | `credit_lots`（每发放一批：total/remaining/expired_at/status）+ `credit_consumptions`（消费明细）已连库落地；发放路径（订单/管理员/新用户）同步建批次；退款按订单批次精确回收。两新表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated |
 | 10 | **缺少 Webhook inbox 与对账表（P0）** | **阻断** | **No-Go** | 无持久化事件队列，无法防重放、乱序、失败重试和每日对账 |
 | 11 | ~~缺少 RLS 策略~~ | ~~高~~ | ✅ 已关闭（2026-09-01，0023+0024） | public 全部 19 张业务表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated 表特权；资金 RPC 迁 private 仅授 service_role。当前应用无 anon/浏览器直连路径（服务端恒 service_role bypass），若未来接 Supabase Auth/anon 直连，必须先显式设计自访策略 |
 | 12 | 备份无加密与脱敏 | 高 | 待落地 | backup.ts 对 orders/credits 用 select("*")，可能泄露 PII；需加密、保留期限、恢复演练 |
-| 13 | **`decrease_credits` 并发安全声明未经论证（P0-2）** | **阻断** | **No-Go** | INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化；需 advisory lock 或迁 credit_lots 后 UPDATE 原子扣减，并发回归测试进 CI |
+| 13 | ~~**`decrease_credits` 并发安全声明未经论证（P0-2）**~~ | ~~阻断~~ | ✅ 已关闭（2026-09-01，0020+0026） | 双保险：用户级事务 advisory lock（0020，覆盖空账本/幻影插入窗口）+ 批次 FIFO `UPDATE ... WHERE remaining_credits >= x` 行级原子（0026，docs/03 #13 正解）；真库并发用例 4/4 通过（`credit-concurrency.test.ts`） |
 | 14 | ~~自动迁移向生产库种入公开弱口令（P0-3）~~ | ~~阻断~~ | ✅ 已关闭（0012/0019） | 0012 不再建号；0019 禁用历史固定 hash 账号；仅 `ADMIN_BOOTSTRAP_EMAIL` 显式开启一次性 pending_activation 引导 |
 | 15 | **建库路径三处并存（P1-6）** | 高 | 待统一 | `install.sql`（03 标「勿再参考」）与迁移 0000 基线、README 粘贴路径并存，`docs/07` 仍要求先手工执行 install.sql；需统一为「空库只跑 migrations」并加基线断言 |
 | 16 | **订单/支付事件缺少争议状态（P2-2）** | 中 | 待补 | `orders.status` 无 `disputed/charged_back`，`PaymentEventType` 无争议类型，收到渠道 dispute 事件无处归一化 |

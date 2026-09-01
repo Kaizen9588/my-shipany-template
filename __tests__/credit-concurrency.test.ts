@@ -61,15 +61,18 @@ describe.skipIf(!TEST_DATABASE_URL)(
     ): Promise<void> {
       await ensureUser(userUuid);
       for (const row of rows) {
+        const transNo = `t-${userUuid}-${Math.random().toString(36).slice(2, 12)}`;
         await pool.query(
           `INSERT INTO credits (trans_no, created_at, user_uuid, trans_type, credits, order_no, expired_at)
            VALUES ($1, now(), $2, 'order_pay', $3, '', $4)`,
-          [
-            `t-${userUuid}-${Math.random().toString(36).slice(2, 12)}`,
-            userUuid,
-            row.credits,
-            row.expiredAt ?? null,
-          ]
+          [transNo, userUuid, row.credits, row.expiredAt ?? null]
+        );
+        // 迁移 0026 后 decrease_credits 走 credit_lots 批次 FIFO，发放必须同步建批次
+        await pool.query(
+          `INSERT INTO credit_lots (lot_no, user_uuid, source_type, source_ref, total_credits, remaining_credits, expired_at)
+           VALUES ($1, $2, 'order_pay', '', $3, $3, $4)
+           ON CONFLICT (lot_no) DO NOTHING`,
+          [`lot-${transNo}`, userUuid, row.credits, row.expiredAt ?? null]
         );
       }
     }
@@ -164,6 +167,12 @@ describe.skipIf(!TEST_DATABASE_URL)(
 
     afterAll(async () => {
       if (seededUsers.length > 0) {
+        await pool.query("DELETE FROM credit_consumptions WHERE user_uuid = ANY($1)", [
+          seededUsers,
+        ]);
+        await pool.query("DELETE FROM credit_lots WHERE user_uuid = ANY($1)", [
+          seededUsers,
+        ]);
         await pool.query("DELETE FROM credits WHERE user_uuid = ANY($1)", [
           seededUsers,
         ]);
