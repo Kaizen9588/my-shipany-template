@@ -123,7 +123,12 @@ export async function getUserEmail() {
 }
 
 export async function getUserInfo() {
-  let user_uuid = await getUserUuid();
+  // 直接取 session uuid，不走 getUserUuid()：后者对非 active 会话返回空，
+  // 会把 pending_activation 的默认管理员挡在 /change-password 之外（0027 强制
+  // 改密闭环）。调用方（console layout / change-password 页）自带状态守卫，
+  // 资金路径必须继续用 getUserUuid() 的严格校验。
+  const session = await auth();
+  const user_uuid = session?.user?.uuid;
 
   if (!user_uuid) {
     return;

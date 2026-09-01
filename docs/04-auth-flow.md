@@ -309,7 +309,7 @@ export async function getUserUuid() {
 | 12 | 无 Session 过期配置 | 低 | 已知边界 | 使用 NextAuth 默认 30 天 |
 | 13 | 无刷新 Token 机制 | 低 | 已知边界 | JWT 过期后需重新登录 |
 | 14 | next-auth beta 版本 | 中 | 已知风险 | 5.0.0-beta.25 可能有 breaking change |
-| 15 | **默认超级管理员弱口令（P0-3）** | **阻断** | **No-Go** | 迁移 0012 无条件创建 `admin@shipany.local / 123456 / super_admin`，「首次强制改密」只是登录后跳转，账号在迁移执行完即可用公开凭据登录，谁先登谁改密。修法：条件建号 + 随机密码 + pending_activation + 生产不建号（详见 boundary-spec §九 N-7） |
+| 15 | ~~默认超级管理员弱口令（P0-3）~~ | ~~阻断~~ | ✅ 已关闭（2026-09-02 调整口径） | 0012/0019 关闭无条件建号与历史固定 hash；0027 恢复默认管理员 `admin@shipany.local` / 初始密码 `123456`（bcrypt 哈希入库），`pending_activation` + `must_change_password`：可登录但强制跳 `/change-password`，改密前 `requireAdmin` 拒绝一切后台 API（含 `getUserUuid` 严格门，资金路径不受影响），改密成功自动 `active`。公开初始凭据只能进一次性改密流程（详见 boundary-spec §九 N-7） |
 | 16 | **账号风险状态机缺失（第九轮）** | 高 | 待设计 | 只有通用封禁（banned），没有资金风控的 `restricted` / 欠款 / 冻结消费概念；退款滥用、拒付、债务未清偿三类场景无处落地。需在用户状态机上增加 `restricted`（清偿前禁止消费与再次下单）、欠款记录与人工审批流（详见 docs/05 §7.3） |
 
 ---

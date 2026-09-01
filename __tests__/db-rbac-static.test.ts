@@ -257,3 +257,52 @@ describe("credit_lots 批次账本与退款精确准入（迁移 0026 静态断�
 function readFileSyncNames(dir: string): string[] {
   return readdirSync(dir).filter((n) => n.endsWith(".sql"));
 }
+
+describe("默认管理员恢复与强制改密（迁移 0027 静态断言，第十二批）", () => {
+  const sql = () =>
+    sourceOf("data/migrations/0027_restore_default_admin.sql").replace(/\s+/g, " ");
+
+  it("0027 默认管理员必须 pending_activation + must_change_password，无明文密码", () => {
+    const src = sql();
+    expect(src).toContain("'admin@shipany.local'");
+    // 唯一允许的引导凭据形态：待激活 + 强制改密（首次登录闭环前不可用后台）
+    expect(src).toContain("'pending_activation'");
+    expect(src).toContain("must_change_password = true");
+    expect(src).not.toMatch(/password_hash\s*=\s*'(?!\$)/); // 只允许 bcrypt 哈希入库
+    // INSERT 与 UPDATE 两路径都要带强制改密标志
+    expect(src.match(/must_change_password/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("getAdminUser 放行 pending_activation（banned/deleted 仍拦截），requireAdmin 挡未改密", () => {
+    const src = sourceOf("lib/auth.ts").replace(/\s+/g, " ");
+    expect(src).toContain('user.status !== "pending_activation"');
+    expect(src).toContain('if (admin.must_change_password) { throw new Error("password change required"); }');
+    // banned/deleted 拦截必须保留在 pending 放行之前
+    expect(src.indexOf('user.status !== "active"')).toBeGreaterThan(-1);
+    expect(src.indexOf('user.status !== "pending_activation"')).toBeGreaterThan(
+      src.indexOf('user.status !== "active"')
+    );
+  });
+
+  it("console layout 的 must_change_password 重定向先于 status 拦截", () => {
+    const src = sourceOf("app/[locale]/(default)/(console)/layout.tsx").replace(/\s+/g, " ");
+    const mustIdx = src.indexOf("userInfo.must_change_password");
+    const statusIdx = src.indexOf('userInfo.status && userInfo.status !== "active"');
+    expect(mustIdx).toBeGreaterThan(-1);
+    expect(statusIdx).toBeGreaterThan(-1);
+    expect(mustIdx).toBeLessThan(statusIdx);
+  });
+
+  it("getUserInfo 直读 session uuid，pending_activation 管理员可达 /change-password", () => {
+    const src = sourceOf("services/user.ts")
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, "")) // 去注释后断言代码本身
+      .join("\n")
+      .replace(/\s+/g, " ");
+    const fnIdx = src.indexOf("export async function getUserInfo");
+    const fnBody = src.slice(fnIdx, src.indexOf("export function toSafeUser", fnIdx));
+    // 不经 getUserUuid()（其 status 门会把待激活管理员挡在改密页外）
+    expect(fnBody).not.toContain("getUserUuid()");
+    expect(fnBody).toContain("session?.user?.uuid");
+  });
+});

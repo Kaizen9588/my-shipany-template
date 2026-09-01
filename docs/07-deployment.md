@@ -197,10 +197,13 @@ pnpm dev
 
 > **发布顺序（P1-7）**：先以单个受控 job 运行 `pnpm migrate`，再发布应用实例；回滚应用代码不得回滚已经提交的 schema。新增破坏性字段/约束时采用 expand-contract 两次发布。普通迁移在事务中串行化；需要 `CREATE INDEX CONCURRENTLY` 的未来大表索引必须拆为专用、非事务迁移 job，不能混入当前迁移器。
 >
-> ✅ **P0-3 已关闭（2026-08-30）**：迁移 0012 不再写入任何管理员；历史固定默认账号由迁移 0019
-> 识别其原始 hash 后禁用。只有显式设置 `ADMIN_BOOTSTRAP_EMAIL` 时，运行时引导才会创建一次
-> `status='pending_activation'` 的超级管理员；密码优先取 `ADMIN_BOOTSTRAP_PASSWORD`，未设置时生成随机临时密码并仅写入受限启动日志。
-> 未配置邮箱时，生产和本地环境都不会创建账号。首次强制改密成功后账号自动转为 `active`。完整边界见 boundary-spec §二/§九。
+> ✅ **P0-3 已关闭（2026-08-30，2026-09-02 调整口径）**：迁移 0012 不再写入任何管理员；历史固定默认账号由迁移 0019
+> 识别其原始 hash 后禁用。迁移 0027 恢复**内置默认管理员** `admin@shipany.local`（初始密码 `123456`，仅 bcrypt
+> 哈希入库，明文不进仓库/迁移文件），状态 `pending_activation` + `must_change_password`：可登录但只能进入
+> `/change-password`，改密前 `requireAdmin` 拒绝一切后台 API，改密成功自动转 `active`。不需要时按 0027 末尾注释
+> 删除或禁用。另保留 `ADMIN_BOOTSTRAP_EMAIL` 显式引导：创建一次 `status='pending_activation'` 的超级管理员，
+> 密码优先取 `ADMIN_BOOTSTRAP_PASSWORD`，未设置时生成随机临时密码并仅写入受限启动日志。
+> 首次强制改密成功后账号自动转为 `active`。完整边界见 boundary-spec §二/§九。
 
 #### 5.2.2 本地 Supabase（本地开发，Docker 或 CLI 二选一）
 
@@ -289,4 +292,4 @@ stripe listen --forward-to localhost:3000/api/stripe-notify
 | `next dev` 在沙箱中 EMFILE 循环重启 | 文件描述符限制 | 用户本地终端运行不受影响；沙箱内用 `next build && next start` |
 | npm EPERM 错误 | root-owned cache files | `npm install --cache /tmp/npm-cache` 或 `sudo chown -R 501:20 ~/.npm` |
 | 端口 3000 被占用 | 旧进程未退出 | `lsof -ti:3000 | xargs kill -9` |
-| 生产冷启动种入默认弱口令 | 迁移 0012 无条件创建 `admin@shipany.local/123456` | 条件建号 + 随机密码 + pending_activation + 生产不建号（P0-3，见 §5.2.1 与 boundary-spec §九） |
+| 生产冷启动种入默认弱口令 | 迁移 0012 无条件创建 `admin@shipany.local/123456` | 条件建号 + 随机密码 + pending_activation + 生产不建号（P0-3，见 §5.2.1 与 boundary-spec §九）；2026-09-02 起默认管理员恢复但哈希入库 + pending_activation + 强制改密（0027），公开凭据只能进一次性改密流程 |

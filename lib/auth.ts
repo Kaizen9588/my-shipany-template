@@ -58,9 +58,15 @@ export async function getAdminUser(): Promise<User | null> {
     return null;
   }
 
-  // 2.7：非 active 账号（banned/deleted）立即失去后台权限
+  // 2.7：banned/deleted 立即失去后台权限
   // session 是 JWT 不会随状态变更吊销，必须实时查库拦截
-  if (user.status && user.status !== "active") {
+  // pending_activation 不在此拦截：默认管理员（0012/0027）首次登录必须能到达
+  // /change-password 完成强制改密；未改密时的后台操作拦截由 requireAdmin 承担
+  if (
+    user.status &&
+    user.status !== "active" &&
+    user.status !== "pending_activation"
+  ) {
     return null;
   }
 
@@ -72,7 +78,9 @@ export async function getAdminUser(): Promise<User | null> {
   return null;
 }
 
-/** 要求管理员权限（operator 及以上），无权限抛错（供 API 路由使用） */
+/** 要求管理员权限（operator 及以上），无权限抛错（供 API 路由使用）。
+ * 强制改密未完成（默认管理员 pending_activation）时同样拒绝，防止公开默认凭据
+ * 在改密前调用任何后台 API。 */
 export async function requireAdmin(): Promise<User>;
 
 /** 要求指定级别权限：operator（看板/查询）/ admin（退款/调积分/封禁）/ super_admin（角色授予） */
@@ -82,6 +90,9 @@ export async function requireAdmin(level?: AdminRole): Promise<User> {
   const admin = await getAdminUser();
   if (!admin) {
     throw new Error("no admin access");
+  }
+  if (admin.must_change_password) {
+    throw new Error("password change required");
   }
   if (level && !hasAdminLevel(admin, level)) {
     throw new Error("no admin access");

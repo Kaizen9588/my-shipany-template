@@ -248,6 +248,21 @@
 
 **验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 251 用例通过**（静态 250 + 真库并发 4/4）；ESLint 0 errors；`pnpm build` 通过。
 
+### 1.20 第十二批：默认管理员恢复 + 强制改密闭环（2026-09-02，产品决策）
+
+- **产品决策**：恢复内置默认管理员 `admin@shipany.local` / 初始密码 `123456`，第一次登录强制更改密码。此前 0019 因「迁移不得内置公开凭据」禁用了历史账号；本批口径调整为——**公开初始凭据允许，但只能进一次性强制改密流程**（bcrypt 哈希入库，明文不进仓库）。
+- **迁移 0027**（已连库应用，幂等）：INSERT/UPDATE 恢复默认管理员为 `pending_activation` + `must_change_password=true` + bcrypt(12) hash；文件末尾注释保留「生产不需要时 DELETE 或置 banned」的出口。
+- **强制改密链路修复（浏览器实测发现的三个断点，全部修复）**：
+  1. `lib/auth.ts getAdminUser()`：原对 `status !== "active"` 一律返回 null，pending_activation 管理员访问 `/admin` 被当无权限踢到 signin → 弹回 `/`，改密重定向永不可达。修复：放行 `pending_activation`（banned/deleted 照旧拦截）；
+  2. `services/user.ts getUserInfo()`：原走 `getUserUuid()`，其 session 分支同样对非 active 返回空——`/change-password` 页面自己把待激活管理员重定向走了。修复：`getUserInfo()` 直读 session uuid（调用方 layout 自带状态守卫；**资金路径继续用 `getUserUuid()` 严格门，不受影响**）；
+  3. `app/[locale]/(default)/(console)/layout.tsx`：`must_change_password` 重定向提到 status 拦截之前（否则待激活管理员进控制台被直接踢回 signin，同样到不了改密页）。
+- **API 层防线**：`requireAdmin()` 新增 `must_change_password` 拦截（`password change required`）——未完成首次改密的管理员即使能登录，也调不了任何后台 API（退款/调账/改角色/定价全在 requireAdmin 后面）。`/api/user/change-password` 原本就直读 session、允许 pending_activation 完成改密并激活（0012 批设计，未动）。
+- **浏览器 e2e 全链路通过**：`123456` 登录成功 → 访问 `/admin` 落在 `/change-password`（而非 signin 弹回）→ 提交当前密码+新密码 → toast「密码已修改」+ DB 确认 `active`/`must_change_password=false`/hash 更新 → 新密码重新登录 → `/admin` 看板正常渲染。测试后本地账号已重置回 pending_activation 态（便于回归）。
+- **测试**：`db-rbac-static.test.ts` 增第十二批 4 用例（0027 默认账号形态：pending_activation + must_change_password 双路径 + 无明文密码；getAdminUser 放行/拦截顺序；console layout 重定向顺序；getUserInfo 直读 session）。
+- **文档同步**：README（管理员段重写）、docs/07 §5.2.1+故障表、docs/04 #15、boundary-spec §二+§九 N-7 均改为新口径。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 255 用例通过**（静态 254 + 真库并发 4/4）；ESLint 0 errors。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -339,10 +354,11 @@
 6. **~~N-6 高风险操作强制理由~~（服务端+UI 已关闭，见 §1.12）**：纯代码部分完成。剩余归迁移批次：审批队列/双人复核（需新表）+ 管理员操作 outbox 持久化（依赖 N-4）。
 7. **~~新 P1（advisors 扫描 2026-09-01）：public 其余表 RLS~~（已关闭，2026-09-01 连库）**：迁移 0024 对 public 全部 19 张业务表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated 全部表权限（含 0023 资金四表补 REVOKE），anonymous_usage 两 RPC EXECUTE 仅授 service_role + search_path 钉死；连库验证 anon 直查全部 401、权限归零、应用关键路径回归通过。附带修复两个回归暴露的预存 bug：0025（verification_codes.code 列宽 VARCHAR(10)→64，SHA-256 哈希存不进去，注册/重置全挂）+ `consumeVerificationCode` update 未传 `{ count: "exact" }`（恒 return false）。见 §1.18。
 8. **~~P0-1 剩余：credit_lots 批次账本 + 回收工作台~~（已关闭，2026-09-01 连库）**：迁移 0026 已应用（批次 FIFO 扣减 + 退款精确准入 + `settle_credit_debt` 清偿闭环）；回收工作台 `/admin/recovery` 上线（闭合 webhook 登记的退款 + 清偿债务 + 恢复账号）；真库 e2e 全链路（发放→消费→精确退款→债务→清偿）通过。见 §1.19。
-9. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
+9. **~~默认管理员恢复 + 强制改密闭环~~（已关闭，2026-09-02）**：迁移 0027 + getAdminUser/getUserInfo/console layout/requireAdmin 四处修复 + 浏览器 e2e 全链路通过。见 §1.20。
+10. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：N-13 剩余（联盟奖励冻结、争议收入确认）> N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）> P1（AI 请求状态机、webhook inbox/对账）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1/N-2/N-3/N-5/public 表 RLS（0024）/迁移应用（0019–0026）均已关闭。
+> **当前债务优先级（下一步）**：N-13 剩余（联盟奖励冻结、争议收入确认）> N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）> P1（AI 请求状态机、webhook inbox/对账）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1/N-2/N-3/N-5/public 表 RLS（0024）/迁移应用（0019–0027）均已关闭。
 
 ---
 

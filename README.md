@@ -11,7 +11,7 @@
 
 ### 认证与用户
 - **NextAuth.js v5**：Google / GitHub OAuth + Google One-Tap
-- **初始管理员引导**：仅显式配置 `ADMIN_BOOTSTRAP_EMAIL` 时创建一次 `pending_activation` 超级管理员；无公开默认凭据，首次登录必须改密
+- **初始管理员引导**：内置默认管理员 `admin@shipany.local`（初始密码 `123456`，仅 bcrypt 哈希入库），状态 `pending_activation` + `must_change_password`，首次登录强制改密激活；另可通过 `ADMIN_BOOTSTRAP_EMAIL` 显式创建一次性引导账号
 - **邮箱密码登录**（Credentials Provider + bcrypt，含登录失败锁定）
 - 邮箱验证码（注册验证 / 密码重置复用）
 - JWT Session，OAuth 登录自动建号并赠送 10 积分
@@ -170,9 +170,17 @@ pnpm dev
 
 > 迁移仅在 `DATABASE_URL` 配置后执行；仅预览 Landing Page 时可不配置数据库。不要执行 `data/install.sql` 或手工粘贴迁移，以免触发基线一致性检查失败。
 
-### 🧑‍💻 第一次运行：创建初始管理员
+### 🧑‍💻 第一次运行：初始管理员
 
-默认情况下，迁移**不会**创建管理员账号。需要创建首个超级管理员时，在受控部署环境中配置：
+迁移会内置默认超级管理员（0027，幂等）：
+
+- 账号 `admin@shipany.local`，初始密码 `123456`（仅 bcrypt 哈希入库，明文不出现在迁移/代码中）
+- 状态 `pending_activation` + `must_change_password`：可登录，但访问 `/admin` 或控制台会被强制跳转 `/change-password`，改密完成前任何后台 API 都被拒绝（`requireAdmin` 拦截）
+- 用初始密码登录后设置新密码（≥8 位含字母和数字），改密成功账号自动激活
+
+不需要默认管理员时（如生产环境），执行 `DELETE FROM users WHERE email='admin@shipany.local';` 或将其置为 `banned`（见迁移 0027 末尾注释）。
+
+需要额外创建其他初始管理员时，在受控部署环境中配置：
 
 ```env
 ADMIN_BOOTSTRAP_EMAIL = "admin@example.com"
