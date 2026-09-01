@@ -27,7 +27,9 @@ describe("services/credit decreaseCredits（P-1.2 原子扣减 RPC 契约）", (
 
   it("调用 decrease_credits 存储过程并传入正确参数", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     const transNo = await decreaseCredits({
       user_uuid: "user-1",
@@ -49,7 +51,9 @@ describe("services/credit decreaseCredits（P-1.2 原子扣减 RPC 契约）", (
     const rpc = vi
       .fn()
       .mockResolvedValue({ data: null, error: { message: "insufficient credits: 3" } });
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await expect(
       decreaseCredits({
@@ -74,7 +78,9 @@ describe("services/credit decreaseCredits（P-1.2 原子扣减 RPC 契约）", (
     const rpc = vi
       .fn()
       .mockResolvedValue({ data: null, error: new Error("db down") });
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await expect(
       decreaseCredits({

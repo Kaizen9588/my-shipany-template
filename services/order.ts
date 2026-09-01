@@ -31,7 +31,7 @@ export async function handleOrderSession(session: Stripe.Checkout.Session) {
     const paid_at = getIsoTimestr();
 
     // 支付落账是资金操作，走 service_role（serverClient），绕过 RLS（N-3）
-    const supabase = serverClient();
+    const supabase = serverClient().schema("private");
     const { data, error } = await supabase.rpc("handle_order_payment", {
       p_order_no: order_no,
       p_paid_at: paid_at,

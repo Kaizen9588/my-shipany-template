@@ -10,11 +10,12 @@
 - **表数量**：16 张（迁移 0000 基础 7 张 + 迁移新增 9 张，含 system_settings、op_events）
 - **存储过程**：资金与额度相关写操作全部下沉数据库原子执行（见文末「存储过程」一节），应用层不做 check-then-write
 
-> ⚠️ **生产就绪状态（2026-08 第八轮审查结论）**：当前 schema 满足沙箱/演示，
-> 但**资金 RPC 权限边界不成立**——三个资金函数（decrease_credits /
-> handle_order_payment / process_order_refund）均位于 public schema，
-> 迁移未显式 REVOKE/GRANT 或启用 RLS，anon/authenticated 理论上可直接调用。
-> 真实收费前必须完成权限收紧与 credit lots 改造。详见本文第 5 节。
+> ⚠️ **生产就绪状态（更新于 2026-09-01 连库收尾）**：~~资金 RPC 权限边界不成立~~
+> **已关闭**——五个资金函数已迁入 `private` schema 并仅授权 service_role（迁移 0023），
+> `credits/orders/refunds/credit_debts` 已启用 RLS，真实并发用例 4/4 通过（P0-2）。
+> **剩余缺口**：public 其余业务表（users/apikeys/audit_logs 等约 15 表）RLS 未启用、
+> `apikeys.api_key` 等敏感列暴露（advisors 2026-09-01），开放收费/公开部署前必须补齐；
+> credit lots 精确批次改造仍未做。详见本文第 5 节与 handoff §1.17。
 
 > ⚠️ **第九轮对抗式审查（2026-08-26）新增阻断项，详见文末「存储过程」与「问题清单」**：
 > - **P0-2**：`decrease_credits` 的「行锁串行化」论证不成立（INSERT 负数流水 + `FOR UPDATE` 只锁已存在行，append-only 账本上不等价于串行化，保护资金的并发安全声明未经论证）。
@@ -632,7 +633,7 @@ CREATE INDEX idx_ai_requests_status ON ai_requests(status) WHERE status IN ('ref
 | 5 | email 字段无唯一约束 | 低 | 已知边界 | 当前 (email, provider) 组合唯一；同邮箱多 provider 的 account linking 见 docs/04 |
 | 6 | 无软删除机制（除 posts/apikeys） | 中 | 待评估 | users/orders/credits/affiliates 无软删除；订单/积分因审计需求不应物理删除 |
 | 7 | ~~无数据库迁移工具~~ | ~~中~~ | ⚠️ 最小机制已落地，并发/回滚/发布顺序未覆盖 | `data/migrations/` + `schema_migrations` 只解决同进程重复启动；多进程同秒启动、失败 fail-fast、回滚、expand-contract、索引 CONCURRENTLY 均未定义（P1-7） |
-| 8 | **资金 RPC 权限边界不成立（P0）** | **阻断** | **No-Go** | 三个资金函数位于 public schema，无显式 REVOKE/GRANT、无 SECURITY DEFINER 边界、无 RLS；真实收费前必须移到 private schema 并只授权 service role |
+| 8 | ~~**资金 RPC 权限边界不成立（P0）**~~ | ~~阻断~~ | **已关闭（2026-09-01，迁移 0023）** | 五个资金函数迁入 `private` schema（含 `SET search_path` 防劫持），REVOKE PUBLIC/anon/authenticated、仅授 service_role；`credits/orders/refunds/credit_debts` 启用 RLS；应用 6 处调用点 `serverClient().schema("private")`；Dashboard Exposed schemas 加 `private`；连库验证 anon 三层被拒。注意：public 其余业务表（users/apikeys/audit_logs 等约 15 表）RLS 仍缺，见第 11 行与 handoff §1.17 |
 | 9 | **积分账本缺少批次追踪（P0）** | **阻断** | **No-Go** | 当前正负净额模型无法正确处理过期、退款和审计；需 credit_lots + credit_consumptions |
 | 10 | **缺少 Webhook inbox 与对账表（P0）** | **阻断** | **No-Go** | 无持久化事件队列，无法防重放、乱序、失败重试和每日对账 |
 | 11 | 缺少 RLS 策略 | 高 | 待落地 | 所有用户表应启用 RLS；终端用户 client 走 anon/authenticated + RLS，服务端走 service role bypass |

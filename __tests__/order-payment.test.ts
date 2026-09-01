@@ -37,7 +37,9 @@ describe("services/order handleOrderSession（P-1.3 事务化 RPC 契约）", ()
 
   it("支付成功调用 handle_order_payment 存储过程", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: "created", error: null });
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     const session = buildPaidSession();
     await handleOrderSession(session);
@@ -56,7 +58,9 @@ describe("services/order handleOrderSession（P-1.3 事务化 RPC 契约）", ()
 
   it("金额比对返回 mismatch：不抛错（避免渠道无限重试）、跳过支付成功邮件", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: "mismatch", error: null });
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     const session = buildPaidSession();
     const result = await handleOrderSession(session);
@@ -65,7 +69,9 @@ describe("services/order handleOrderSession（P-1.3 事务化 RPC 契约）", ()
 
   it("非 paid 状态的 session 直接拒绝，不调用存储过程", async () => {
     const rpc = vi.fn();
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     const session = buildPaidSession({ payment_status: "unpaid" });
     await expect(handleOrderSession(session)).rejects.toThrow("invalid session");
@@ -74,7 +80,9 @@ describe("services/order handleOrderSession（P-1.3 事务化 RPC 契约）", ()
 
   it("缺 metadata.order_no 的 session 拒绝", async () => {
     const rpc = vi.fn();
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     const session = buildPaidSession({ metadata: undefined });
     await expect(handleOrderSession(session)).rejects.toThrow("invalid session");

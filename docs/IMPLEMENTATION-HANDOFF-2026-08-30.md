@@ -200,6 +200,22 @@
 
 **验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 239 用例通过**（3 并发跳过）；ESLint 0 errors（124 warnings 与 master 持平，非本批引入）。
 
+### 1.17 第九批：连库收尾（2026-09-01，Supabase 恢复可达）
+
+- **迁移全部应用**：`pnpm migrate` 一次性应用 0017–0022（0019 默认管理员禁用、0020 积分并发锁、0021 退款债务化、0022 webhook 退款登记），`schema_migrations` 24 条记录确认。
+- **P0-2 正式关闭**：`TEST_DATABASE_URL` 下 `credit-concurrency.test.ts` **4/4 通过**（5 并发扣 4 恰好 2 成功、空账本并发全败无负流水、负流水 expired_at NULL），测试数据零残留。测试修正：`credits.user_uuid` 外键指向 `users.uuid`，seed 需先建 users 行并同步清理。
+- **N-2 正式关闭（迁移 0023 + 调用点 + Dashboard 手动步骤）**：
+  - 迁移 `0023_private_schema_fund_rpcs.sql`：新建 `private` schema；五个资金函数（decrease_credits/handle_order_payment/process_order_refund/debt_regulate_order_refund/register_order_refund_request，取各自最新定义）全部迁入 `private` 并 `SET search_path` 防劫持；REVOKE PUBLIC/anon/authenticated + 仅 GRANT service_role；`credits/orders/refunds/credit_debts` 四表启用 RLS（无 policy=deny-all，service_role bypassrls 读写）。注意 `handle_order_payment` 历史三个签名（0003 四参/0010 六参/0017 八参）全清，代码只走八参。
+  - 应用侧 6 处 RPC 调用点改 `serverClient().schema("private")`（services/credit、services/order、services/refund×3、lib/payment/index）。
+  - **Dashboard 手动步骤（代码无法替代）**：Project Settings → API → Exposed schemas 加 `private`（原因：supabase-js 走 Data API REST，非 exposed schema 直接 4xx；函数层权限与 schema 暴露是两层独立关卡）。
+  - 验证（连库实测）：5 个 RPC 经生产同款路径全部可达（传非法参数回业务错误=执行到函数体）；anon 三层被拒（public 无函数 PGRST202 / private schema `permission denied` / Data API 拒绝未暴露 schema PGRST106）；并发+静态 14 测试全过。
+  - 新增静态断言：`db-rbac-static.test.ts` 增 3 用例（调用点必须 `.schema("private")`；0023 内容完备性；任何迁移不得再把资金函数建回 public）。
+- **advisors 安全扫描（19 项发现，处置）**：
+  - ✅ 已闭环：资金 4 表 RLS（0023）；advisors 不再报资金函数 search_path（0023 已 `SET search_path`）。
+  - ⚠️ **新发现（登记为 P1 债务，本批不动）**：`users/apikeys/affiliates/anonymous_usage/audit_logs/op_events/notifications/posts/payment_products/payment_settings/verification_codes/system_settings/*_orders/schema_migrations` 等表 RLS 未启用（`rls_disabled_in_public` ERROR）；`apikeys.api_key`、`waffo_orders.session_id` 敏感列暴露（`sensitive_columns_exposed`）；两个 anonymous_usage 函数 search_path 可变（WARN）。**当前 anon key 在无 RLS 表上可全量读写**——生产开放收费前必须逐表配 RLS 策略（依赖 N-3 已有的 serverClient/userClient 分离，应用侧改造量可控）。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 242 用例通过**（3 并发用例已转真跑）；ESLint 0 errors（124 warnings 持平）。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -235,10 +251,10 @@
 | 优先级 | 未完成项 | 风险 / 验收目标 | 建议起点 |
 |---|---|---|---|
 | P0-1 | 退款对已消费积分无回收路径 | ⚠️ **部分关闭（2026-08-30，见 §1.7 + §1.14）**：债务化落地（`credit_debts`/`refunds`/`debt_regulate_order_refund` + `processRefund` 债务化，迁移 0021）；**webhook 中间态已接线**（迁移 0022 `register_order_refund_request` + `registerRefundRequest`，`refund_succeeded` 只登记 `refund_requested` 不再直接终态化）。剩余：credit_lots 精确批次准入校验、后台回收工作台、迁移 0021/0022 应用（待连库） | `docs/05-payment-credits-flow.md` §退款；`services/refund.ts`；`data/migrations/0021_refund_debt_dispute.sql`、`0022_webhook_refund_registration.sql` |
-| ~~P0-2~~ | ~~`decrease_credits` 并发安全不成立~~ | **代码已关闭（2026-08-30）**：迁移 0020 用户级事务 advisory lock + 并发回归测试（见 §1.4）。⚠️ 目标库未应用 0020、真实并发用例未跑（需 `TEST_DATABASE_URL`），两件事完成前仍按未关闭对待 | `data/migrations/0020_decrease_credits_user_lock.sql`、`__tests__/credit-concurrency.test.ts` |
+| ~~P0-2~~ | ~~`decrease_credits` 并发安全不成立~~ | **已关闭（2026-09-01，连库）**：迁移 0020 已应用，`TEST_DATABASE_URL` 真实并发用例 4/4 通过（见 §1.17） | `data/migrations/0020_decrease_credits_user_lock.sql`、`__tests__/credit-concurrency.test.ts` |
 | ~~P0-4~~ | ~~匿名 demo 可通过失败退还绕过次数~~ | **已关闭（2026-08-30）**：输入硬限制 413 计次、退还仅限无上游费用错误、当日失败封顶、限流不 fail-open（见 §1.4） | `app/api/v1/ai/demo/route.ts`、`__tests__/ai-demo-guard.test.ts` |
 | ~~N-1~~ | ~~管理员通知 API 回显完整 webhook secret~~ | **已关闭（2026-08-30）**：GET/RSC 只出 set 标志 + 末四位掩码，PUT 留空保留现值（见 §1.4） | `models/notify.ts`、`__tests__/notify-settings-mask.test.ts` |
-| N-2 | 资金 RPC 没有数据库权限边界 | ⚠️ **部分关闭（2026-08-30）**：应用侧 client 分离 + 静态断言已落地（见 §1.4 续）兼兜底；但 `private` schema 库级迁移未做（目标库不可达无法验证）——**连库后优先执行**：把 three 资金函数移入 `private` schema、REVOKE PUBLIC、仅授权 service_role、启用 RLS | docs/03 §生产权限基线、0002/0003/0011 + 新增权限迁移 |
+| N-2 | 资金 RPC 没有数据库权限边界 | ✅ **已关闭（2026-09-01，连库，见 §1.17）**：迁移 0023 五个资金函数迁 `private` + REVOKE/仅授 service_role + 四资金表 RLS；6 处调用点 `serverClient().schema("private")`；Dashboard Exposed schemas 已加 private；连库验证 anon 三层被拒、应用通路 5/5 可达 | `data/migrations/0023_private_schema_fund_rpcs.sql`、`__tests__/db-rbac-static.test.ts`、docs/03 §生产权限基线 |
 | N-3 | 服务端与用户数据库 client 未分离 | **已关闭（2026-08-30）**：`models/db.ts` 拆 `serverClient()`/`userClient()`，资金/支付/退款/后台统计改走 `serverClient()`；兼容入口保留（见 §1.4 续） | `models/db.ts`、`__tests__/db-rbac-static.test.ts` |
 | N-4 | 关键审计事件 fire-and-forget 会丢失 | 支付、退款、调账无法可靠追溯；需 transactional outbox、重试和最后错误 | `lib/oplog.ts`、`data/migrations/0014_op_events.sql` |
 | ~~N-5~~ | ~~高成本端点限流 fail-open~~ | **已关闭（2026-08-30，见 §1.9）**：`rateLimitUser` 回落内存日窗口（fail-closed）；checkout 加 per-IP/per-user 限流；webhook 加 body 64KB 上限 | `lib/ratelimit.ts`、`lib/webhook-guard.ts`、checkout/webhook 路由 |
@@ -281,18 +297,19 @@
 
 ## 5. 推荐下一位 Agent 的执行顺序
 
-1. **~~P0-2 积分并发扣减~~（代码已关闭，待应用）**：应用迁移 0020，设 `TEST_DATABASE_URL` 跑 `credit-concurrency.test.ts` 真实并发用例，确认通过后再从本清单移除。
-2. **N-2 资金 RPC 库级权限边界（连库后）**：应用侧 client 分离已做完；下一步把三个资金函数移入 `private` schema、REVOKE PUBLIC、仅授权 service_role、启用 RLS。**依赖目标库可达**（当前 `tenant not found`），且需同步改 6 处 RPC 调用点（用 `schema.rpc`）并跑 `db-rbac-static.test.ts`。
+1. **~~P0-2 积分并发扣减~~（已关闭，2026-09-01 连库）**：0020 已应用、真实并发用例 4/4 通过。
+2. **~~N-2 资金 RPC 库级权限边界~~（已关闭，2026-09-01 连库）**：迁移 0023 + 调用点 + Exposed schemas 全部完成，见 §1.17。
 3. **~~P0-4 匿名 demo 限制~~（已关闭）**：已落地输入硬限制 + 失败封顶 + fail-closed 限流（见 §1.4）。
 4. **~~N-1 通知密钥脱敏~~（已关闭）**：见 §1.4。
 5. **~~N-5 限流 fail-closed / N-13 争议链路 / P1-8+pricing 写入校验~~（已关闭，见 §1.9）**：纯代码批次已完成。P0-1 剩余与 N-13 剩余见本行下面：
-   - ~~P0-1:webhook 只登记 `refund_requested` 中间态~~（已接线，见 §1.14）：剩 credit_lots 精确批次准入校验、后台回收工作台、应用 0021/0022。
+   - ~~P0-1:webhook 只登记 `refund_requested` 中间态~~（已接线，见 §1.14）：剩 credit_lots 精确批次准入校验、后台回收工作台；~~应用 0021/0022~~（0021/0022 已应用，2026-09-01）。
    - N-13 剩余:联盟奖励冻结、争议收入确认（运营层，代码状态机已闭环）。
 6. **~~N-6 高风险操作强制理由~~（服务端+UI 已关闭，见 §1.12）**：纯代码部分完成。剩余归迁移批次：审批队列/双人复核（需新表）+ 管理员操作 outbox 持久化（依赖 N-4）。
-7. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
+7. **新 P1（advisors 扫描 2026-09-01）**：public 其余表 RLS 未启用（users/apikeys/audit_logs 等约 15 表，anon key 当前可全量读写）+ `apikeys.api_key`/`waffo_orders.session_id` 敏感列暴露。开放收费/公开部署前必须逐表配置 RLS（见 §1.17 advisors 小节）。
+8. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：应用 0020/0021/0022 + N-2 库级权限（待连库）> P0-1 剩余（精确批次准入 + 回收工作台）> N-13 剩余（联盟奖励冻结、争议收入确认）> N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）。注：纯代码项 N-5/N-13/N-6 服务端+UI/P1-定价-1/P0-1 webhook 中间态/副作用 after() 已关闭。
+> **当前债务优先级（下一步）**：新 P1 public 表 RLS + 敏感列（advisors 新发现）> P0-1 剩余（精确批次准入 + 回收工作台）> N-13 剩余（联盟奖励冻结、争议收入确认）> N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）。注：P0-2/N-2/P0-1 webhook 中间态/迁移应用（0019–0023）均已关闭。
 
 ---
 

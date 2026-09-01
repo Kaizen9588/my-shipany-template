@@ -57,7 +57,9 @@ describe("lib/payment handlePaymentEvent（R1 金额比对契约）", () => {
 
   it("payment_succeeded 把渠道实付金额/币种传给存储过程", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: "created", error: null });
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await handlePaymentEvent({
       type: "payment_succeeded",
@@ -78,7 +80,9 @@ describe("lib/payment handlePaymentEvent（R1 金额比对契约）", () => {
 
   it("存储过程返回 mismatch：不发通知不发邮件，埋点告警", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: "mismatch", error: null });
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await handlePaymentEvent({
       type: "payment_succeeded",
@@ -104,7 +108,9 @@ describe("lib/payment handlePaymentEvent（R1 金额比对契约）", () => {
 
   it("payment_failed 不调用存储过程", async () => {
     const rpc = vi.fn();
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await handlePaymentEvent({
       type: "payment_failed",

@@ -39,7 +39,9 @@ describe("services/refund processRefund（R3 原子化 RPC 契约）", () => {
 
   it("调用 process_order_refund 存储过程并返回扣减积分", async () => {
     const rpc = mockRpc(80);
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     const result = await processRefund({ order_no: "o1" });
 
@@ -56,7 +58,9 @@ describe("services/refund processRefund（R3 原子化 RPC 契约）", () => {
       null,
       new Error('order is not paid: created')
     );
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await expect(processRefund({ order_no: "o1" })).rejects.toThrow(
       "order is not paid"
@@ -65,7 +69,9 @@ describe("services/refund processRefund（R3 原子化 RPC 契约）", () => {
 
   it("已 refunded 的订单幂等返回 0（并发双调用方重试安全）", async () => {
     const rpc = mockRpc(0);
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     const result = await processRefund({ order_no: "o1" });
     expect(result.deducted_credits).toBe(0);
@@ -73,7 +79,9 @@ describe("services/refund processRefund（R3 原子化 RPC 契约）", () => {
 
   it("带退款金额时写入 refund_note", async () => {
     const rpc = mockRpc(10);
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await processRefund({ order_no: "o1", amount: 500 });
     const [, params] = rpc.mock.calls[0];
@@ -82,7 +90,9 @@ describe("services/refund processRefund（R3 原子化 RPC 契约）", () => {
 
   it("管理员操作时不直接写审计（审计由 admin 路由层落一条带 reason 的记录）", async () => {
     const rpc = mockRpc(10);
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await processRefund({
       order_no: "o1",
@@ -113,7 +123,9 @@ describe("services/refund processRefund（R3 原子化 RPC 契约）", () => {
       status: "paid",
     });
     const rpc = mockRpc(0);
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await processRefund({ order_no: "o1", amount: 1000 });
 
@@ -140,7 +152,9 @@ describe("services/refund processRefund（R3 原子化 RPC 契约）", () => {
       status: "paid",
     });
     const rpc = mockRpc(300);
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await processRefund({ order_no: "o1" });
 
@@ -158,7 +172,9 @@ describe("services/refund registerRefundRequest（P0-1 webhook 登记中间态�
 
   it("调用 register_order_refund_request 存储过程并返回退款单号", async () => {
     const rpc = mockRpc("ref-abc");
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     const result = await registerRefundRequest({
       order_no: "o1",
@@ -186,7 +202,9 @@ describe("services/refund registerRefundRequest（P0-1 webhook 登记中间态�
 
   it("登记即告警（warn）：终态需人工/回收流程闭合", async () => {
     const rpc = mockRpc("ref-abc");
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await registerRefundRequest({
       order_no: "o1",
@@ -205,7 +223,9 @@ describe("services/refund registerRefundRequest（P0-1 webhook 登记中间态�
 
   it("存储过程报错时向上抛出（登记失败 webhook 返回 5xx，渠道会重试）", async () => {
     const rpc = mockRpc(null, new Error("order not found: o1"));
-    mockGetClient.mockReturnValue({ rpc });
+    // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     await expect(
       registerRefundRequest({ order_no: "o1", user_uuid: "u1", provider: "creem" })

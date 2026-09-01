@@ -95,7 +95,7 @@ export async function decreaseCredits({
 }) {
   const trans_no = getSnowId();
   // 资金操作走 service_role（serverClient），绕过 RLS（N-3）：积分迁移由服务端权威执行
-  const supabase = serverClient();
+  const supabase = serverClient().schema("private");
   const { error } = await supabase.rpc("decrease_credits", {
     p_user_uuid: user_uuid,
     p_trans_type: trans_type,

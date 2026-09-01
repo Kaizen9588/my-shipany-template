@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
@@ -59,6 +59,63 @@ describe("资金路径显式走 serverClient（N-2/N-3 静态断言）", () => {
     });
   }
 
+  it("资金 RPC 调用点固定 .schema(\"private\")（N-2 库级边界：函数已迁 private，public 无可调对象）", () => {
+    // 迁移 0023 后资金函数只存在于 private schema；调用必须显式切 schema。
+    // 允许段落级灵活匹配：任一 serverClient() 分段内同时出现 rpc 名与 .schema("private")。
+    for (const f of [
+      "services/refund.ts",
+      "services/credit.ts",
+      "services/order.ts",
+      "lib/payment/index.ts",
+    ]) {
+      const src = sourceOf(f);
+      const segments = src.split("serverClient()").slice(1);
+      for (const rpc of fundsRpcs) {
+        if (src.includes(`"${rpc}"`)) {
+          const seg = segments.find((s) => s.includes(`"${rpc}"`));
+          expect(
+            seg?.includes('.schema("private")'),
+            `${f}: RPC ${rpc} 的调用 client 应为 serverClient().schema("private")`
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("迁移 0023 存在且内容完备：private schema + REVOKE PUBLIC + 仅授 service_role + 资金表 RLS", () => {
+    const src = sourceOf("data/migrations/0023_private_schema_fund_rpcs.sql");
+    expect(src).toContain("CREATE SCHEMA IF NOT EXISTS private");
+    for (const rpc of fundsRpcs) {
+      // 函数迁入 private 且 public 旧对象删除
+      expect(src).toContain(`CREATE OR REPLACE FUNCTION private.${rpc}`);
+      expect(src).toContain(`DROP FUNCTION IF EXISTS public.${rpc}`);
+      // REVOKE + GRANT 成对（REVOKE 不带签名即可唯一定位；GRANT 用正则匹配带签名形式）
+      expect(src).toContain(`REVOKE ALL ON FUNCTION private.${rpc}`);
+      expect(
+        new RegExp(`GRANT EXECUTE ON FUNCTION private\\.${rpc}\\([^)]*\\) TO service_role`).test(src),
+        `GRANT EXECUTE ... TO service_role for ${rpc}`
+      ).toBe(true);
+    }
+    for (const table of ["credits", "orders", "refunds", "credit_debts"]) {
+      expect(src).toContain(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+    }
+  });
+
+  it("anon 直连资金表/RPC 的 Data API 暴露面收口（迁移 0023 后 RPC 不再出现在 public 暴露清单）", () => {
+    // Data API 只暴露 public schema；private.* 天然不可达。此断言兜底：
+    // 任何新迁移若把资金函数重新建回 public（例如复制旧定义），静态失败。
+    const dir = path.join(process.cwd(), "data/migrations");
+    const bad: string[] = [];
+    for (const name of readFileSyncNames(dir)) {
+      const src = readFileSync(path.join(dir, name), "utf8");
+      for (const rpc of fundsRpcs) {
+        if (new RegExp(`CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+public\\.${rpc}`).test(src)) {
+          bad.push(`${name}: public.${rpc}`);
+        }
+      }
+    }
+    expect(bad, `资金函数不得再建回 public schema: ${bad.join(", ")}`).toEqual([]);
+  });
   it("models/db 提供独立 serverClient / userClient，service key 只在 serverClient 出现", () => {
     const src = sourceOf("models/db.ts");
     expect(src).toContain("export function serverClient()");
@@ -69,3 +126,7 @@ describe("资金路径显式走 serverClient（N-2/N-3 静态断言）", () => {
     expect(userSection).not.toContain("SUPABASE_SERVICE_ROLE_KEY");
   });
 });
+
+function readFileSyncNames(dir: string): string[] {
+  return readdirSync(dir).filter((n) => n.endsWith(".sql"));
+}

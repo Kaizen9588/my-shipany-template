@@ -33,7 +33,7 @@ export async function registerRefundRequest({
   reason?: string;
   initiated_by?: "admin" | "system" | "customer";
 }): Promise<{ refund_no: string }> {
-  const supabase = serverClient();
+  const supabase = serverClient().schema("private");
   const { data, error } = await supabase.rpc("register_order_refund_request", {
     p_order_no: order_no,
     p_user_uuid: user_uuid,
@@ -95,7 +95,7 @@ export async function processRefund({
   }`;
 
   // 退款是资金操作，走 service_role（serverClient），绕过 RLS（N-3）
-  const supabase = serverClient();
+  const supabase = serverClient().schema("private");
   const { data, error } = await supabase.rpc("process_order_refund", {
     p_order_no: order_no,
     p_refund_note: refund_note,
