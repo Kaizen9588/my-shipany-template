@@ -112,5 +112,20 @@
       "pending": "Pending",
       "completed": "Completed"
     }
+  },
+  "cookie_consent": {
+    "title": "We value your privacy",
+    "description": "We use cookies to enhance your browsing experience, analyse our traffic, and improve our product. By clicking \"Accept All\", you consent to our use of cookies, including analytics and session recording.",
+    "customise": "Customise",
+    "reject_all": "Reject All",
+    "accept_all": "Accept All",
+    "save_prefs": "Save Preferences",
+    "privacy_link": "Privacy Policy",
+    "necessary_title": "Strictly Necessary",
+    "necessary_desc": "Required for core site features such as sign-in and payments. Always on.",
+    "analytics_title": "Analytics",
+    "analytics_desc": "Helps us understand how the site is used (Google Analytics / PostHog).",
+    "recording_title": "Session Recording",
+    "recording_desc": "Replays of anonymised sessions to diagnose issues and improve the product."
   }
 }

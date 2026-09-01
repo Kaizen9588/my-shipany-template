@@ -112,5 +112,20 @@
       "pending": "已注册，未支付",
       "completed": "已支付"
     }
+  },
+  "cookie_consent": {
+    "title": "我们重视你的隐私",
+    "description": "我们使用 Cookie 来提升浏览体验、分析访问流量并改进产品。点击「全部接受」，即表示你同意我们使用 Cookie（包括统计分析与会话回放）。",
+    "customise": "自定义",
+    "reject_all": "全部拒绝",
+    "accept_all": "全部接受",
+    "save_prefs": "保存偏好",
+    "privacy_link": "隐私政策",
+    "necessary_title": "必要 Cookie",
+    "necessary_desc": "登录、支付等核心功能所必需，始终开启。",
+    "analytics_title": "统计分析",
+    "analytics_desc": "帮助我们了解网站的使用情况（Google Analytics / PostHog）。",
+    "recording_title": "会话回放",
+    "recording_desc": "匿名化的会话回放，用于排查问题、改进产品。"
   }
 }
