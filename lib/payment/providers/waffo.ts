@@ -155,6 +155,7 @@ export const waffoProvider: PaymentProvider = {
           // 含税总额优先（taxIncluded 口径下 = 标价 = 本地订单额）
           amount: displayToCents(data.total ?? data.amount),
           currency: String(data.currency || ""),
+          provider_event_id: String(event.id || ""),
           raw: event,
         };
       }
@@ -178,6 +179,7 @@ export const waffoProvider: PaymentProvider = {
           amount: displayToCents(data.amount),
           provider: "waffo",
           provider_ref_id: String(event.id || ""),
+          provider_event_id: String(event.id || ""),
           raw: event,
         };
       }

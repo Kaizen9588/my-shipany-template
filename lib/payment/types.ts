@@ -52,6 +52,9 @@ export interface PaymentEvent {
   provider?: string;
   /** 渠道退款/争议对象 ID（如 Stripe refund.id）——refunds.provider_refund_id 幂等键（P0-1） */
   provider_ref_id?: string;
+  /** 渠道事件投递 ID（Stripe event.id / Creem event.id / Waffo delivery id）——
+   * payment_events inbox 幂等键（P1，迁移 0031）；适配器拿不到时留空走 raw hash fallback */
+  provider_event_id?: string;
   raw: unknown; // 原始 payload 存 order_detail
 }
 

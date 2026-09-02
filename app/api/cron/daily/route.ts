@@ -4,6 +4,7 @@ import { backupKeyTables } from "@/lib/backup";
 import { cleanupVerificationCodes } from "@/models/verification";
 import { cleanupAnonymousUsage } from "@/models/anonymous-usage";
 import { outboxMaintenance } from "@/lib/oplog";
+import { replayPendingEvents, reconcilePayments } from "@/lib/webhook-inbox";
 
 /**
  * GET /api/cron/daily -- 每日定时任务（6.16）
@@ -12,6 +13,7 @@ import { outboxMaintenance } from "@/lib/oplog";
  * 3. 匿名试用用量清理（docs/14 §2.6，30 天前记录）
  * 4. 关键表备份到 S3
  * 5. 运营事件 outbox 兜底投递 + dead 死信清理（N-4，迁移 0029）
+ * 6. 支付事件 inbox 重放（pending/failed 超 5 分钟）+ 每日对账（P1，迁移 0031）
  *
  * 安全（2.13 修复）：Vercel Cron 自动带 Authorization: Bearer <CRON_SECRET> 头。
  * 此前端点在 CRON_SECRET 未设置时完全跳过校验，且会触发 users 全量导出上传--
@@ -41,6 +43,25 @@ export async function GET(req: Request) {
     const cleanedAnonUsage = await cleanupAnonymousUsage(30);
     const backup = await backupKeyTables();
     const outbox = await outboxMaintenance();
+    // 支付事件 inbox 重放 + 对账（P1-2）；失败不阻塞其他 cron 任务
+    const inbox = { replayed: 0, processed: 0, failed: 0 };
+    const reconcile = {
+      checked_paid_orders: 0,
+      missing_events: 0,
+      failed_events: 0,
+      amount_mismatches: 0,
+    };
+    let inboxError = "";
+    try {
+      const replayResult = await replayPendingEvents(20);
+      inbox.replayed = replayResult.replayed;
+      inbox.processed = replayResult.processed;
+      inbox.failed = replayResult.failed;
+      Object.assign(reconcile, await reconcilePayments());
+    } catch (e: any) {
+      inboxError = String(e?.message || e);
+      console.error("[cron/daily] payment inbox/reconcile failed:", e);
+    }
 
     return respData({
       expired_orders: expired,
@@ -52,6 +73,14 @@ export async function GET(req: Request) {
       outbox_deduped: outbox.deduped,
       outbox_failed: outbox.failed,
       outbox_cleaned_dead: outbox.cleaned_dead,
+      inbox_replayed: inbox.replayed,
+      inbox_processed: inbox.processed,
+      inbox_failed: inbox.failed,
+      reconcile_checked_paid_orders: reconcile.checked_paid_orders,
+      reconcile_missing_events: reconcile.missing_events,
+      reconcile_failed_events: reconcile.failed_events,
+      reconcile_amount_mismatches: reconcile.amount_mismatches,
+      ...(inboxError ? { inbox_error: inboxError } : {}),
     });
   } catch (e: any) {
     console.error("[cron/daily] failed:", e);

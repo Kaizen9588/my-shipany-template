@@ -114,6 +114,7 @@ export const stripeProvider: PaymentProvider = {
           credits: parseInt(session.metadata?.credits || "0", 10),
           amount: session.amount_total || 0,
           currency: session.currency || "",
+          provider_event_id: event.id,
           raw: session,
         };
       }
@@ -137,6 +138,7 @@ export const stripeProvider: PaymentProvider = {
           amount: charge.amount_refunded || 0,
           provider: "stripe",
           provider_ref_id: charge.refunds?.data?.[0]?.id || "",
+          provider_event_id: event.id,
           raw: charge,
         };
       }
@@ -156,6 +158,7 @@ export const stripeProvider: PaymentProvider = {
           credits: 0,
           amount: dispute.amount,
           currency: dispute.currency,
+          provider_event_id: event.id,
           raw: dispute,
         };
       }
@@ -174,6 +177,7 @@ export const stripeProvider: PaymentProvider = {
           credits: 0,
           amount: dispute.amount,
           currency: dispute.currency,
+          provider_event_id: event.id,
           raw: dispute,
         };
       }

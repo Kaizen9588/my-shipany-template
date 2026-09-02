@@ -301,6 +301,19 @@
 **验证**：`tsc --noEmit` 通过；全量 Vitest **55 文件 289 用例通过**；ESLint 0 errors（124 个既有 warnings 不变）。
 **已知边界**：①批准与执行在同一请求内完成（跨服务原子性由各 service 内部事务保证，审批单状态先行）；②CSRF 防护仍缺（N-6 原 P0 表述中的另一项，未关）；③单人部署降级语义使双人复核退化为记录留痕——安全水位取决于管理员账号数量。
 
+### 1.24 第十六批：支付事件 Inbox 与每日对账（P1-inbox 关闭，2026-09-01 连库）
+
+- **缺口**：三渠道 webhook 验签后直接调 `handlePaymentEvent`——处理崩溃/DB 闪断时事件永久丢失（渠道重试是唯一兜底，且 Stripe 默认仅 3 天）；渠道重试与本地处理之间无去重（幂等只靠 `handle_order_payment` 订单状态机）；无「远端成功但本地失败」的事后发现手段（§1.22 outbox 已知窗口的最后防线）。
+- **迁移 0031**（已连库应用）：public `payment_events` inbox 表——provider/provider_event_id/event_type/order_no/amount_cents/currency/`raw_body JSONB`（原始 payload 存档）/signature_verified/status CHECK 五态（pending/processing/processed/failed/ignored）/retry_count/last_error/processed_at；**幂等键 `UNIQUE (provider, provider_event_id)`**；`idx_payment_events_order` + partial `idx_payment_events_status`（仅 pending/failed/processing）；RLS deny-all + REVOKE anon/authenticated + 仅授 service_role（表+序列，0024/0023 同规）。
+- **幂等键来源**：`PaymentEvent.provider_event_id` 由三渠道适配器回传——Stripe = `event.id`（4 处）、Creem = `event.id`（3 处）、Waffo = Pancake delivery `WebhookEvent.id`（2 处，d.ts 明注 usable for idempotent deduplication）；拿不到时 fallback = `sha256(raw)` 前 40 位（`sha-` 前缀）。
+- **处理链**（`lib/webhook-process.ts processWebhookEvent`，三路由共用）：parseWebhook（验签）→ **先落 inbox**（raw 存档 + 顶层冗余 `____normalized` 归一化摘要，cron 重放据此重建事件）→ duplicate（processed_at 已落 = 渠道重放）直接 ack 跳过 → `handlePaymentEvent` → 成功 markInboxProcessed / 失败留 pending+last_error+retry_count+1 并向路由抛错（返回 500 让渠道重试）。非业务事件（parseWebhook 返回 null，如 subscription.* 日志类）不落 inbox 直接 ack。三路由 stripe-notify/creem-notify/waffo-notify 已全部接入（不再直接调 handlePaymentEvent）。
+- **cron 重放 + 对账**（`lib/webhook-inbox.ts`，接入 `/api/cron/daily` 第 6 项，失败不阻塞其他任务）：①`replayPendingEvents(20)`——pending/failed 且超 5 分钟（给渠道重试让路）按 created_at 升序有界重放，无摘要的历史行置 ignored；②`reconcilePayments()` 三规则——**漏单嫌疑**（近 7 天 paid 订单无任何 payment_succeeded 事件，事件落过库即算到达）、**失败积压**（pending/failed 且 retry≥3）、**金额抽核**（事件金额≠本地订单金额，实时链路由 handle_order_payment 精确比对兜底，此处为事后档案核）；有异常发 `payment.reconcile_anomaly`（warn，source=cron，走 0029 outbox 持久化，含 missing/mismatch 样本各 5 条）；结果计入 cron 响应（inbox_replayed/processed/failed + reconcile_* 五字段 + inbox_error）。
+- **真库 e2e**：UNIQUE 幂等键冲突复现（同 (provider, provider_event_id) 二次 INSERT 被拒）；anon 直查/改/删零权限、service_role 有效权限 SELECT/INSERT/UPDATE/序列 USAGE 齐备（`has_table_privilege` 验证）；markProcessed 成功/失败留痕语义、cron 重放查询形态、对账三规则联查形态在真库可执行；e2e 数据已清理。
+- **测试**：`__tests__/webhook-inbox.test.ts` 21 用例（fallbackEventId 稳定性/新事件落库/processed 重放 duplicate/pending 重放不算重/未知 provider 拒绝/upsert 失败抛错/markProcessed 成败两路/摘要重建/无摘要 ignored/重放成败计数/processWebhookEvent 三分支/reconcile 三规则+告警触发条件）；`db-rbac-static.test.ts` 第十六批 6 用例（0031 表结构+幂等键+权限收口；三路由 inbox 接入且不直调 handlePaymentEvent；三适配器 provider_event_id 计数；lib 幂等/重放/三规则语义；cron 接线）；`webhook-signature-alert.test.ts` 适配 inbox 链（mock inbox 层，保留 400/200/500 响应契约与 invalid_signature 告警断言）。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest **56 文件 315 用例通过**（基线 289 + 本批 26）；ESLint 0 errors（124 个既有 warnings 不变）。
+**已知边界**：①inbox 落库与业务处理仍非同一事务（inbox 先行持久化，处理失败由重试+重放兜底——这正是 inbox 的设计语义，与 outbox 旁路窗口互补）；②`____normalized` 摘要只覆盖归一化字段，渠道侧扩展字段仍以 raw_body 为准；③对账窗口默认 7 天/500 单上限，超量需人工介入（告警样本已含 order_no）。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -354,7 +367,7 @@
 ### P1（高优先级）
 
 - [ ] **AI 请求幂等与状态机**：落地 `ai_requests`，按 `(user_uuid, request_id)` 隔离；同键不同请求体返回 422；补 24h 生命周期、崩溃补偿、退款 pending worker。见 `docs/13-ai-gateway.md`。
-- [ ] **支付 webhook inbox 与每日对账**：所有渠道事件先持久化，再幂等处理；处理远端成功但本地失败、退款成功但积分回收为 0 等差异。见 `docs/03-database-schema.md` 中 `payment_events`。
+- [x] **~~支付 webhook inbox 与每日对账~~（已关闭 2026-09-01，见 §1.24）**：迁移 0031 `payment_events`（三渠道先落库再处理 + `UNIQUE(provider, provider_event_id)` 幂等）+ `replayPendingEvents` cron 重放 + `reconcilePayments` 三规则对账（漏单/失败积压/金额抽核）+ `payment.reconcile_anomaly` 告警走 outbox。
 - [x] **~~定价真相源统一~~（已关闭 2026-08-30，见 §1.9）**：运行时权威 = `payment_products`，`data/pricing.ts` 仅种子/回退；写入路由加不变量校验。剩余：事务化批量写入（双人复核 ✅ 已闭合，见 §1.23）。
 - [ ] **迁移发布机制补全**：为 `CONCURRENTLY` 索引和 expand-contract 建立专用部署过程/CI job（本批只完成了常规事务迁移）。
 - [x] **副作用执行模型**：邮件、埋点、告警统一挂 `after()`（第七批）；关键事件 Transactional Outbox（0029，第十四批）。
@@ -395,10 +408,10 @@
 9. **~~默认管理员恢复 + 强制改密闭环~~（已关闭，2026-09-02）**：迁移 0027 + getAdminUser/getUserInfo/console layout/requireAdmin 四处修复 + 浏览器 e2e 全链路通过。见 §1.20。
 10. **~~N-13 剩余：联盟奖励冲销 + 争议收入确认~~（已关闭，2026-09-01 连库）**：迁移 0028 `private.reverse_affiliate_reward`（completed→reversed，幂等）+ `processRefund`/`dispute_lost` 接线 + my-invites reversed 状态；真库 e2e（冲销/幂等/anon 拒绝）通过；收入确认口径核实 stats 只计 paid。见 §1.21。
 11. **~~N-4：运营事件 Transactional Outbox~~（已关闭，2026-09-02 连库）**：迁移 0029 `private.op_event_outbox` + 六 RPC（enqueue/claim SKIP LOCKED/deliver 幂等/ack/fail 退避死信/cleanup）+ `lib/oplog.ts` warn+ 分级入队（入队即持久化）+ 三触发面投递（内联/顺带/每日 cron 兜底）+ 告警外呼后移；真库 e2e 全链路通过。见 §1.22。
-12. **Webhook inbox、对账、AI 请求状态机**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）；剩余 = webhook inbox 去重与对账任务（也是 outbox 极端窗口丢失的最后防线）。
+12. **~~Webhook inbox、对账~~（已关闭，2026-09-01 连库）**：迁移 0031 + 三路由 inbox 链 + cron 重放/三规则对账，见 §1.24。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）。**剩余 = AI 请求状态机（`ai_requests` 幂等/生命周期/崩溃补偿）**。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：P1（webhook inbox/对账、AI 请求状态机）> CSRF 防护 > 事务化定价批量写入。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、N-13/RLS（0024）/迁移应用（0019–0030）均已关闭。
+> **当前债务优先级（下一步）**：P1（AI 请求状态机）> CSRF 防护 > 事务化定价批量写入。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账已关闭（0031，见 §1.24）、N-13/RLS（0024）/迁移应用（0019–0031）均已关闭。
 
 ---
 

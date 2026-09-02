@@ -508,3 +508,95 @@ describe("N-6 审批队列静态断言（迁移 0030 + lib/admin-approval）", (
     expect(layout).toContain("/admin/approvals");
   });
 });
+
+describe("P1 支付事件 inbox 与每日对账静态断言（迁移 0031 + lib/webhook-inbox，第十六批）", () => {
+  const sql0031 = () => sourceOf("data/migrations/0031_payment_events_inbox.sql");
+
+  it("0031 payment_events：幂等唯一键 + 状态机 + RLS/权限收口", () => {
+    const src = sql0031();
+    expect(src).toContain("CREATE TABLE IF NOT EXISTS payment_events");
+    // 幂等键：渠道重试 / cron 重放去重的唯一约束
+    expect(src).toContain("UNIQUE (provider, provider_event_id)");
+    // 状态机：pending/processing/processed/failed/ignored
+    expect(src).toContain("'pending', 'processing', 'processed', 'failed', 'ignored'");
+    // 原始 payload 存档 + 重试留痕
+    expect(src).toContain("raw_body JSONB");
+    expect(src).toContain("retry_count");
+    expect(src).toContain("last_error");
+    // deny-all（0024 模式）：RLS + REVOKE anon/authenticated + 仅授 service_role
+    expect(src).toContain("ENABLE ROW LEVEL SECURITY");
+    expect(src).toContain("REVOKE ALL ON TABLE payment_events FROM anon, authenticated");
+    expect(src).toContain(
+      "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE payment_events TO service_role"
+    );
+    expect(src).toContain(
+      "GRANT USAGE, SELECT ON SEQUENCE payment_events_id_seq TO service_role"
+    );
+  });
+
+  it("三渠道 webhook 路由先落 inbox 再处理（processWebhookEvent），验签失败 400", () => {
+    for (const [file, provider] of [
+      ["app/api/stripe-notify/route.ts", '"stripe"'],
+      ["app/api/creem-notify/route.ts", '"creem"'],
+      ["app/api/waffo-notify/route.ts", '"waffo"'],
+    ] as const) {
+      const src = sourceOf(file).replace(/\s+/g, " ");
+      expect(src).toContain("processWebhookEvent");
+      expect(src).toContain(provider);
+      // 落库处理失败 -> 500 让渠道重试；验签失败 -> 400
+      expect(src).toContain("invalid_signature");
+      expect(src).toContain("500");
+    }
+    // 路由不得直接调 handlePaymentEvent（必须经 inbox 链）
+    for (const f of [
+      "app/api/stripe-notify/route.ts",
+      "app/api/creem-notify/route.ts",
+      "app/api/waffo-notify/route.ts",
+    ]) {
+      expect(sourceOf(f).replace(/\s+/g, " ")).not.toContain("await handlePaymentEvent");
+    }
+  });
+
+  it("PaymentEvent.provider_event_id 由三渠道适配器回传（Stripe/Creem event.id、Waffo delivery id）", () => {
+    const stripe = sourceOf("lib/payment/providers/stripe.ts");
+    expect(stripe.match(/provider_event_id: event\.id/g)?.length).toBeGreaterThanOrEqual(4);
+
+    const creem = sourceOf("lib/payment/providers/creem.ts");
+    expect(creem.match(/provider_event_id: event\.id/g)?.length).toBeGreaterThanOrEqual(3);
+
+    const waffo = sourceOf("lib/payment/providers/waffo.ts");
+    // Pancake WebhookEvent.id = delivery UUID，专用于幂等去重
+    expect(waffo.match(/provider_event_id: String\(event\.id/g)?.length).toBe(2);
+
+    const types = sourceOf("lib/payment/types.ts");
+    expect(types).toContain("provider_event_id?: string");
+  });
+
+  it("lib/webhook-inbox：幂等判定 + 失败留痕 + cron 重放 + 对账三规则", () => {
+    const src = sourceOf("lib/webhook-inbox.ts")
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n")
+      .replace(/\s+/g, " ");
+    // 渠道重试幂等：processed 过的事件重放只 ack
+    expect(src).toContain("existing.processed_at !== null");
+    // 失败保留 pending + retry（渠道重试与 cron 双路兜底）
+    expect(src).toContain('patch.status = "pending"');
+    expect(src).toContain('patch.status = "processed"');
+    // cron 重放：只挑 pending/failed 且超 5 分钟（给渠道重试让路），有界
+    expect(src).toContain('in("status", ["pending", "failed"])');
+    expect(src).toContain('lt("updated_at", staleBefore)');
+    // 对账三规则
+    expect(src).toContain('eq("status", "paid")');
+    expect(src).toContain('eq("event_type", "payment_succeeded")');
+    expect(src).toContain('gte("retry_count", 3)');
+    expect(src).toContain("payment.reconcile_anomaly");
+  });
+
+  it("cron/daily 接线 inbox 重放 + 对账（失败不阻塞其他任务）", () => {
+    const src = sourceOf("app/api/cron/daily/route.ts").replace(/\s+/g, " ");
+    expect(src).toContain("replayPendingEvents");
+    expect(src).toContain("reconcilePayments");
+    expect(src).toContain("inbox_error");
+  });
+});

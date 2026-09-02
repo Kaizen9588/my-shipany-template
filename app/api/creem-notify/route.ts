@@ -1,13 +1,15 @@
 import { creemProvider } from "@/lib/payment";
-import { handlePaymentEvent } from "@/lib/payment";
 import { trackCriticalEvent } from "@/lib/oplog";
 import { logger } from "@/lib/logger";
 import { guardWebhookRequest, requestWithRawBody } from "@/lib/webhook-guard";
+import { processWebhookEvent } from "@/lib/webhook-process";
 
 /**
  * POST /api/creem-notify —— Creem Webhook（6.1，docs/payment/creem-integration.md §3.4）
  * 签名：creem-signature header + HMAC-SHA256（parseWebhook 内验签）
- * 业务：checkout.completed → handle_order_payment（事务 + 幂等，P-1.3）
+ * 流程（P1 inbox，迁移 0031）：guard → parseWebhook（验签+归一化）→ 先落
+ * payment_events inbox（幂等键 = Creem event.id，缺省 raw hash fallback）→
+ * handlePaymentEvent（已处理重放跳过）→ 标记成败。
  * 验签/解析失败发射 payment.webhook_invalid_signature（docs/16 §5.4）。
  */
 export async function POST(req: Request) {
@@ -37,10 +39,13 @@ export async function POST(req: Request) {
     );
   }
 
+  // 非业务事件（parseWebhook 返回 null，含 subscription.* 日志类）：不落 inbox，直接 ack
+  if (!event) {
+    return Response.json(creemProvider.webhookResponseBody(true));
+  }
+
   try {
-    if (event) {
-      await handlePaymentEvent(event);
-    }
+    await processWebhookEvent(event, "creem");
     return Response.json(creemProvider.webhookResponseBody(true));
   } catch (e: any) {
     logger.error(e, {

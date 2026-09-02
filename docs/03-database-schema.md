@@ -7,7 +7,7 @@
 - **建表脚本**：唯一建库路径是 `data/migrations/0000_install_base.sql` 起的顺序迁移；`data/install.sql` 是历史脚本，禁止用于新库或生产库
 - **迁移机制**：`pnpm migrate` 是唯一可写 schema 的入口，按文件名序号执行并使用 `schema_migrations` 记录版本、事务级 advisory lock 串行化多实例；应用启动时 `instrumentation.ts` 仅只读校验版本，发现缺失迁移立即拒绝启动（见 `lib/migrate.ts`）
 - **迁移清单**（0000-0019）：基础建表 / 支付配置表 / 积分原子扣减 / 支付事务化 / 外键索引 / 匿名额度 / 密码登录 / 多渠道 / RBAC+审计 / 站内通知 / 金额比对 / 退款原子化 / 安全管理员引导字段 / system_settings / op_events / apikeys 前缀 / 匿名额度 off-by-one / 迟付恢复+联盟首付 / 历史默认账号禁用
-- **迁移清单**（0020-0030）：decrease_credits 用户级 advisory lock / refund_requested + credit_debts / 债务化准入 / 债务审计重键 / 资金 RPC 迁 private（0023）/ 全表 RLS deny-all（0024）/ 验证码列宽（0025）/ credit_lots 批次（0026）/ 默认管理员 pending_activation（0027）/ 联盟奖励冲销 `private.reverse_affiliate_reward`（0028，退款/拒付佣金 `completed→reversed`）/ 运营事件 outbox（0029，`private.op_event_outbox` + enqueue/claim/deliver/ack/fail/cleanup 六 RPC，warn+ 关键事件持久化重试）/ 管理员审批队列（0030，`private.admin_approvals`，N-6 双人复核：5 类高危动作审批单 + 发起人≠批准人 + 批准即执行/失败重试，RLS deny-all 仅授 service_role）
+- **迁移清单**（0020-0031）：decrease_credits 用户级 advisory lock / refund_requested + credit_debts / 债务化准入 / 债务审计重键 / 资金 RPC 迁 private（0023）/ 全表 RLS deny-all（0024）/ 验证码列宽（0025）/ credit_lots 批次（0026）/ 默认管理员 pending_activation（0027）/ 联盟奖励冲销 `private.reverse_affiliate_reward`（0028，退款/拒付佣金 `completed→reversed`）/ 运营事件 outbox（0029，`private.op_event_outbox` + enqueue/claim/deliver/ack/fail/cleanup 六 RPC，warn+ 关键事件持久化重试）/ 管理员审批队列（0030，`private.admin_approvals`，N-6 双人复核：5 类高危动作审批单 + 发起人≠批准人 + 批准即执行/失败重试，RLS deny-all 仅授 service_role）/ 支付事件 inbox（0031，public `payment_events`：三渠道 webhook 先落库再处理，`UNIQUE(provider, provider_event_id)` 幂等，RLS deny-all 仅授 service_role）
 - **表数量**：16 张（迁移 0000 基础 7 张 + 迁移新增 9 张，含 system_settings、op_events）
 - **存储过程**：资金与额度相关写操作全部下沉数据库原子执行（见文末「存储过程」一节），应用层不做 check-then-write
 
@@ -537,9 +537,17 @@ CREATE TABLE credit_refunds (
 );
 
 -- ============================================
--- P0：支付事件 inbox 与对账
+-- P0：支付事件 inbox 与对账（已落地：迁移 0031，2026-09-01 连库）
 -- ============================================
-
+-- 实际实现与下述目标 schema 的差异：
+-- - 无 session_id / payment_intent_id 列（渠道定位字段保留在 raw_body 存档里）
+-- - status 增加 'processing' 中间态；CHECK 约束枚举
+-- - raw_body 顶层冗余 ____normalized 归一化摘要（cron 重放据此重建事件，
+--   因为 raw_body 存的是渠道原始 payload）
+-- - 索引 idx_payment_events_status 为 partial（仅 pending/failed/processing）
+-- - 处理链：lib/webhook-process.ts processWebhookEvent（先落库后处理，
+--   已 processed 的重放直接跳过）；每日对账 lib/webhook-inbox.ts
+--   reconcilePayments（漏单嫌疑 / 失败积压 / 金额抽核三规则）
 -- Webhook 原始事件 inbox（所有渠道事件先入库，再异步处理）
 CREATE TABLE payment_events (
     id BIGSERIAL PRIMARY KEY,

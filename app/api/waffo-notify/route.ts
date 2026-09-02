@@ -1,8 +1,8 @@
 import { waffoProvider } from "@/lib/payment";
-import { handlePaymentEvent } from "@/lib/payment";
 import { trackCriticalEvent } from "@/lib/oplog";
 import { logger } from "@/lib/logger";
 import { guardWebhookRequest, requestWithRawBody } from "@/lib/webhook-guard";
+import { processWebhookEvent } from "@/lib/webhook-process";
 
 /**
  * POST /api/waffo-notify —— Waffo Pancake Webhook
@@ -10,6 +10,9 @@ import { guardWebhookRequest, requestWithRawBody } from "@/lib/webhook-guard";
  * 签名：x-waffo-signature（t=,v1= RSA-SHA256，SDK 内置公钥验签 + 时间戳防重放）
  * 响应：成功 200 + 纯文本 "OK"；失败非 2xx，Waffo 重试最多 5 次
  *      （5min/30min/2h/24h）。验签/解析失败发射 payment.webhook_invalid_signature。
+ * 流程（P1 inbox，迁移 0031）：guard → parseWebhook（验签+归一化）→ 先落
+ * payment_events inbox（幂等键 = Pancake delivery id，缺省 raw hash fallback）→
+ * handlePaymentEvent（已处理重放跳过）→ 标记成败。
  */
 function toWebhookResponse(success: boolean, status: number): Response {
   const body = waffoProvider.webhookResponseBody(success);
@@ -47,10 +50,13 @@ export async function POST(req: Request) {
     return toWebhookResponse(false, 400);
   }
 
+  // 非业务事件（parseWebhook 返回 null，含未订阅 eventType）：不落 inbox，直接 ack
+  if (!event) {
+    return toWebhookResponse(true, 200);
+  }
+
   try {
-    if (event) {
-      await handlePaymentEvent(event);
-    }
+    await processWebhookEvent(event, "waffo");
     return toWebhookResponse(true, 200);
   } catch (e: any) {
     logger.error(e, {
@@ -58,6 +64,7 @@ export async function POST(req: Request) {
       stage: "handlePaymentEvent",
       order_no: event?.order_no || "",
     });
+    // inbox 行已保留失败痕迹，渠道重试/每日 cron 重放兜底；非 2xx 触发渠道重试
     return toWebhookResponse(false, 500);
   }
 }

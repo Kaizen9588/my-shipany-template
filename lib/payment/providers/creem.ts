@@ -120,6 +120,7 @@ export const creemProvider: PaymentProvider = {
         credits: parseInt(metadata.credits || "0", 10),
         amount: Math.round(amountCents),
         currency,
+        provider_event_id: event.id || "",
         raw: event,
       };
     }
@@ -136,6 +137,7 @@ export const creemProvider: PaymentProvider = {
         amount: obj.amount || 0,
         provider: "creem",
         provider_ref_id: obj.id || "",
+        provider_event_id: event.id || "",
         raw: event,
       };
     }
@@ -155,6 +157,7 @@ export const creemProvider: PaymentProvider = {
         credits: 0,
         amount: obj.amount || 0,
         currency: obj.currency || "",
+        provider_event_id: event.id || "",
         raw: event,
       };
     }
