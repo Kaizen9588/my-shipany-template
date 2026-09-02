@@ -32,8 +32,8 @@
 - [x] `instrumentation.ts` 不再在运行时执行迁移，只调用只读 `verifyMigrations()`；检测到 pending migration 时服务拒绝启动。
 - [x] 文档要求“先运行 `pnpm migrate`，再发布/扩容应用实例”。
 - [ ] 尚未建立专用部署 job / CI 发布流水线来自动执行 `pnpm migrate`。
-- [ ] 尚未形成 `CREATE INDEX CONCURRENTLY` 的非事务专用迁移机制。
-- [ ] 尚未把 expand-contract 的执行模板固化为脚本或 CI 规则。
+- [x] ~~尚未形成 `CREATE INDEX CONCURRENTLY` 的非事务专用迁移机制~~（已关闭 2026-09-01，见 §1.29）。
+- [x] ~~尚未把 expand-contract 的执行模板固化为脚本或 CI 规则~~（已关闭 2026-09-01，模板固化于 data/migrations-concurrent/README.md，见 §1.29）。
 
 ### 1.4 第二批开发（2026-08-30 续，按 §5 执行顺序）
 
@@ -347,6 +347,15 @@
 - **真库 e2e**：混合批次（合法+不存在产品）整体回滚零残留；两 RPC 连调中途失败回滚；成功路径写入后 ROLLBACK 无残留；注入 payload 安全拒绝；anon/authenticated 无执行权 + service_role 有效 + SECURITY DEFINER/search_path 确认。
 - **测试**：`admin-approval.test.ts` +2（RPC 调用与快照透传 / RPC 失败上抛落 failed 可重试）；`db-rbac-static.test.ts` +2（0033 结构与权限收口 / 逐条 UPDATE 路径移除断言）。全量 **60 文件 356 用例**（基线 352 + 本批 4）。
 
+### 1.29 第二十一批：CONCURRENTLY 非事务迁移入口 + expand-contract 模板（N-11 全关闭，2026-09-01）
+
+- **缺口**：`CREATE INDEX CONCURRENTLY` 不能在事务内执行，runMigrations 全程单事务无法承载；expand-contract 执行模板只存在于部署文档一句话，无固化纪律。
+- **`lib/migrate-concurrent.ts` + `scripts/migrate-concurrent.ts`（`pnpm migrate:concurrent`）**：`data/migrations-concurrent/` 专用目录，autocommit 逐文件执行（无 BEGIN）；`assertConcurrentOnly` 静态拒绝非 CONCURRENTLY 语句（autocommit 无回滚，混入普通 DDL 失败即留半成品）；版本写入 `schema_migrations.mode='concurrent'`（表自动补 mode 列）；与事务迁移共用 advisory lock 键防多实例并发；失败提示 INVALID 索引需 DROP INDEX CONCURRENTLY 后重试。
+- **版本冲突防护**（`findVersionConflicts`，接入 runMigrations 与 verifyMigrations）：同一版本号不得同时出现在两个迁移目录——重号会被先执行方抢先注册、另一方静默跳过。
+- **expand-contract 模板固化**（`data/migrations-concurrent/README.md`）：expand（可空/带默认值加列）→ migrate（分批回填）→ contract（全实例发布后删旧结构，禁止同发布内做 contract）三段纪律 + 大表判定基准（>100 万行或持续写入走并发目录）。
+- **真库 e2e**：mode 列自动补齐；真实 `CREATE INDEX CONCURRENTLY` 迁移执行 + version 记录 mode='concurrent' + DROP INDEX CONCURRENTLY 清理；两迁移入口均幂等可重入。
+- **测试**：`__tests__/migrate-concurrent.test.ts` 4 用例（CONCURRENTLY 放行/事务 DDL 拒绝/版本冲突检测/目录空态）。全量 **61 文件 362 用例**（基线 356 + 本批 6）。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -402,7 +411,7 @@
 - [x] **~~AI 请求幂等与状态机~~（已关闭 2026-09-01，见 §1.25/§1.26）**：迁移 0032 `ai_requests`（`UNIQUE(user_uuid, request_id)` + 请求体指纹 422 + running/refund_pending 崩溃补偿 + 24h TTL）；输入硬限制已补齐（§1.26：白名单 400 + 字节/条数 413）。
 - [x] **~~支付 webhook inbox 与每日对账~~（已关闭 2026-09-01，见 §1.24）**：迁移 0031 `payment_events`（三渠道先落库再处理 + `UNIQUE(provider, provider_event_id)` 幂等）+ `replayPendingEvents` cron 重放 + `reconcilePayments` 三规则对账（漏单/失败积压/金额抽核）+ `payment.reconcile_anomaly` 告警走 outbox。
 - [x] **~~定价真相源统一~~（已关闭 2026-08-30，见 §1.9；事务化批量写入 2026-09-01 闭合，见 §1.28）**：运行时权威 = `payment_products`，`data/pricing.ts` 仅种子/回退；写入路由加不变量校验；双人复核（§1.23）；批准执行走事务化 RPC（迁移 0033）。
-- [ ] **迁移发布机制补全**：为 `CONCURRENTLY` 索引和 expand-contract 建立专用部署过程/CI job（本批只完成了常规事务迁移）。
+- [x] **~~迁移发布机制补全~~（已关闭 2026-09-01，见 §1.29）**：`pnpm migrate:concurrent` 非事务迁移入口（CONCURRENTLY 专用，autocommit + 静态语句校验 + 版本冲突防护）+ expand-contract 模板固化。
 - [x] **副作用执行模型**：邮件、埋点、告警统一挂 `after()`（第七批）；关键事件 Transactional Outbox（0029，第十四批）。
 
 ### P2（中优先级）
@@ -444,7 +453,7 @@
 12. **~~Webhook inbox、对账~~（已关闭，2026-09-01 连库）**：迁移 0031 + 三路由 inbox 链 + cron 重放/三规则对账，见 §1.24。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）。**~~AI 请求状态机~~（已关闭，2026-09-01 连库）**：迁移 0032 + 幂等/崩溃补偿/TTL，见 §1.25。可靠副作用与支付/AI 崩溃补偿闭环至此完成。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：迁移发布机制（CONCURRENTLY/expand-contract） > 分布式限流（Upstash 路径） > 多供应商数据边界声明。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）、CSRF（§1.27）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
+> **当前债务优先级（下一步）**：分布式限流（Upstash 路径） > 多供应商数据边界声明。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）、CSRF（§1.27）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
 
 ---
 

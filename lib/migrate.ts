@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "fs";
 import path from "path";
 import { Pool, type PoolClient } from "pg";
 import { bootstrapAdmin } from "./bootstrap-admin.ts";
+import { findVersionConflicts, getConcurrentMigrationFiles } from "./migrate-concurrent.ts";
 
 /**
  * 数据库迁移与版本校验（P1-6 / P1-7）
@@ -102,6 +103,14 @@ export async function runMigrations(): Promise<MigrateResult> {
     `);
 
     const files = getMigrationFiles();
+    // N-11：版本冲突防护——concurrent 目录与事务目录共用 schema_migrations，
+    // 重号会被先执行方抢先注册、另一方静默跳过，必须在入口拒绝
+    const conflicts = findVersionConflicts(files, getConcurrentMigrationFiles());
+    if (conflicts.length > 0) {
+      throw new Error(
+        `migration version conflict between data/migrations and data/migrations-concurrent: ${conflicts.join("; ")}`
+      );
+    }
     const appliedVersions = new Set(await readAppliedVersions(client));
     const applied: string[] = [];
 
@@ -163,6 +172,13 @@ export async function verifyMigrations(): Promise<MigrationCheckResult> {
   const client = (await pool.connect()) as QueryClient;
   try {
     const files = getMigrationFiles();
+    // 与 runMigrations 同规：concurrent 目录版本冲突在运行时校验也拒绝
+    const conflicts = findVersionConflicts(files, getConcurrentMigrationFiles());
+    if (conflicts.length > 0) {
+      throw new Error(
+        `migration version conflict between data/migrations and data/migrations-concurrent: ${conflicts.join("; ")}`
+      );
+    }
     if (!(await hasTable(client, "schema_migrations"))) {
       return { applied: [], pending: files };
     }

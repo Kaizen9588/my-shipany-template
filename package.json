@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "NODE_NO_WARNINGS=1 next start",
     "migrate": "node --experimental-strip-types scripts/migrate.ts",
+    "migrate:concurrent": "node --experimental-strip-types scripts/migrate-concurrent.ts",
     "db:generate": "drizzle-kit generate",
     "test": "vitest run",
     "lint": "eslint .",

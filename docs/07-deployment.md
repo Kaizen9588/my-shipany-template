@@ -197,6 +197,13 @@ pnpm dev
 
 > **发布顺序（P1-7）**：先以单个受控 job 运行 `pnpm migrate`，再发布应用实例；回滚应用代码不得回滚已经提交的 schema。新增破坏性字段/约束时采用 expand-contract 两次发布。普通迁移在事务中串行化；需要 `CREATE INDEX CONCURRENTLY` 的未来大表索引必须拆为专用、非事务迁移 job，不能混入当前迁移器。
 >
+> ✅ **发布机制补全（2026-09-01，handoff §1.29）**：`CREATE INDEX CONCURRENTLY` 专用入口已落地——
+> `data/migrations-concurrent/` 目录 + `pnpm migrate:concurrent`（autocommit 逐文件执行，静态拒绝
+> 非 CONCURRENTLY 语句；版本记入 `schema_migrations.mode='concurrent'`；与事务迁移共用 advisory lock）。
+> 部署顺序固定为 **`pnpm migrate` → `pnpm migrate:concurrent` → 发布应用**；expand-contract 执行模板与
+> 版本冲突防护见 `data/migrations-concurrent/README.md`。CONCURRENTLY 失败会留 INVALID 索引，重试前必须
+> `DROP INDEX CONCURRENTLY`。
+>
 > ✅ **P0-3 已关闭（2026-08-30，2026-09-02 调整口径）**：迁移 0012 不再写入任何管理员；历史固定默认账号由迁移 0019
 > 识别其原始 hash 后禁用。迁移 0027 恢复**内置默认管理员** `admin@shipany.local`（初始密码 `123456`，仅 bcrypt
 > 哈希入库，明文不进仓库/迁移文件），状态 `pending_activation` + `must_change_password`：可登录但只能进入
