@@ -265,7 +265,7 @@ export enum CreditsTransType {
 | 阶段 | 内容 | 生产就绪度 |
 |------|------|------------|
 | v1 | `/api/v1/ai/generate` 非流式（预估一次扣清 + 失败退款）+ 模型白名单 + MODEL_PRICING 常量 + 402/409/422/429/401 状态码 + 内存级限流 | ✅ 已完成（2026-09-01，第十七批） |
-| v1.5（真实收费前必须） | **Idempotency-Key + ai_requests 状态机 + 崩溃补偿 Cron**（迁移 0032 已落地）+ 输入大小限制 + 请求记录持久化 | ✅ 已完成（2026-09-01，见下方 v1.5 落地注记）；输入大小限制中 prompt 字节上限仍待补 |
+| v1.5（真实收费前必须） | **Idempotency-Key + ai_requests 状态机 + 崩溃补偿 Cron**（迁移 0032 已落地）+ 输入大小限制 + 请求记录持久化 | ✅ 已完成（2026-09-01，见下方 v1.5 落地注记） |
 | v2 | 流式 streamText + 图片/视频端点 + 流式中断结算 | ⬜ 规划中 |
 | v3 | 模型定价入数据库（后台可调价）+ 用量统计页联动 + 精确按 token 结算 + 多供应商路由策略 | ⬜ 规划中 |
 
@@ -280,7 +280,11 @@ export enum CreditsTransType {
 > 3. **崩溃补偿**：cron `/api/cron/daily` 扫 running 超 30 分钟（扣费后进程崩溃）与
 >    refund_pending 超 10 分钟（退款重试），条件更新互斥防双退，退款成功置 refunded。
 > 4. **TTL**：completed 超 24h 的终态行每日清理（幂等键有效期口径）。
-> 剩余 No-Go：prompt/messages 字节与条数上限（413）——见下方「幂等键生命周期与输入限制」。
+> 5. **输入硬限制**（2026-09-01 补齐，generate 路由 3.1 节，与 demo 路由同规）：
+>    messages 逐项白名单 `{role: system|user|assistant, content: string}`（违规 400）、
+>    prompt/messages 字节上限 `AI_MAX_PROMPT_BYTES`（默认 32768，超限 413）、
+>    消息条数上限 `AI_MAX_MESSAGES`（默认 50，超限 413）。校验在鉴权/限流之后、
+>    扣费之前——413 不会成为计费绕过或免费重试通道。
 
 ---
 
@@ -292,7 +296,7 @@ export enum CreditsTransType {
 | 流式中途断连 | P2 | v1 非流式，无此问题 | v2 流式需定义：服务端观测到 provider usage 后结算；用户中断 vs 网络异常需区分 |
 | **重复扣费（超时重试）** | **P0** | ✅ 已关闭（2026-09-01）：Idempotency-Key 幂等 + ai_requests 状态机，同键在途/已成功 409 | `Idempotency-Key` + `ai_requests` 状态机，同键只扣一次 |
 | **扣费后崩溃永久损失** | **P0** | ✅ 已关闭（2026-09-01）：ai_requests 持久化 + cron 补偿（running 超 30 分钟退款、refund_pending 超 10 分钟重试，条件更新互斥防双退） | `ai_requests` 持久化 + 补偿 Cron 扫描 `refund_pending` 指数退避 |
-| **输入无大小限制** | **P1** | ❌ prompt/messages 无 schema、无字节限制、无消息条数上限 | 按模型分别限制输入 token、消息条数、字段白名单；超大请求直接 413 |
+| **输入无大小限制** | **P1** | ✅ 已关闭（2026-09-01）：messages 逐项白名单（role 枚举 + content 字符串，违规 400）+ 字节上限 `AI_MAX_PROMPT_BYTES`（默认 32KB）+ 条数上限 `AI_MAX_MESSAGES`（默认 50），超限 413；校验在扣费之前 | 字段白名单 + 字节/条数上限；超大请求直接 413（已落地） |
 | 模型白名单维护成本 | P2 | v1 用常量表，改动即发版 | v3 入数据库，后台可调 |
 | 「积分 vs 金额」汇率漂移 | P2 | 积分是抽象单位，运营方自行定义换算 | 积分价格版本化，每次扣费写入当时的模型价格版本 |
 | 限流多实例不共享 | P1 | v1 内存级限流 | 生产部署 Upstash/Redis 分布式限流；高成本端点缺限流时应 fail-closed |

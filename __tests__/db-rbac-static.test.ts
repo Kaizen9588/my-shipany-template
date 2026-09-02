@@ -650,6 +650,20 @@ describe("P1 AI 请求状态机静态断言（迁移 0032 + lib/ai-request，第
     expect(src).toContain("409");
   });
 
+  it("generate 路由输入硬限制（413/白名单 400，校验在扣费之前）", () => {
+    const src = sourceOf("app/api/v1/ai/generate/route.ts").replace(/\s+/g, " ");
+    expect(src).toContain("AI_MAX_PROMPT_BYTES");
+    expect(src).toContain("AI_MAX_MESSAGES");
+    expect(src).toContain("413");
+    // messages 逐项白名单（role 枚举 + content 字符串）
+    expect(src).toContain('["system", "user", "assistant"].includes');
+    // 校验块位于扣费（decreaseCredits）之前
+    const inputCheck = src.indexOf("prompt too large");
+    const charge = src.indexOf("decreaseCredits({");
+    expect(inputCheck).toBeGreaterThan(-1);
+    expect(charge).toBeGreaterThan(inputCheck);
+  });
+
   it("cron/daily 接线 AI 崩溃补偿 + TTL 清理（失败不阻塞其他任务）", () => {
     const src = sourceOf("app/api/cron/daily/route.ts").replace(/\s+/g, " ");
     expect(src).toContain("compensateStaleAiRequests");

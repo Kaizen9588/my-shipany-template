@@ -74,6 +74,46 @@ export async function POST(req: Request) {
       return jsonErr("streaming is not supported in v1", 501);
     }
 
+    // 3.1 输入硬限制（docs/13 v1.5 输入限制，与 demo 路由同规）：
+    // 字段白名单 + prompt 字节上限 + messages 条数/字节上限；超限 413。
+    // 已过限流、未扣费——413 不会成为计费绕过或免费重试通道。
+    if (prompt !== undefined && typeof prompt !== "string") {
+      return jsonErr("invalid params: prompt must be a string", 400);
+    }
+    if (messages !== undefined && !Array.isArray(messages)) {
+      return jsonErr("invalid params: messages must be an array", 400);
+    }
+    const maxPromptBytes =
+      parseInt(process.env.AI_MAX_PROMPT_BYTES || "32768", 10) || 32768;
+    const promptBytes = prompt ? Buffer.byteLength(prompt, "utf8") : 0;
+    if (promptBytes > maxPromptBytes) {
+      return jsonErr("prompt too large", 413, { max_prompt_bytes: maxPromptBytes });
+    }
+    const maxMessages = parseInt(process.env.AI_MAX_MESSAGES || "50", 10) || 50;
+    let messagesBytes = 0;
+    if (Array.isArray(messages)) {
+      if (messages.length > maxMessages) {
+        return jsonErr("too many messages", 413, { max_messages: maxMessages });
+      }
+      for (const m of messages) {
+        // 白名单：每条消息仅 {role, content}，role 限定枚举
+        if (
+          !m || typeof m !== "object" ||
+          !["system", "user", "assistant"].includes((m as any).role) ||
+          typeof (m as any).content !== "string"
+        ) {
+          return jsonErr(
+            "invalid params: messages items must be {role: system|user|assistant, content: string}",
+            400
+          );
+        }
+        messagesBytes += Buffer.byteLength((m as any).content, "utf8");
+      }
+      if (messagesBytes > maxPromptBytes) {
+        return jsonErr("messages too large", 413, { max_prompt_bytes: maxPromptBytes });
+      }
+    }
+
     const pricing = getModelPricing(model);
     if (!pricing) {
       // 模型白名单：客户端不可传任意 model

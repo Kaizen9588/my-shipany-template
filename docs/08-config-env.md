@@ -234,6 +234,9 @@ export const config = {
 | `ANONYMOUS_FINGERPRINT_ENABLED` | ~~是否启用设备指纹~~ 已废弃：x-device-id 头客户端可伪造，额度键改纯 IP（第四轮审查 S3） | ⚠️ 废弃（不再读取） |
 | `DEMO_MODEL` | 演示使用的模型（默认 deepseek-chat） | ✅ 6.0.1 已落地 |
 | `DEMO_MAX_TOKENS` | 演示输出上限（默认 1024） | ✅ 6.0.1 已落地 |
+| `DEMO_MAX_PROMPT_BYTES` | 匿名演示 prompt 字节上限（默认 8192，超限 413 且照常计次） | ✅ P0-4 已落地 |
+| `AI_MAX_PROMPT_BYTES` | `/api/v1/ai/generate` prompt/messages 总字节上限（默认 32768，超限 413，校验在扣费之前） | ✅ handoff §1.26 已落地 |
+| `AI_MAX_MESSAGES` | `/api/v1/ai/generate` messages 条数上限（默认 50，超限 413） | ✅ handoff §1.26 已落地 |
 | `BCRYPT_SALT_ROUNDS` | 密码哈希成本因子 | ✅ 6.4 已落地 |
 | `CORS_ALLOWED_ORIGINS` | CORS 允许的域名列表 | ✅ P-1.10 已落地 |
 | `TRUSTED_PROXY` | IP 信任拓扑：`none`（默认，不信任任何代理头）/ `vercel`（只信 x-forwarded-for 首跳）/ `cloudflare`（只信 cf-connecting-ip）。**Vercel 部署必须显式设 vercel；Docker/自托管保持 none 或声明真实拓扑** | ✅ 第五轮 2.16 默认值收敛 |
