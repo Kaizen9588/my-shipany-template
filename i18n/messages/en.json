@@ -110,7 +110,8 @@
       "reward_percent": "Reward Percent",
       "reward_amount": "Reward Amount",
       "pending": "Pending",
-      "completed": "Completed"
+      "completed": "Completed",
+      "reversed": "Reversed"
     }
   },
   "cookie_consent": {

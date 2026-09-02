@@ -110,7 +110,8 @@
       "reward_percent": "奖励比例",
       "reward_amount": "奖励金额",
       "pending": "已注册，未支付",
-      "completed": "已支付"
+      "completed": "已支付",
+      "reversed": "已冲销（退款/拒付）"
     }
   },
   "cookie_consent": {

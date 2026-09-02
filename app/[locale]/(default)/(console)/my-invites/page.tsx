@@ -106,7 +106,9 @@ export default async function () {
       callback: (item) =>
         item.status === "pending"
           ? t("my_invites.table.pending")
-          : t("my_invites.table.completed"),
+          : item.status === "reversed"
+            ? t("my_invites.table.reversed")
+            : t("my_invites.table.completed"),
     },
     {
       name: "reward_amount",

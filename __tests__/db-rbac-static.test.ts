@@ -31,7 +31,12 @@ const fundsRpcs = [
   "process_order_refund",
   "register_order_refund_request",
   "debt_regulate_order_refund",
+  // 0028 新增：联盟奖励冲销（不在 0023 迁移清单内）
+  "reverse_affiliate_reward",
 ];
+
+/** 0023 批次迁入 private 的资金函数（0028 的 reverse_affiliate_reward 除外） */
+const fundsRpcsM0023 = fundsRpcs.filter((r) => r !== "reverse_affiliate_reward");
 
 function sourceOf(f: string): string {
   return readFileSync(path.join(process.cwd(), f), "utf8");
@@ -85,7 +90,8 @@ describe("资金路径显式走 serverClient（N-2/N-3 静态断言）", () => {
   it("迁移 0023 存在且内容完备：private schema + REVOKE PUBLIC + 仅授 service_role + 资金表 RLS", () => {
     const src = sourceOf("data/migrations/0023_private_schema_fund_rpcs.sql");
     expect(src).toContain("CREATE SCHEMA IF NOT EXISTS private");
-    for (const rpc of fundsRpcs) {
+    // 0028 的 reverse_affiliate_reward 不在此清单（其迁移断言在第十三批 describe）
+    for (const rpc of fundsRpcsM0023) {
       // 函数迁入 private 且 public 旧对象删除
       expect(src).toContain(`CREATE OR REPLACE FUNCTION private.${rpc}`);
       expect(src).toContain(`DROP FUNCTION IF EXISTS public.${rpc}`);
@@ -304,5 +310,49 @@ describe("默认管理员恢复与强制改密（迁移 0027 静态断言，第�
     // 不经 getUserUuid()（其 status 门会把待激活管理员挡在改密页外）
     expect(fnBody).not.toContain("getUserUuid()");
     expect(fnBody).toContain("session?.user?.uuid");
+  });
+});
+
+describe("联盟奖励冲销（迁移 0028 静态断言，第十三批）", () => {
+  const sql = () =>
+    sourceOf("data/migrations/0028_affiliate_reward_reversal.sql").replace(/\s+/g, " ");
+
+  it("0028 冲销 RPC 迁 private + REVOKE/GRANT 成对 + 幂等语义", () => {
+    const src = sql();
+    expect(src).toContain("CREATE OR REPLACE FUNCTION private.reverse_affiliate_reward");
+    expect(src).toContain("REVOKE ALL ON FUNCTION private.reverse_affiliate_reward");
+    expect(
+      new RegExp(
+        `GRANT EXECUTE ON FUNCTION private\\.reverse_affiliate_reward\\([^)]*\\) TO service_role`
+      ).test(src),
+      "GRANT EXECUTE ... TO service_role for reverse_affiliate_reward"
+    ).toBe(true);
+    // 幂等三要素：FOR UPDATE 行锁 + 仅 completed 可冲销 + NOT FOUND 返回 0
+    expect(src).toContain("FOR UPDATE");
+    expect(src).toContain("status = 'completed'");
+    expect(src).toContain("IF NOT FOUND THEN");
+  });
+
+  it("退款与拒付路径均接线冲销（services/refund + services/dispute）", () => {
+    const refundSrc = sourceOf("services/refund.ts").replace(/\s+/g, " ");
+    expect(refundSrc).toContain('"reverse_affiliate_reward"');
+    // 退款路径的冲销在 serverClient().schema("private") 分段内（fundsRpcs 断言兜底）
+    const disputeSrc = sourceOf("services/dispute.ts").replace(/\s+/g, " ");
+    expect(disputeSrc).toContain('"reverse_affiliate_reward"');
+    expect(disputeSrc).toContain('.schema("private")');
+    // 冲销结果进埋点 detail，告警可追溯
+    expect(refundSrc).toContain("reversed_affiliate_reward");
+    expect(disputeSrc).toContain("reversed_affiliate_reward");
+  });
+
+  it("my-invites 页渲染 reversed 状态 + i18n 提供标签", () => {
+    const src = sourceOf(
+      "app/[locale]/(default)/(console)/my-invites/page.tsx"
+    ).replace(/\s+/g, " ");
+    expect(src).toContain('"reversed"');
+    const en = sourceOf("i18n/messages/en.json");
+    const zh = sourceOf("i18n/messages/zh.json");
+    expect(en).toContain('"reversed"');
+    expect(zh).toContain('"reversed"');
   });
 });

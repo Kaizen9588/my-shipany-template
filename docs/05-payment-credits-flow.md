@@ -535,6 +535,15 @@ AffiliateRewardAmount = {
 
 > **现状缺口**：联盟奖励只写到 affiliates 表（记录 `reward_amount`），流程到「INSERT affiliates (completed)」就结束。邀请人如何拿到奖励、如何查看收益，全无设计。这是「记录完成、发放缺失」的半成品。
 
+> ✅ **冲销半边已闭合（2026-09-01，迁移 0028）**：退款/拒付成立时同步把佣金
+> `completed → reversed`（终态），`private.reverse_affiliate_reward(p_order_no, p_reason)`
+> 由 `processRefund` 与 `dispute_lost` 接线调用——「邀请人与被邀请人合谋：首付拿佣金 → 退款/拒付」
+> 的套利口子已堵死。冲销幂等（无佣金/已冲销返回 0）、失败不阻塞退款主流程、
+> 结果进 `payment.refund_processed` / `payment.dispute_lost` 埋点 detail（`reversed_affiliate_reward`）。
+> 0017 部分唯一索引 `affiliates_single_completed_per_user` 意味着冲销后邀请人可因新的真实订单
+> 再次获得佣金（可接受：冲销只作废该笔订单的奖励）。「我的邀请」页已渲染 `reversed` 状态。
+> 下文发放方式决策仍待设计。
+
 **发放方式决策**（二选一，建议方案 A）：
 
 | 方案 | 做法 | 适用 |
@@ -650,7 +659,7 @@ AffiliateRewardAmount = {
 |---|------|------|
 | P1-定价-1 | ~~管理员定价更新缺少不变量校验~~ | ✅ 已加固（2026-08-30，重定为 P0 关闭项）：真相源钉死为 `payment_products`，写入路由已加金额/积分/有效期上限 + 币种白名单(USD) + 积分≤金额（详见上表 P0-定价-1 与 §1.2 落地块）。仍待办：事务化批量写入、双人复核、多币种（v1 不做） |
 | P1-Webhook-1 | Webhook 无重放/乱序防护 | 签名验了，但同一事件并发重放、乱序到达可能造成状态机错误；需 inbox + 幂等 + 状态校验 |
-| P1-联盟-1 | 联盟奖励只有记录、没有发放闭环 | 只写 `affiliates.completed` + `reward_amount`，无转积分/提现/退款回冲；v1 应自动转积分批次 |
+| P1-联盟-1 | 联盟奖励只有记录、没有发放闭环 | 只写 `affiliates.completed` + `reward_amount`，无转积分/提现；~~退款回冲~~ ✅ 已闭合（0028：refund/dispute_lost 冲销佣金）；转积分/提现仍待设计（§3.4） |
 | P1-邀请-1 | 邀请绑定存在竞态 | 「读取→更新→插入」非事务；2 小时时效仅前端校验；并发可能产生重复邀请记录 |
 | P1-调账-1 | 管理员积分调账缺少双重控制 | 加减积分属于资产变更，应要求原因、工单号、上限、审批；统一 ledger API，禁止直接写表 |
 | P1-订单-1 | 远端 checkout 与本地订单创建顺序不当 | 先建远端 session 再写本地，失败时可能产生"孤儿 session"，需补偿查询 |
@@ -717,8 +726,8 @@ AffiliateRewardAmount = {
 **修法**（成本很低）：
 1. `PaymentEventType` 加 `dispute_opened / dispute_lost / dispute_won`。
 2. `orders` 加 `disputed / charged_back`。
-3. `dispute_opened` 立即冻结该用户积分消费（保留余额不删）+ 挂起联盟奖励 + 订单收入移出可确认收入。
-4. `dispute_lost` 复用 P0-1 的资产回收 + 债务化 + 风控标记路径。
+3. `dispute_opened` 立即冻结该用户积分消费（保留余额不删）+ ~~挂起联盟奖励~~（✅ 已按订单粒度落到 dispute_lost 冲销：拒付成立才回收佣金，0028）+ 订单收入移出可确认收入（✅ stats 收入口径只认 `status='paid'`，disputed/charged_back/refunded 天然不计入）。
+4. `dispute_lost` 复用 P0-1 的资产回收 + 债务化 + 风控标记路径（✅ 已加联盟佣金冲销，0028）。
 5. `dispute_won` 解冻。
 6. 三份渠道文档的事件白名单显式列出争议事件，「已在渠道后台订阅争议事件」写进上线检查项。
 

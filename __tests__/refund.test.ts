@@ -40,12 +40,13 @@ describe("services/refund processRefund（R3 原子化 RPC 契约）", () => {
   it("调用 process_order_refund 存储过程并返回扣减积分", async () => {
     const rpc = mockRpc(80);
     // N-2：资金 RPC 调用链为 serverClient().schema("private").rpc(...)，
-    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）
+    // mock 需支持 .schema() 链式调用（返回自身，共享同一 rpc mock）。
+    // 0028 起 processRefund 会依次调 process_order_refund + reverse_affiliate_reward，
+    // 故不再断言总调用次数，按首个调用 + 函数名定位。
     mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
 
     const result = await processRefund({ order_no: "o1" });
 
-    expect(rpc).toHaveBeenCalledTimes(1);
     const [fnName, params] = rpc.mock.calls[0];
     expect(fnName).toBe("process_order_refund");
     expect(params.p_order_no).toBe("o1");
@@ -162,6 +163,59 @@ describe("services/refund processRefund（R3 原子化 RPC 契约）", () => {
       (c) => c[0] === "debt_regulate_order_refund"
     );
     expect(debtCall).toBeUndefined();
+  });
+
+  it("退款成立时调用 reverse_affiliate_reward 冲销联盟佣金（N-13 剩余，防退款套利）", async () => {
+    // rpc mock 按函数名分发：主退款 RPC 返回 80，冲销 RPC 返回佣金 2000
+    const rpc = vi
+      .fn()
+      .mockImplementation((fnName: string) =>
+        fnName === "process_order_refund"
+          ? Promise.resolve({ data: 80, error: null })
+          : Promise.resolve({ data: 2000, error: null })
+      );
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
+
+    await processRefund({ order_no: "o1", reason: "用户申请退款" });
+
+    const reversalCall = rpc.mock.calls.find(
+      (c) => c[0] === "reverse_affiliate_reward"
+    );
+    expect(reversalCall).toBeTruthy();
+    expect(reversalCall![1]).toEqual(
+      expect.objectContaining({ p_order_no: "o1" })
+    );
+    // 冲销结果进埋点 detail，告警侧可追溯佣金回收金额
+    expect(mockTrack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: "payment.refund_processed",
+        detail: expect.objectContaining({
+          reversed_affiliate_reward: 2000,
+        }),
+      })
+    );
+  });
+
+  it("冲销 RPC 失败不阻塞退款主流程（佣金回收降级为告警人工核查）", async () => {
+    const rpc = vi
+      .fn()
+      .mockImplementation((fnName: string) =>
+        fnName === "process_order_refund"
+          ? Promise.resolve({ data: 80, error: null })
+          : Promise.resolve({ data: null, error: new Error("rpc unavailable") })
+      );
+    mockGetClient.mockReturnValue({ rpc, schema: () => ({ rpc }) });
+
+    const result = await processRefund({ order_no: "o1" });
+
+    // 主退款流程正常返回
+    expect(result.deducted_credits).toBe(80);
+    // 冲销失败进埋点 detail（值为 0），不抛错
+    expect(mockTrack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detail: expect.objectContaining({ reversed_affiliate_reward: 0 }),
+      })
+    );
   });
 });
 

@@ -64,6 +64,7 @@ export async function handleDisputeEvent(event: {
 
   // dispute_lost：拒付成立 → charged_back（资金已从商户划走，积分视为已消费，债务化由
   // 后续债务清偿流程处理；此处至少归一化状态 + 账号 restricted 防止重复作恶）
+  let reversedReward = 0;
   const { error } = await supabase
     .from("orders")
     .update({ status: "charged_back" })
@@ -77,11 +78,35 @@ export async function handleDisputeEvent(event: {
       .update({ status: "restricted" })
       .eq("uuid", event.user_uuid);
   }
+
+  // N-13 剩余：拒付成立同步冲销联盟佣金（与退款同款套利口子：
+  // 邀请人佣金不冲销则「首付拿佣金 → 拒付」白拿奖励）。
+  // 失败不阻塞拒付主流程，告警人工核查。
+  try {
+    const { data: rewardData, error: rewardErr } = await supabase
+      .schema("private")
+      .rpc("reverse_affiliate_reward", {
+        p_order_no: event.order_no,
+        p_reason: `dispute lost for order ${event.order_no}`,
+      });
+    if (rewardErr) {
+      console.error("[dispute] affiliate reward reversal failed:", rewardErr);
+    } else {
+      reversedReward = typeof rewardData === "number" ? rewardData : 0;
+    }
+  } catch (e) {
+    console.error("[dispute] affiliate reward reversal error:", e);
+  }
+
   trackCriticalEvent({
     event_type: "payment.dispute_lost",
     severity: "critical",
     source: "app",
     subject_uuid: event.order_no,
-    detail: { user_uuid: event.user_uuid, amount: event.amount },
+    detail: {
+      user_uuid: event.user_uuid,
+      amount: event.amount,
+      reversed_affiliate_reward: reversedReward,
+    },
   });
 }

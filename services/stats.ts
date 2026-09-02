@@ -22,7 +22,8 @@ export async function getAdminStats() {
     .select("id", { count: "exact", head: true })
     .gte("created_at", todayStart.toISOString());
 
-  // 订单
+  // 订单（N-13 收入确认口径：只认 paid——refunded/charged_back/disputed/
+  // refund_requested/refund_blocked 均不得计入可确认收入，否则退款后看板虚增）
   const { data: paidOrders } = await supabase
     .from("orders")
     .select("created_at, amount")

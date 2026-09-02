@@ -96,7 +96,7 @@
       `dispute_lost`→置 `charged_back` + 账号 `restricted`(+critical)。`lib/payment/index.ts` 转发三个事件类型。
       `models/order.ts` 的 `OrderStatus` 新增 `RefundRequested/RefundBlocked/Disputed/ChargedBack`。
       测试：`__tests__/dispute.test.ts`。⚠️ **Provider 解析器未归一化 dispute 事件**（stripe/creem/waffo 当前只 emit `refund_succeeded`），
-      联盟奖励冻结、收入确认仍待接（见 §5）。
+      联盟奖励冻结、收入确认仍待接（~~见 §5~~ 已关闭，见 §1.21）。
 
 ### 1.8 第四批验证结果（2026-08-30 续）
 
@@ -104,7 +104,7 @@
 - [x] 全量 Vitest：**50 个测试文件、210 个用例通过**（含新增 `dispute.test.ts`；3 个并发回归用例因未设 `TEST_DATABASE_URL` 跳过）。
 - [x] 定向 ESLint：全部改动文件通过。
 - [ ] **待办**：Supabase 开发库恢复后执行 `pnpm migrate` 应用 0020 + 0021；P0-1 剩余（webhook 中间态、
-      credit_lots 精确批次准入校验）、N-13 剩余（联盟奖励冻结、收入确认）见 §5。
+      credit_lots 精确批次准入校验）见 §5；~~N-13 剩余（联盟奖励冻结、收入确认）~~（已关闭，见 §1.21）。
 
 ### 1.9 第五批开发（2026-08-30 续，纯代码：N-13 完成 + N-5 + 定价真相源）
 
@@ -263,6 +263,18 @@
 
 **验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 255 用例通过**（静态 254 + 真库并发 4/4）；ESLint 0 errors。
 
+### 1.21 第十三批：联盟奖励冲销 + 争议收入确认口径（2026-09-01 连库）
+
+- **N-13 剩余闭环**：退款/拒付成立时同步冲销联盟佣金——否则「邀请人与被邀请人合谋：首付拿佣金 → 退款/拒付」套利成立。
+- **迁移 0028**（已连库应用）：`private.reverse_affiliate_reward(p_order_no, p_reason) RETURNS INT`——SECURITY DEFINER + `SET search_path` + `FOR UPDATE` 行锁，仅 `completed` 可冲销（置 `reversed` 终态），无佣金/已冲销幂等返回 0；REVOKE PUBLIC/anon/authenticated、仅授 service_role（与 0023 同规）。
+- **接线**：`processRefund`（admin 退款 + 回收工作台共用）与 `dispute_lost` 分支各加冲销调用，失败不阻塞主流程（console.error + 埋点人工核查），冲销金额进 `payment.refund_processed` / `payment.dispute_lost` 埋点 detail（`reversed_affiliate_reward`）。
+- **收入确认口径核实**：`services/stats.ts` 的 `total_revenue` / `revenue_30d` 均只计 `status='paid'`——refunded/disputed/charged_back 天然不计入，实现已正确，仅补口径注释。
+- **UI**：「我的邀请」页 status 渲染 `reversed`（en "Reversed" / zh "已冲销（退款/拒付）"）。0017 部分唯一索引语义：冲销后邀请人可因新真实订单再获佣金（可接受，冲销只作废该笔订单奖励）。
+- **真库 e2e**：建佣金（completed, 2000）→ 冲销返回 2000 且状态 reversed → 二次调用 0（幂等）→ 不存在订单 0 → anon key 调 RPC 42501 拒绝（401）。
+- **测试**：`db-rbac-static.test.ts` 增第十三批 3 用例（0028 RPC 静态断言；refund/dispute 接线 + schema("private") + detail 字段；my-invites/i18n 渲染）；`refund.test.ts` 加冲销成功/失败降级 2 用例、rpc mock 改为多 RPC 兼容；`dispute.test.ts` mock 补 `schema()` 链 + 冲销断言 + opened/won 不冲销用例；静态断言 RPC 清单拆分 `fundsRpcsM0023`（0028 的函数不在 0023 清单内）。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 262 用例通过**；ESLint 0 errors（124 warnings 均为既有）。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -306,7 +318,7 @@
 | N-4 | 关键审计事件 fire-and-forget 会丢失 | 支付、退款、调账无法可靠追溯；需 transactional outbox、重试和最后错误 | `lib/oplog.ts`、`data/migrations/0014_op_events.sql` |
 | ~~N-5~~ | ~~高成本端点限流 fail-open~~ | **已关闭（2026-08-30，见 §1.9）**：`rateLimitUser` 回落内存日窗口（fail-closed）；checkout 加 per-IP/per-user 限流；webhook 加 body 64KB 上限 | `lib/ratelimit.ts`、`lib/webhook-guard.ts`、checkout/webhook 路由 |
 | N-6 | 管理员高风险操作无二次确认/审批 | ⚠️ **部分关闭（2026-08-30，见 §1.12）**：6 路由（退款/调账/角色封禁/定价/渠道/告警密钥）服务端强制理由（`lib/admin-reason.ts` parseReason 5~200 字符）+ reason 入审计 + 后台 UI 全部同步。剩余：审批队列/双人复核（需新表，归迁移批次）、CSRF 防护 | `lib/admin-reason.ts`、6 个 admin 路由、`components/dashboard/stats/order-actions.tsx`、3 个 admin 表单 |
-| ~~N-13~~ | ~~争议 / 拒付链路缺失~~ | **已关闭（2026-08-30，见 §1.7 + §1.9）**：状态机 + 三渠道解析器归一化 + 测试齐备。剩余：联盟奖励冻结、争议收入确认（运营层，见 §5） | `services/dispute.ts`、`lib/payment/types.ts`、`lib/payment/providers/*`、退款债务链路 |
+| ~~N-13~~ | ~~争议 / 拒付链路缺失~~ | **已关闭（2026-08-30，见 §1.7 + §1.9；剩余部分 2026-09-01 关闭，见 §1.21）**：状态机 + 三渠道解析器归一化 + 测试齐备；联盟奖励冲销（0028）+ 争议收入确认口径核实均已完成 | `services/dispute.ts`、`services/refund.ts`、`data/migrations/0028_affiliate_reward_reversal.sql`、`lib/payment/types.ts` |
 | P0-定价-1 | 管理员定价写入在自己收款金额权威源上（真相源钉死后升级） | ✅ **已加固（2026-08-30，见 §1.9）**：写入路由加金额/积分/有效期上限 + 币种仅 USD + 积分≤金额。仍待办：事务化批量写入、双人复核 | `app/api/admin/payment-products/route.ts`、`__tests__/payment-products-guard.test.ts` |
 
 ---
@@ -350,15 +362,16 @@
 4. **~~N-1 通知密钥脱敏~~（已关闭）**：见 §1.4。
 5. **~~N-5 限流 fail-closed / N-13 争议链路 / P1-8+pricing 写入校验~~（已关闭，见 §1.9）**：纯代码批次已完成。P0-1 剩余与 N-13 剩余见本行下面：
    - ~~P0-1:webhook 只登记 `refund_requested` 中间态~~（已接线，见 §1.14）：剩 credit_lots 精确批次准入校验、后台回收工作台；~~应用 0021/0022~~（0021/0022 已应用，2026-09-01）。
-   - N-13 剩余:联盟奖励冻结、争议收入确认（运营层，代码状态机已闭环）。
+   - ~~N-13 剩余:联盟奖励冻结、争议收入确认~~（已关闭，见 §1.21）：0028 冲销 RPC + refund/dispute_lost 接线；收入确认口径核实为已正确（stats 只计 paid）。
 6. **~~N-6 高风险操作强制理由~~（服务端+UI 已关闭，见 §1.12）**：纯代码部分完成。剩余归迁移批次：审批队列/双人复核（需新表）+ 管理员操作 outbox 持久化（依赖 N-4）。
 7. **~~新 P1（advisors 扫描 2026-09-01）：public 其余表 RLS~~（已关闭，2026-09-01 连库）**：迁移 0024 对 public 全部 19 张业务表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated 全部表权限（含 0023 资金四表补 REVOKE），anonymous_usage 两 RPC EXECUTE 仅授 service_role + search_path 钉死；连库验证 anon 直查全部 401、权限归零、应用关键路径回归通过。附带修复两个回归暴露的预存 bug：0025（verification_codes.code 列宽 VARCHAR(10)→64，SHA-256 哈希存不进去，注册/重置全挂）+ `consumeVerificationCode` update 未传 `{ count: "exact" }`（恒 return false）。见 §1.18。
 8. **~~P0-1 剩余：credit_lots 批次账本 + 回收工作台~~（已关闭，2026-09-01 连库）**：迁移 0026 已应用（批次 FIFO 扣减 + 退款精确准入 + `settle_credit_debt` 清偿闭环）；回收工作台 `/admin/recovery` 上线（闭合 webhook 登记的退款 + 清偿债务 + 恢复账号）；真库 e2e 全链路（发放→消费→精确退款→债务→清偿）通过。见 §1.19。
 9. **~~默认管理员恢复 + 强制改密闭环~~（已关闭，2026-09-02）**：迁移 0027 + getAdminUser/getUserInfo/console layout/requireAdmin 四处修复 + 浏览器 e2e 全链路通过。见 §1.20。
-10. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
+10. **~~N-13 剩余：联盟奖励冲销 + 争议收入确认~~（已关闭，2026-09-01 连库）**：迁移 0028 `private.reverse_affiliate_reward`（completed→reversed，幂等）+ `processRefund`/`dispute_lost` 接线 + my-invites reversed 状态；真库 e2e（冲销/幂等/anon 拒绝）通过；收入确认口径核实 stats 只计 paid。见 §1.21。
+11. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：N-13 剩余（联盟奖励冻结、争议收入确认）> N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）> P1（AI 请求状态机、webhook inbox/对账）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1/N-2/N-3/N-5/public 表 RLS（0024）/迁移应用（0019–0027）均已关闭。
+> **当前债务优先级（下一步）**：N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）> P1（AI 请求状态机、webhook inbox/对账）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1/N-2/N-3/N-5/N-13（含联盟奖励冲销）/public 表 RLS（0024）/迁移应用（0019–0028）均已关闭。
 
 ---
 

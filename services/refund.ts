@@ -107,6 +107,27 @@ export async function processRefund({
 
   const deducted = typeof data === "number" ? data : 0;
 
+  // N-13 剩余：冲销该订单的联盟佣金——退款成立则邀请人佣金同步失效，
+  // 堵「邀请人与被邀请人合谋：首付拿佣金 → 退款」的退款套利。
+  // 幂等（无佣金/已冲销返回 0），失败不阻塞退款主流程，告警人工核查。
+  let reversed_reward = 0;
+  try {
+    const { data: rewardData, error: rewardErr } = await supabase.rpc(
+      "reverse_affiliate_reward",
+      {
+        p_order_no: order_no,
+        p_reason: reason || `order ${order_no} refunded`,
+      }
+    );
+    if (rewardErr) {
+      console.error("[refund] affiliate reward reversal failed:", rewardErr);
+    } else {
+      reversed_reward = typeof rewardData === "number" ? rewardData : 0;
+    }
+  } catch (e) {
+    console.error("[refund] affiliate reward reversal error:", e);
+  }
+
   // P0-1 债务化：若扣回量小于订单发放积分，说明存在「已消费而无法回收」的部分，
   // 登记 credit_debts 欠款 + 订单置 refund_blocked + 账号 restricted，杜绝白嫖。
   // 这里是登记路径（0022）之外的唯一债务化入口：按实际扣回量判定缺口，
@@ -151,6 +172,7 @@ export async function processRefund({
       amount,
       deducted_credits: deducted,
       debt_credits: debt,
+      reversed_affiliate_reward: reversed_reward,
       admin_uuid,
       reason,
     },

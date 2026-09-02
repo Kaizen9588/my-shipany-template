@@ -21,6 +21,8 @@ const mockTrack = mocks.trackCriticalEvent;
 /** 构造 from(table).update(patch).eq(col,val)... 的链式 mock，返回包装 */
 function makeDb() {
   const tables: Record<string, { update: ReturnType<typeof vi.fn> }> = {};
+  // N-13 剩余：dispute_lost 会走 supabase.schema("private").rpc("reverse_affiliate_reward")
+  const rpc = vi.fn().mockResolvedValue({ data: 0, error: null });
   const from = vi.fn((table: string) => {
     if (!tables[table]) {
       const update = vi.fn();
@@ -38,8 +40,8 @@ function makeDb() {
     }
     return tables[table];
   });
-  mockClient.mockReturnValue({ from });
-  return { from, tables };
+  mockClient.mockReturnValue({ from, schema: () => ({ rpc }) });
+  return { from, tables, rpc };
 }
 
 beforeEach(() => {
@@ -93,5 +95,45 @@ describe("services/dispute handleDisputeEvent（N-13 争议/拒付链路）", ()
     expect(mockTrack).toHaveBeenCalledWith(
       expect.objectContaining({ event_type: "payment.dispute_lost", severity: "critical" })
     );
+  });
+
+  it("dispute_lost 同步冲销联盟佣金（N-13 剩余，结果进埋点 detail）", async () => {
+    const db = makeDb();
+    db.rpc.mockResolvedValue({ data: 2000, error: null });
+
+    await handleDisputeEvent({
+      order_no: "o1",
+      user_uuid: "u1",
+      type: "dispute_lost",
+      amount: 1000,
+    });
+
+    expect(db.rpc).toHaveBeenCalledWith(
+      "reverse_affiliate_reward",
+      expect.objectContaining({ p_order_no: "o1" })
+    );
+    expect(mockTrack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detail: expect.objectContaining({ reversed_affiliate_reward: 2000 }),
+      })
+    );
+  });
+
+  it("dispute_opened/won 不触发联盟佣金冲销（仅拒付成立时回收）", async () => {
+    const db = makeDb();
+
+    await handleDisputeEvent({
+      order_no: "o1",
+      user_uuid: "u1",
+      type: "dispute_opened",
+      amount: 1000,
+    });
+    await handleDisputeEvent({
+      order_no: "o2",
+      user_uuid: "u1",
+      type: "dispute_won",
+    });
+
+    expect(db.rpc).not.toHaveBeenCalled();
   });
 });
