@@ -55,3 +55,24 @@ export function identifyServer(
     console.error("[telemetry] identifyServer failed:", e);
   }
 }
+
+/**
+ * GDPR 删除联动（docs/04 §8 待补 1）：账号删除时请求 PostHog 删除该用户数据。
+ * posthog-node v5 已移除 deletePerson API，官方替代是发送 `$delete_person`
+ * 事件（capture 路径，PostHog 服务端按事件消费并删除对应 person profile）。
+ * 吞错不阻塞账号删除主流程；未配置 PostHog 时静默跳过。
+ */
+export function deleteTelemetryUser(distinctId: string): void {
+  try {
+    const c = getClient();
+    if (!c) {
+      return;
+    }
+    void c.capture({
+      distinctId,
+      event: "$delete_person",
+    });
+  } catch (e) {
+    console.error("[telemetry] deleteUser failed:", e);
+  }
+}

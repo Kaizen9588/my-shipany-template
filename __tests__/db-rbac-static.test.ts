@@ -764,3 +764,39 @@ describe("orders.expired_at 支付时刻重算静态断言（迁移 0034，P2 �
     expect(src).not.toMatch(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.handle_order_payment/);
   });
 });
+
+describe("GDPR 日志匿名化静态断言（迁移 0035 + delete-account，P2 批量）", () => {
+  it("private.anonymize_user_personal_data 覆盖三张日志表且仅授 service_role", async () => {
+    const src = readFileSync(
+      path.join("data", "migrations", "0035_gdpr_log_anonymization.sql"),
+      "utf8"
+    );
+    expect(src).toContain("SECURITY DEFINER");
+    expect(src).toContain("SET search_path = private, public, extensions");
+    // 三张表都要覆盖：op_events + outbox 队列残留 + audit_logs
+    expect(src).toContain("UPDATE public.op_events");
+    expect(src).toContain("UPDATE private.op_event_outbox");
+    expect(src).toContain("UPDATE public.audit_logs");
+    // ip 必须抹除
+    expect(src.match(/ip = NULL/g)?.length).toBe(1);
+    expect(src.match(/ip = CASE/g)?.length).toBe(1);
+    // REVOKE + GRANT
+    expect(src).toContain("REVOKE ALL ON FUNCTION private.anonymize_user_personal_data(TEXT) FROM PUBLIC, anon, authenticated");
+    expect(src).toContain("GRANT EXECUTE ON FUNCTION private.anonymize_user_personal_data(TEXT) TO service_role");
+  });
+
+  it("delete-account 路由接入匿名化 RPC + PostHog 删除联动", async () => {
+    const route = readFileSync("app/api/user/delete-account/route.ts", "utf8");
+    expect(route).toContain('schema("private")');
+    expect(route).toContain("anonymize_user_personal_data");
+    expect(route).toContain("deleteTelemetryUser");
+    // 匿名化吞错不阻塞主流程
+    expect(route.indexOf("[user/delete-account] log anonymization failed")).toBeGreaterThan(-1);
+  });
+
+  it("telemetry 提供 deleteTelemetryUser（$delete_person 事件，v5 无原生 API）", async () => {
+    const src = readFileSync("lib/telemetry/server.ts", "utf8");
+    expect(src).toContain("$delete_person");
+    expect(src).toContain("export function deleteTelemetryUser");
+  });
+});

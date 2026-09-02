@@ -72,7 +72,7 @@
 | 邮箱验证码 | ⚠️ 有缺陷 | `models/verification.ts` 存在；但消费逻辑 `count` 检查疑似在真实 Supabase 下始终失败（P0） |
 | 密码重置 | ⚠️ 有缺陷 | 同验证码消费逻辑问题（P0） |
 | RBAC | ✅ 已实现 | `lib/auth.ts` + users.role 三级（operator/admin/super_admin） |
-| 账号删除（GDPR） | ⚠️ 部分实现 | 软删除 + 匿名化 email；但保留 password_hash/signin_openid/signin_ip；PostHog 删除联动未实现；无数据导出 |
+| 账号删除（GDPR） | ✅ 基本完成（2026-09-01） | 软删除 + 凭据擦除 + API Key 撤销 + 日志匿名化（0035 RPC）+ PostHog `$delete_person` 联动；数据导出/删除冷静期为产品项待排期 |
 | 会话 / JWT | ✅ 已实现 | NextAuth v5；但封禁/删除后 session 不即时失效（P1） |
 | OAuth Account Linking | ❌ 未完成 | 同邮箱多 provider 不合并，可能拆散积分与订单（P1） |
 

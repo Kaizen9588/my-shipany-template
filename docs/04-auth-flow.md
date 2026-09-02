@@ -316,17 +316,13 @@ export async function getUserUuid() {
 
 ## 8. 账号删除与 GDPR
 
-> ⚠️ **文档与实现不一致（已知）**：
-> - `docs/11-telemetry-analytics.md` 一处声称 GDPR 删除联动已完成，一处列为 v3；
-> - 代码中 `deleteUser` 的 PostHog 删除联动**未实现**；
-> - 当前删除为软删除 + 匿名化 email，但保留 `password_hash`、`signin_openid`、`signin_ip`。
+> ✅ **删除链路已扩展（2026-09-01，迁移 0035 + P2 批量，docs/04 §8 待补 1/2/6 关闭）**：
+> `delete-account` 路由现在执行：软删除 + 凭据擦除（`password_hash`/`signin_openid`/`signin_ip` 置空）
+> + API Key 撤销 + **日志匿名化**（`private.anonymize_user_personal_data` RPC：`op_events`/`op_event_outbox`
+> 队列/`audit_logs` 的 uuid 字段改 `deleted+{uuid}` 占位、ip 置空、detail 内直接标识符移除，事件保留供
+> 财务/安全审计追溯）+ **PostHog `$delete_person` 事件联动**（posthog-node v5 已移除 deletePerson API，
+> 按 PostHog 官方口径改发 `$delete_person` capture 事件）。
+>
+> **剩余**：数据导出（待补 4）与删除确认邮件 + 冷静期（待补 5）为产品功能项，见 docs/15 checklist。
 
-**当前实现**：`app/api/user/delete-account` 路由执行软删除，匿名化邮箱。
-
-**待补齐（严格 GDPR 口径）**：
-1. PostHog `deleteUser` / `$delete` 事件联动
-2. `password_hash`、`signin_openid`、`signin_ip` 擦除或置空
-3. 订单/发票数据按法定期限保留（不能删），与行为数据区分
-4. 数据导出功能（用户可下载全部个人数据）
-5. 删除确认邮件 + 冷静期（可选）
-6. `op_events.subject_uuid`（关联 user_uuid/order_no）与 `audit_logs` 中个人数据的清理/匿名化策略（⚠️ 第十轮 P3-7 补入：软删除口径目前只覆盖 users 行本身；运营日志与审计表同样属于 GDPR「个人数据」范围，删除账号时需定义保留期或匿名化规则）
+**当前实现**：`app/api/user/delete-account` 路由执行软删除 + 凭据擦除 + 日志匿名化 + 遥测删除联动。
