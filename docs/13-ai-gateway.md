@@ -145,6 +145,29 @@ export function getModelProvider(providerId: string): AIModelProvider | undefine
 
 **收益**：新增模型供应商只加一个文件 + registry 加一行，与「新增支付渠道」同一纪律。
 
+### 决策 3.1：多供应商数据边界声明（P1，2026-09-01 关闭）
+
+**问题**：网关只做功能路由（哪家有 key 就走哪家），没有声明各供应商对请求内容的处理边界——
+用户把含 PII 的内容发进来，转发到哪家、该家是否保留/训练、出问题找谁，模板用户无从得知。
+
+**落地方式（声明式，不引入运行时开销）**：在 `data/model-pricing.ts` 中为每个 provider 维护
+`PROVIDER_DATA_BOUNDARY` 常量表，网关文档与对外 API 文档引用它。字段固定五项：
+
+| 字段 | 说明 |
+|------|------|
+| `dataRetention` | 输入/输出在该供应商侧的保留期（如 OpenAI API 默认 30 天滥用监测、DeepSeek 未承诺、OpenRouter 转发链不确定） |
+| `trainsOnInputs` | 该供应商是否把 API 输入用于训练（默认声明 false 仅当有官方出处，否则填 "unknown"） |
+| `region` | 处理区域（如 OpenAI 美国、SiliconFlow 中国大陆、Kling 中国大陆） |
+| `piiAdvice` | 面向模板运营方的一句话建议（如「营销文案场景可透传；客服日志归档场景建议先脱敏」） |
+| `incidentContact` | 供应商安全事件联系渠道（trust 页 / 安全邮箱） |
+
+**维护纪律**：
+1. 新增 provider 时此表是 **PR 必填项**（code review 检查点，与 hasValidCredentials 同级）——缺声明不合并；
+2. 表中每个非 `unknown` 值必须能在供应商官方文档找到出处，年度复核一次（放在 docs/15 checklist）；
+3. `trainsOnInputs: false` 未核实前一律写 `"unknown"`，禁止乐观默认；
+4. 该表是 **声明而非技术拦截**：不做请求级 PII 脱敏（模板无业务上下文，脱敏规则应由使用模板的产品方基于 piiAdvice 自行实现）；
+5. 模板运营方上线产品前，按本表向最终用户公示 AI 供应商与数据去向（建议挂在产品隐私政策页）。
+
 ### 决策 4：对外 API 用 /api/v1 前缀 + 真实 HTTP 状态码
 
 | 规则 | 说明 |
@@ -302,7 +325,7 @@ export enum CreditsTransType {
 | 模型白名单维护成本 | P2 | v1 用常量表，改动即发版 | v3 入数据库，后台可调 |
 | 「积分 vs 金额」汇率漂移 | P2 | 积分是抽象单位，运营方自行定义换算 | 积分价格版本化，每次扣费写入当时的模型价格版本 |
 | 限流多实例不共享 | P1 | ✅ 已关闭（2026-09-01）：配置 Upstash 即走分布式路径，timeout fail-open 已收窄为 fail-closed 回落 | 生产仍需确认 Vercel 环境变量已配 Upstash；未配置时回落内存限流（单实例有效） |
-| **多供应商数据边界不清** | P1 | ❌ 只做功能路由，不考虑数据保留/区域/训练用途 | 每个模型维护价格版本、数据处理声明、区域、PII 脱敏策略、重试降级规则 |
+| **多供应商数据边界不清** | P1 | ✅ 已关闭（2026-09-01，决策 3.1）：`PROVIDER_DATA_BOUNDARY` 声明表（保留期/训练用途/区域/PII 建议/事件联系），新增 provider 为 PR 必填项；运行时 PII 脱敏留给产品方按 piiAdvice 自实现 | `data/model-pricing.ts`（PROVIDER_DATA_BOUNDARY）+ docs/13 决策 3.1 |
 
 > **P0 项为真实收费 No-Go**，必须在 v1.5 阶段关闭。
 

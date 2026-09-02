@@ -396,6 +396,39 @@
 
 **遗留**：生产 Vercel 需确认已配置 `UPSTASH_REDIS_REST_URL/TOKEN`——未配置时仍是内存限流（单实例有效）。
 
+### 1.30 第二十二批：Upstash 限流路径 fail-closed 加固（2026-09-01）
+
+**背景**：`lib/ratelimit.ts` 在配置 Upstash 后走 `@upstash/ratelimit` SDK。审查发现两处 fail-open 面：
+① SDK `applyTimeout` 在超过 `timeout`（默认 **5000ms**）后仍 resolve `{success:true, reason:"timeout"}`——此时 Redis 计数并未确认，高并发/Redis 抖动下等于限流失效静默放行；
+② prefix 固定 `@upstash/ratelimit`（SDK 默认），多环境/多站点共用同一 Redis 时计数互相串扰。
+
+**修复**（`lib/ratelimit.ts`）：
+- `timeout: 500`——超时窗口收窄到 500ms，Redis 抖动时不再挂 5 秒；
+- `rateLimit()` 检测 `res.reason === "timeout"` 后 **回落内存降级**（`rateLimitByIp`），把"计数未确认"当不可信继续计数并拒绝，不静默放行（fail-closed）；
+- prefix 按环境隔离：分钟级 `ratelimit:${NEXT_PUBLIC_PROJECT_NAME || "app"}`、日配额 `ratelimit-daily:...`；
+- 新增 `isUpstashConfigured()` 导出，供观测/诊断判断当前限流模式。
+
+**测试**：`__tests__/ratelimit.test.ts` 扩至 11 用例——timeout 回落（mock limit 返回 `reason:"timeout"`，连打 31 次 > DEFAULT_MAX=30 后第 31 次拒绝）、prefix/timeout 配置捕获（`vi.resetModules()` 强制重建单例后断言 `ratelimit:proj-a` 隔离与未设 env 回退 `ratelimit:app`）、`isUpstashConfigured()` 两态。
+
+**文档同步**：docs/13（6.18 行 + 跨实例限流块改"已落地" + 风险表 P1 行关闭）、docs/08（Upstash 行注记 + NEXT_PUBLIC_PROJECT_NAME prefix 隔离行）。
+
+**遗留**：生产 Vercel 需确认已配置 `UPSTASH_REDIS_REST_URL/TOKEN`——未配置时仍是内存限流（单实例有效）。
+
+### 1.31 第二十三批：多供应商数据边界声明（P1 关闭，2026-09-01）
+
+**背景**：AI 网关只做功能路由（哪家有 key 走哪家，`lib/ai/registry.ts`），没有声明各供应商对请求内容的处理边界——用户输入被转发到哪家、该家是否保留/用于训练、区域在哪、出问题找谁，模板运营方无从得知，无法向最终用户公示。
+
+**落地**（声明式，不引入运行时开销）：
+- `data/model-pricing.ts` 新增 `PROVIDER_DATA_BOUNDARY` 常量表：五字段（`dataRetention` 保留期 / `trainsOnInputs` 训练用途（boolean | "unknown" 三态）/ `region` 区域 / `piiAdvice` 脱敏建议 / `incidentContact` 事件联系）；
+- 覆盖 registry 全部 4 家：openai（官方有出处：30 天滥用监测、可零保留、不训练）、deepseek / openrouter / siliconflow（未核实口径一律 `"unknown"`，禁止乐观默认 false）；
+- 维护纪律成文（docs/13 决策 3.1）：新增 provider 缺声明不合并（PR 必填项）；年度复核；该表是声明而非技术拦截，运行时 PII 脱敏留给产品方按 piiAdvice 自实现。
+
+**测试**（`__tests__/db-rbac-static.test.ts` +2 用例）：①registry 每个 provider 必须在 PROVIDER_DATA_BOUNDARY 有对应声明（新增供应商缺声明 = CI 红）；②五字段齐全（trainsOnInputs 允许 boolean | "unknown" 三态，禁止 undefined 缺省乐观默认）。
+
+**文档同步**：docs/13 决策 3.1 + 风险表 P1 行关闭；docs/15 AI 能力表新增一行。
+
+**遗留**：表中声明值需运营方上线前按最新供应商官方文档复核（尤其 deepseek/siliconflow 保留口径）。
+
 
 ---
 
@@ -487,7 +520,7 @@
 12. **~~Webhook inbox、对账~~（已关闭，2026-09-01 连库）**：迁移 0031 + 三路由 inbox 链 + cron 重放/三规则对账，见 §1.24。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）。**~~AI 请求状态机~~（已关闭，2026-09-01 连库）**：迁移 0032 + 幂等/崩溃补偿/TTL，见 §1.25。可靠副作用与支付/AI 崩溃补偿闭环至此完成。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：多供应商数据边界声明。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）、CSRF（§1.27）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
+> **当前债务优先级（下一步）**：进入 P2 批量（部分退款/争议运营/GDPR/邮件触发点等，见 §4 P2 清单）。P1 级安全/架构债务已全部关闭（分布式限流 §1.30、多供应商数据边界 §1.31）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）、CSRF（§1.27）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
 
 ---
 

@@ -98,6 +98,7 @@
 |----|------|----------|
 | AI SDK 统一入口 | ✅ | `lib/ai/registry.ts` + `app/api/v1/ai/generate` |
 | 模型白名单 | ✅ | `data/model-pricing.ts` |
+| 多供应商数据边界声明 | ✅ | `data/model-pricing.ts` PROVIDER_DATA_BOUNDARY（决策 3.1）；新增 provider 时必填，年度复核一次（trainsOnInputs 未核实必须 "unknown"） |
 | 计入扣费 | ⚠️ 部分实现 | `estimateCredits` 预估一次扣清；但无幂等、无状态机、崩溃不补偿（P0） |
 | 失败退款 | ⚠️ 不可靠 | `ai_refund` 事务类型存在；但只在进程内执行，崩溃后积分永久丢失 |
 | 匿名免费试用 | ⚠️ 有缺陷 | `app/api/v1/ai/demo` + 纯 IP 限流；但「失败退还次数 + 输入无大小限制」可让单 IP 100% 失败并退还次数，不换 IP 也能无限调用（P0-4，第九轮） |

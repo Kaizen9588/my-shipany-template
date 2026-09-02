@@ -701,3 +701,35 @@ describe("P0-定价-1 事务化批量写入静态断言（迁移 0033 + admin-ap
     expect(src).not.toContain("updatePaymentSettingDetail(");
   });
 });
+
+describe("多供应商数据边界声明静态断言（决策 3.1，第二十三批）", () => {
+  it("registry 中每个 provider 都有 PROVIDER_DATA_BOUNDARY 声明（新增供应商缺声明 = CI 红）", async () => {
+    const registrySrc = readFileSync("lib/ai/registry.ts", "utf8");
+    const providersSrc = readFileSync("data/model-pricing.ts", "utf8");
+
+    const declared = new Set(
+      [...registrySrc.matchAll(/^\s{2}(\w+):\s+\w+Provider,\s*$/gm)].map((m) => m[1])
+    );
+    expect(declared.size).toBeGreaterThanOrEqual(4);
+
+    for (const id of declared) {
+      expect(providersSrc, `provider "${id}" 缺 PROVIDER_DATA_BOUNDARY 声明`).toContain(
+        `${id}: {`
+      );
+    }
+  });
+
+  it("五字段齐全，未核实的训练用途必须显式 unknown（禁止乐观默认）", async () => {
+    const { PROVIDER_DATA_BOUNDARY } = await import("@/data/model-pricing");
+    const required = ["dataRetention", "region", "piiAdvice", "incidentContact"];
+    for (const [id, b] of Object.entries(PROVIDER_DATA_BOUNDARY)) {
+      for (const field of required) {
+        expect(b[field as keyof typeof b], `${id}.${field} 缺失`).toBeTruthy();
+      }
+      // trainsOnInputs 只允许 boolean | "unknown" 三态，缺省（undefined）即乐观默认，禁止
+      expect(["boolean", "string"]).toContain(typeof b.trainsOnInputs);
+    }
+    expect(PROVIDER_DATA_BOUNDARY.openai.trainsOnInputs).toBe(false);
+    expect(PROVIDER_DATA_BOUNDARY.deepseek.trainsOnInputs).toBe("unknown");
+  });
+});
