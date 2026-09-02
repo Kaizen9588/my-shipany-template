@@ -671,7 +671,7 @@ AffiliateRewardAmount = {
 | P2-对账-1 | 无用户可见的交易明细与账单 | 用户只能看余额，无法逐笔核对；客服缺少全链路查询工具 |
 | P2-发票-1 | 无发票/收据生成与下载 | 成熟 SaaS 标配；MoR 渠道（Creem/Waffo）可由渠道提供 |
 | P2-支付-1 | 无支付方式管理与保存 | v1 每次重输；订阅场景必须 |
-| P2-1（第九轮） | 积分有效期在下单时刻冻结 | `orders.expired_at` 在创建 checkout 之前就按 `now + valid_months` 算好并随订单 INSERT，用户在收银台/3DS 停留时间全由用户承担（对 1 个月方案约吃掉 3%），详见 §7 |
+| ~~P2-1（第九轮）~~ | ~~积分有效期在下单时刻冻结~~ | **✅ 已关闭（2026-09-01，迁移 0034，P2 批量）**：`handle_order_payment` 落账时以 `paid_at + valid_months` 重算积分有效期并写回 `orders.expired_at`（订单行与积分行口径一致）；checkout 的下单时值降级为展示占位。修法清单中的 `checkout_expires_at` 派生列与 7 天迟到窗口留待 v2 订阅启用时一并评估，cron 超时基准（created_at + 60min）现已成文 |
 | P2-2（第九轮） | 争议/拒付（chargeback）全链路缺失 | `PaymentEventType` 无争议类型、`orders.status` 无 `disputed/charged_back`，Stripe 事件白名单漏 `charge.dispute.created/closed`，详见 §7 |
 
 ---
@@ -699,17 +699,20 @@ AffiliateRewardAmount = {
 > 本节收录第九轮对抗式审查中支付与积分模块的新发现与整块缺失。P0-1（退款债务化）、P0-2（扣减并发）、
 > P1-8（定价真相源）的完整分析已分别写入 §4.3、§2.4、§1.2；本节补 P2-1、P2-2 与「方案里整块缺失」中归属本模块的部分。
 
-### 7.1 P2-1 积分有效期在下单时刻冻结
+### 7.1 P2-1 积分有效期在下单时刻冻结（✅ 已关闭，2026-09-01）
 
 `orders.expired_at` 注释是「积分过期时间」，但它在 §1.3 第 5 步（**创建 checkout 之前**）就按 `now + valid_months`
 算好并随订单 INSERT——有效期从下单时刻而非付款时刻起算，用户在收银台停留、3DS 验证的时间全由用户承担。
 上界约等于渠道 session 窗口（Stripe/Creem 都是 24h），对最短的 1 个月方案约吃掉 3%。
 
-**修法**（随批次账本改造一起做，成本很低）：
-1. 批次 `expired_at` 在 `handle_order_payment` 内以 `paid_at + valid_months` 计算。
-2. `orders` 只存 `credit_valid_months` 策略，`expired_at` 改为支付时回填的派生列。
-3. 另加 `checkout_expires_at`（下单时写，定时任务只扫它，对齐渠道 session 生命周期 24h）——顺带定义清楚超时任务的时间基准，`docs/03` 目前完全没写。
-4. `expired→paid` 恢复设最大迟到窗口（如 7 天），超窗落 `late_paid` 走人工决策，禁止静默充值。
+**✅ 修复（迁移 0034，P2 批量，e2e 已验证）**：`handle_order_payment`（private 权威版）落账时
+`v_expired_at := paid_at + make_interval(months => valid_months)`（valid_months 为空/0 时保留原值以兼容
+永不过期订单），同时写回 `orders.expired_at` 与 `credits.expired_at`，两行口径一致；重算在金额比对
+之后，mismatch 不产生重算副作用。checkout 的下单时值降级为展示占位。顺带把 0023 后残留的
+`public.handle_order_payment` 僵尸副本 DROP（N-2 暴露面收紧，Data API 不再可见该函数）。
+
+**剩余（低优先，v2 订阅启用时评估）**：`checkout_expires_at` 派生列与 7 天迟到支付窗口。
+当前 cron 超时基准已明确：`scripts/expire-orders.ts` 扫 `created_at + 60 分钟` 仍为 created 的订单。
 
 ### 7.2 P2-2 争议/拒付（chargeback）全链路缺失
 

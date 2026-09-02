@@ -733,3 +733,34 @@ describe("多供应商数据边界声明静态断言（决策 3.1，第二十三
     expect(PROVIDER_DATA_BOUNDARY.deepseek.trainsOnInputs).toBe("unknown");
   });
 });
+
+describe("orders.expired_at 支付时刻重算静态断言（迁移 0034，P2 批量）", () => {
+  const src = readFileSync(
+    path.join("data", "migrations", "0034_order_expired_at_on_payment.sql"),
+    "utf8"
+  );
+
+  it("private 权威版以 paid_at + valid_months 重算积分有效期（占位值不进 credits）", () => {
+    // 锚定非注释代码行（头部说明含伪代码，不能计入）
+    expect(src.match(/^\s*v_expired_at := CASE/gm)?.length).toBe(1);
+    expect(src.match(/^\s*THEN p_paid_at \+ make_interval\(months => v_order\.valid_months\)/gm)?.length).toBe(1);
+    // credits 插入使用重算值而非 v_order.expired_at 冻结值
+    expect(src).not.toContain("v_order.order_no, v_order.expired_at)");
+    expect(src).toContain("v_order.order_no, v_expired_at)");
+  });
+
+  it("重算在金额比对之后、订单 paid 更新之前（mismatch 不触发重算副作用）", () => {
+    const mismatchPos = src.indexOf("RETURN 'mismatch'");
+    const recalcPos = src.indexOf("v_expired_at := CASE");
+    const paidUpdatePos = src.indexOf("SET status = 'paid'");
+    expect(mismatchPos).toBeGreaterThan(-1);
+    expect(recalcPos).toBeGreaterThan(mismatchPos);
+    expect(paidUpdatePos).toBeGreaterThan(recalcPos);
+  });
+
+  it("orders.expired_at 写回与积分行口径一致；public 残留副本退役（N-2 收紧）", () => {
+    expect(src).toContain("expired_at = v_expired_at");
+    expect(src).toContain("DROP FUNCTION IF EXISTS public.handle_order_payment");
+    expect(src).not.toMatch(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.handle_order_payment/);
+  });
+});

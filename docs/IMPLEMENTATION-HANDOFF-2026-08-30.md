@@ -429,6 +429,39 @@
 
 **遗留**：表中声明值需运营方上线前按最新供应商官方文档复核（尤其 deepseek/siliconflow 保留口径）。
 
+### 1.31 第二十三批：多供应商数据边界声明（P1 关闭，2026-09-01）
+
+**背景**：AI 网关只做功能路由（哪家有 key 走哪家，`lib/ai/registry.ts`），没有声明各供应商对请求内容的处理边界——用户输入被转发到哪家、该家是否保留/用于训练、区域在哪、出问题找谁，模板运营方无从得知，无法向最终用户公示。
+
+**落地**（声明式，不引入运行时开销）：
+- `data/model-pricing.ts` 新增 `PROVIDER_DATA_BOUNDARY` 常量表：五字段（`dataRetention` 保留期 / `trainsOnInputs` 训练用途（boolean | "unknown" 三态）/ `region` 区域 / `piiAdvice` 脱敏建议 / `incidentContact` 事件联系）；
+- 覆盖 registry 全部 4 家：openai（官方有出处：30 天滥用监测、可零保留、不训练）、deepseek / openrouter / siliconflow（未核实口径一律 `"unknown"`，禁止乐观默认 false）；
+- 维护纪律成文（docs/13 决策 3.1）：新增 provider 缺声明不合并（PR 必填项）；年度复核；该表是声明而非技术拦截，运行时 PII 脱敏留给产品方按 piiAdvice 自实现。
+
+**测试**（`__tests__/db-rbac-static.test.ts` +2 用例）：①registry 每个 provider 必须在 PROVIDER_DATA_BOUNDARY 有对应声明（新增供应商缺声明 = CI 红）；②五字段齐全（trainsOnInputs 允许 boolean | "unknown" 三态，禁止 undefined 缺省乐观默认）。
+
+**文档同步**：docs/13 决策 3.1 + 风险表 P1 行关闭；docs/15 AI 能力表新增一行。
+
+**遗留**：表中声明值需运营方上线前按最新供应商官方文档复核（尤其 deepseek/siliconflow 保留口径）。
+
+### 1.32 第二十四批：P2 批量第一组——过期时刻重算 / Stripe 订阅清单 / 邮件触发点核实（2026-09-01）
+
+**① `orders.expired_at` 支付时刻重算（迁移 0034）**
+- 问题：checkout 在下单时把 `expired_at = now() + valid_months` 冻结，webhook 落账时直接复制进 credits——迟到支付（含 expired 恢复）的用户被吃掉间隔天数的有效期。
+- 修复：`private.handle_order_payment` 以 `v_expired_at := p_paid_at + make_interval(months => v_order.valid_months)` 重算（valid_months 空/0 保留原值兼容永不过期），写回 `orders.expired_at` 与 `credits.expired_at` 口径一致；重算位于金额比对之后，mismatch 无副作用。
+- 顺带：`DROP FUNCTION public.handle_order_payment`——0023 后的残留僵尸副本（Data API 可见但无调用方），N-2 暴露面收紧。
+- e2e（连库）：迟到 2 天支付 → `expired_at - paid_at = 30 days`、`gap_from_now = 0`；重放后 anon 无法 EXECUTE private 函数、service_role 可用；迁移器应用 + psql 重放双通道验证。
+
+**② Stripe webhook 订阅清单文档补齐**
+- docs/07 §2.5：Events 补 `charge.dispute.created` + `charge.dispute.closed`（N-13 已实现处理逻辑，漏订阅则拒付不冻结）。
+- docs/payment/stripe-integration.md §2.3：争议两行改 ✅ 已处理，P2-2 警告块改已关闭 + 部署注意四事件。
+
+**③ payment_success 邮件触发点核实（无需改动）**
+- 真实触发点：lib/payment/index.ts 归一化路径落账成功后 `runAfterResponse` 内发送（after() 调度冻结安全）。
+- services/order.ts `handleOrderSession` 是 pay-success 页面收敛为纯跳转（2.19-①）后的无调用方遗留代码，仅测试引用；其邮件块属死路径。挂账清零但不删除（保留 RPC 契约测试价值，删除与否留待专门清理批次）。
+
+**测试**：db-rbac-static +3 用例（0034 重算 CASE/Interval、mismatch 前后序、expired_at 写回一致 + public DROP 断言；断言锚定非注释代码行，头部伪代码不计入）。
+
 
 ---
 
@@ -486,9 +519,9 @@
 - [ ] 部分退款、多次退款与按批次积分回收规则。
 - [ ] 争议 / 拒付的运营处理与举证导出。
 - [ ] GDPR 删除覆盖 `op_events.subject_uuid` 与 `audit_logs` 中的个人数据。
-- [ ] `payment_success` 邮件触发点改到真实 webhook 成功路径。
-- [ ] Stripe 部署文档补 `charge.refunded` 订阅事件。
-- [ ] `orders.expired_at` 从支付时刻计算，而不是下单时刻冻结。
+- [x] **~~`payment_success` 邮件触发点改到真实 webhook 成功路径~~（已核实无需改动，2026-09-01，见 §1.32）**：webhook 归一化路径（lib/payment/index.ts）已在落账成功后经 `runAfterResponse` 发送；services/order.ts 的 `handleOrderSession` 是 pay-success 页面收敛后的无调用方遗留代码（仅测试引用），其邮件块属死路径，不构成重复触发。
+- [x] **~~Stripe 部署文档补 `charge.refunded` 订阅事件~~（已关闭 2026-09-01，见 §1.32）**：docs/07 §2.5 事件清单补齐 `charge.dispute.created/closed`；docs/payment/stripe-integration.md §2.3 争议行改"已处理"+ P2-2 警告块闭合。
+- [x] **~~`orders.expired_at` 从支付时刻计算，而不是下单时刻冻结~~（已关闭 2026-09-01，迁移 0034 + e2e，见 §1.32）**：落账时 `paid_at + valid_months` 重算并写回订单行与积分行；public 残留副本顺带 DROP。
 - [ ] 数据备份加密、脱敏、保留周期与恢复演练。
 
 ### P3（工程与文档收口）

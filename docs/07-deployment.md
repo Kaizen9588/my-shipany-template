@@ -84,7 +84,7 @@ pnpm build                          # 默认不启用（Vercel / next start 兼�
 
 1. Stripe Dashboard -> Developers -> Webhooks -> Add Endpoint
 2. URL: `https://your-domain.com/api/stripe-notify`
-3. Events: `checkout.session.completed` + `charge.refunded`
+3. Events: `checkout.session.completed` + `charge.refunded` + `charge.dispute.created` + `charge.dispute.closed`（争议事件 N-13 已实现处理逻辑，漏订阅则拒付不冻结订单）
 4. 复制 Signing Secret 到环境变量 `STRIPE_WEBHOOK_SECRET`
 
 > ⚠️ **P2-C（第十轮对抗式审查，2026-08-26）——订阅清单必须与代码处理清单同步**：

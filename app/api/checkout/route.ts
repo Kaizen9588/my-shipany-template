@@ -112,7 +112,9 @@ export async function POST(req: Request) {
     order_no = getSnowId();
     const created_at = new Date().toISOString();
 
-    // 一次性积分包：有效期 = 当前时间 + valid_months
+    // 一次性积分包：有效期占位 = 下单时刻 + valid_months。
+    // 真实有效期由 handle_order_payment 在支付落账时以 paid_at 重算（迁移 0034），
+    // 此处仅作展示占位（订单未支付前 expired_at 无积分语义）
     const timePeriod = new Date();
     timePeriod.setMonth(timePeriod.getMonth() + product.valid_months);
     const expired_at = timePeriod.toISOString();
