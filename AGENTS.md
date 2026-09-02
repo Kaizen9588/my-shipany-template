@@ -17,6 +17,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `docs/README.md` —— 全量方案文档索引（架构/API/数据库/支付/安全/部署/边界）
 - `docs/boundary-spec.md` —— **边界与安全规范**（禁止提交什么、密钥边界、支付/积分/后台 RBAC 边界、Git 工作流）
 - `README.md` —— 项目命令与快速上手（本地 3000 端口、默认管理员账号）
+- `PRE-COMMIT-CHECKLIST.md` —— **提交前自查清单（硬性工作流，每批提交前全项过一遍）**：密钥扫描 / `npx tsc --noEmit`（CI 同款命令）/ 测试基线 / 迁移规范 / e2e 与数据清理 / 文档同步 / push 后确认 CI 转绿
 
 常用命令：
 - `pnpm dev`（本地 3000 端口，占用则先清端口进程）
@@ -24,6 +25,6 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `pnpm migrate`（DATABASE_URL 驱动，启动时自动执行）
 - `pnpm build`
 
-提交前必须自查 staged diff：禁止出现真实密钥/API key/私钥块/`.env.local`。
+提交前必须按 `PRE-COMMIT-CHECKLIST.md` 全项自查：禁止出现真实密钥/API key/私钥块/`.env.local`；类型检查用 `npx tsc --noEmit`（与 CI 同款命令，不要用 `pnpm tsc`）；push 后确认 GitHub Actions CI 转绿。
 
 <!-- END:project-doc -->
