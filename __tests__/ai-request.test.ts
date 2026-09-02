@@ -202,7 +202,7 @@ describe("markAiRequestSucceeded / markAiRequestFailed", () => {
     expect(patch.status).toBe("succeeded");
     expect(patch.input_tokens).toBe(10);
     expect(patch.completed_at).toBeTruthy();
-    expect(c.eq.mock.calls.some(([, v]) => v === "running")).toBe(true);
+    expect(c.eq.mock.calls.some((call: unknown[]) => call[1] === "running")).toBe(true);
   });
 
   it("失败且退款成功：failed 终态", async () => {

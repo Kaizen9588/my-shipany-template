@@ -2,7 +2,6 @@ import { createHash } from "crypto";
 import { getIsoTimestr } from "@/lib/time";
 import { serverClient } from "@/models/db";
 import { CreditsTransType, increaseCredits } from "@/services/credit";
-import type { Message } from "ai";
 
 /**
  * AI 请求状态机（P1，迁移 0032，docs/13 v1.5 / docs/03 §P1）
@@ -52,12 +51,12 @@ export function isValidRequestId(key: unknown): key is string {
 
 /**
  * 请求体指纹：同键不同体返 422 的判据。
- * messages 数组按 JSON 序列化进指纹（同键必须承载完全相同的输入）。
+ * messages 是请求体里的任意 JSON（同键必须承载完全相同的输入），按 JSON 序列化进指纹。
  */
 export function bodyFingerprint(input: {
   model: string;
   prompt?: string;
-  messages?: Message[];
+  messages?: unknown[];
   max_tokens: number;
 }): string {
   return createHash("sha256")
