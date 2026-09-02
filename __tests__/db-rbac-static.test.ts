@@ -671,3 +671,33 @@ describe("P1 AI 请求状态机静态断言（迁移 0032 + lib/ai-request，第
     expect(src).toContain("ai_error");
   });
 });
+
+describe("P0-定价-1 事务化批量写入静态断言（迁移 0033 + admin-approval，第二十批）", () => {
+  it("0033 apply_payment_config：原子 RPC + DB 层不变量 + service_role 收口", () => {
+    const src = sourceOf("data/migrations/0033_transactional_pricing_write.sql").replace(/\s+/g, " ");
+    // SECURITY DEFINER + search_path 钉死（防 search_path 劫持）
+    expect(src).toContain("SECURITY DEFINER");
+    expect(src).toContain("SET search_path = private, public, extensions");
+    // 先全量校验再写入（防半套定价：任一失败整体回滚）
+    const validatePos = src.indexOf("product not found");
+    const writePos = src.indexOf("UPDATE public.payment_products");
+    expect(validatePos).toBeGreaterThan(-1);
+    expect(writePos).toBeGreaterThan(validatePos);
+    // DB 层不变量与 lib/pricing-guard 同规
+    expect(src).toContain("credits must not exceed amount");
+    expect(src).toContain("v1 only supports USD currency");
+    expect(src).toContain("not exceeding 1000000");
+    // 权限收口：仅 service_role
+    expect(src).toContain("REVOKE ALL ON FUNCTION private.apply_payment_config(JSONB) FROM PUBLIC, anon, authenticated");
+    expect(src).toContain("GRANT EXECUTE ON FUNCTION private.apply_payment_config(JSONB) TO service_role");
+  });
+
+  it("admin-approval payment_settings 执行走事务化 RPC（逐条 UPDATE 路径移除）", () => {
+    const src = sourceOf("lib/admin-approval.ts").replace(/\s+/g, " ");
+    expect(src).toContain('rpc("apply_payment_config"');
+    expect(src).toContain('schema("private")');
+    // 执行分发器不再逐条更新（updatePaymentProduct/updatePaymentSettingDetail 调用移除）
+    expect(src).not.toContain("updatePaymentProduct(");
+    expect(src).not.toContain("updatePaymentSettingDetail(");
+  });
+});

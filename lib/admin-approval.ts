@@ -7,10 +7,6 @@ import { adjustCreditsByAdmin } from "@/services/credit";
 import { findOrderByOrderNo } from "@/models/order";
 import { processRefund } from "@/services/refund";
 import { getPaymentProvider } from "@/lib/payment";
-import {
-  updatePaymentProduct,
-  updatePaymentSettingDetail,
-} from "@/models/payment";
 import { validatePricingFields } from "@/lib/pricing-guard";
 import type { User } from "@/types/user";
 
@@ -510,31 +506,16 @@ async function dispatchApprovalAction(approval: ApprovalRow): Promise<void> {
           if (err) throw new Error(err);
         }
       }
-      for (const s of settings) {
-        const fields: { enabled?: boolean; priority?: number } = {};
-        if (typeof s.enabled === "boolean") fields.enabled = s.enabled;
-        if (typeof s.priority === "number" && s.priority >= 0) {
-          fields.priority = Math.floor(s.priority);
-        }
-        if (Object.keys(fields).length > 0 && s.provider) {
-          await updatePaymentSettingDetail(s.provider, fields);
-        }
-      }
-      for (const prod of products) {
-        const fields: Record<string, unknown> = {};
-        const amount = typeof prod.amount === "number" ? Math.floor(prod.amount) : undefined;
-        const credits = typeof prod.credits === "number" ? Math.floor(prod.credits) : undefined;
-        const validMonths =
-          typeof prod.valid_months === "number" ? Math.floor(prod.valid_months) : undefined;
-        if (amount !== undefined) fields.amount = amount;
-        if (credits !== undefined) fields.credits = credits;
-        if (validMonths !== undefined) fields.valid_months = validMonths;
-        if (typeof prod.creem_product_id === "string") fields.creem_product_id = prod.creem_product_id;
-        if (typeof prod.stripe_price_id === "string") fields.stripe_price_id = prod.stripe_price_id;
-        if (typeof prod.waffo_product_id === "string") fields.waffo_product_id = prod.waffo_product_id;
-        if (Object.keys(fields).length > 0 && prod.product_id) {
-          await updatePaymentProduct(prod.product_id, fields);
-        }
+      // P0-定价-1 剩余（迁移 0033）：事务化批量写入——此前逐条 UPDATE 独立
+      // autocommit，中途失败会把真相源留在半更新状态（amount 已改 credits 未改，
+      // 积分≤金额不变量在中间态被打破 = 可套利定价）。RPC 内全量校验 + 原子写入，
+      // 任一失败整体回滚。channel_id 缺省字段由 payload 原样透传（JSONB 保留形状）。
+      const supabase = serverClient().schema("private");
+      const { error: rpcError } = await supabase.rpc("apply_payment_config", {
+        p_payload: { settings, products },
+      });
+      if (rpcError) {
+        throw new Error(`apply_payment_config failed: ${rpcError.message}`);
       }
       return;
     }

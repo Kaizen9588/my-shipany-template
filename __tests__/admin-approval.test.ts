@@ -26,12 +26,15 @@ const mocks = vi.hoisted(() => {
     c.then = (_res: any, _rej: any) =>
       Promise.resolve(c.__awaitResult).then(_res, _rej);
     c.__awaitResult = { data: null, error: null };
+    // 第二十批：payment_settings 执行走 private.apply_payment_config RPC
+    c.rpc = mocks.rpc;
     return c;
   };
   return {
     schemaFrom: vi.fn(),
     clientFrom: vi.fn(),
     chain,
+    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
     hasAdminLevel: vi.fn(),
     processRefund: vi.fn(),
     adjustCreditsByAdmin: vi.fn(),
@@ -365,6 +368,44 @@ describe("N-6 审批队列：执行分发（dispatchApprovalAction）", () => {
       )
     ).rejects.toThrow("amount too large");
     expect(mocks.updatePaymentProduct).not.toHaveBeenCalled();
+  });
+
+  it("payment_settings：执行走事务化 RPC apply_payment_config（0033，取代逐条 UPDATE）", async () => {
+    mocks.validatePricingFields.mockReturnValue(null);
+    mocks.rpc.mockResolvedValue({ data: { settings_updated: 1, products_updated: 2 }, error: null });
+    await _internal.dispatchForTest(
+      makeRow({
+        action: "payment_settings",
+        payload: {
+          settings: [{ provider: "stripe", enabled: true }],
+          products: [{ product_id: "p1", amount: 999, credits: 500 }],
+        },
+      })
+    );
+    // RPC 以审批快照原样作为 p_payload（事务化原子写入）
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "apply_payment_config",
+      expect.objectContaining({ p_payload: expect.anything() })
+    );
+    // 逐条 UPDATE 路径已移除
+    expect(mocks.updatePaymentProduct).not.toHaveBeenCalled();
+    expect(mocks.updatePaymentSettingDetail).not.toHaveBeenCalled();
+  });
+
+  it("payment_settings：RPC 失败向上抛错（审批单落 failed 可重试，不落半套定价）", async () => {
+    mocks.validatePricingFields.mockReturnValue(null);
+    mocks.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "product not found: p1" },
+    });
+    await expect(
+      _internal.dispatchForTest(
+        makeRow({
+          action: "payment_settings",
+          payload: { products: [{ product_id: "p1", amount: 999 }] },
+        })
+      )
+    ).rejects.toThrow(/apply_payment_config failed/);
   });
 });
 

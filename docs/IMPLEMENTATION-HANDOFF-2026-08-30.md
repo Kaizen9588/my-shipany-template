@@ -339,6 +339,14 @@
 - **防护矩阵成文**（docs/02 §认证机制，P3-4 关闭）：全局规则 + 按端点族矩阵（admin / 用户 session / v1 generate 双认证 / demo / NextAuth 自管 / webhook-cron 豁免）。
 - **测试**：`__tests__/middleware-csrf.test.ts` 10 用例（同源放行/跨站 403/缺 Origin 放行/WEB_URL 钉死/生产 http 降级拒绝/CORS 白名单/四类豁免/子串不豁免/GET-HEAD-OPTIONS 不校验/非 API 路径不走 CSRF）。全量 **59 文件 352 用例**（基线 342 + 本批 10）。
 
+### 1.28 第二十批：定价/渠道配置事务化批量写入（P0-定价-1 全关闭，2026-09-01 连库）
+
+- **缺口**：审批批准后逐条 `updatePaymentProduct` / `updatePaymentSettingDetail`（独立 autocommit）——中途失败把真相源留在半更新状态（amount 已改 credits 未改，积分≤金额不变量在中间态被打破 = 可套利定价），重试前线上就是半套定价。
+- **迁移 0033**（已连库）：`private.apply_payment_config(JSONB)` SECURITY DEFINER RPC（search_path 钉死）——payload 与审批快照同构（`{settings, products}`）；**先全量校验后写入**（product_id/provider 必填且目标必须已存在、金额/积分/有效期上限、积分≤金额、币种 USD、enabled/priority 类型校验——与 `lib/pricing-guard` 同规，DB 层纵深防御）；写入阶段任一语句失败整体回滚（PL/pgSQL 函数体原子）。REVOKE PUBLIC/anon/authenticated，仅授 service_role（0023/0028/0029 同规）。
+- **接线**（`lib/admin-approval.ts`）：`payment_settings` 执行分发器改调 RPC（payload 原样透传），移除逐条 UPDATE 路径与 `@/models/payment` 更新函数依赖（不变量预验保留在应用层作快速失败）。
+- **真库 e2e**：混合批次（合法+不存在产品）整体回滚零残留；两 RPC 连调中途失败回滚；成功路径写入后 ROLLBACK 无残留；注入 payload 安全拒绝；anon/authenticated 无执行权 + service_role 有效 + SECURITY DEFINER/search_path 确认。
+- **测试**：`admin-approval.test.ts` +2（RPC 调用与快照透传 / RPC 失败上抛落 failed 可重试）；`db-rbac-static.test.ts` +2（0033 结构与权限收口 / 逐条 UPDATE 路径移除断言）。全量 **60 文件 356 用例**（基线 352 + 本批 4）。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -383,7 +391,7 @@
 | ~~N-5~~ | ~~高成本端点限流 fail-open~~ | **已关闭（2026-08-30，见 §1.9）**：`rateLimitUser` 回落内存日窗口（fail-closed）；checkout 加 per-IP/per-user 限流；webhook 加 body 64KB 上限 | `lib/ratelimit.ts`、`lib/webhook-guard.ts`、checkout/webhook 路由 |
 | ~~N-6~~ | ~~管理员高风险操作无二次确认/审批~~ | **基本关闭（2026-09-01，见 §1.12 + §1.23）**：第一阶段 6 路由服务端强制理由（§1.12）；第二阶段审批队列/双人复核（§1.23）——5 类高危动作（退款/调积分/改角色/封禁/渠道定价）落 `admin_approvals` 审批单，发起人≠批准人硬校验，批准即执行、失败可重试，单管理员部署自动降级留痕（双人复核需 ≥2 活跃管理员）。CSRF 防护已闭合（第十九批 §1.27，middleware 加固 + 豁免精确化 + 防护矩阵成文） | `lib/admin-approval.ts`、`data/migrations/0030_admin_approval_queue.sql`、`app/api/admin/approvals/route.ts`、`/admin/approvals` 页面、`lib/admin-reason.ts` |
 | ~~N-13~~ | ~~争议 / 拒付链路缺失~~ | **已关闭（2026-08-30，见 §1.7 + §1.9；剩余部分 2026-09-01 关闭，见 §1.21）**：状态机 + 三渠道解析器归一化 + 测试齐备；联盟奖励冲销（0028）+ 争议收入确认口径核实均已完成 | `services/dispute.ts`、`services/refund.ts`、`data/migrations/0028_affiliate_reward_reversal.sql`、`lib/payment/types.ts` |
-| P0-定价-1 | 管理员定价写入在自己收款金额权威源上（真相源钉死后升级） | ✅ **已加固（2026-08-30，见 §1.9）+ 双人复核闭合（2026-09-01，见 §1.23）**：写入路由加不变量上限；定价/渠道写入现走审批队列（双入口同规）。仍待办：事务化批量写入 | `app/api/admin/payment-products/route.ts`、`__tests__/payment-products-guard.test.ts`、`lib/admin-approval.ts` |
+| ~~P0-定价-1~~ | ~~管理员定价写入在自己收款金额权威源上~~ | ✅ **全部关闭**：加固（2026-08-30，§1.9）+ 双人复核（2026-09-01，§1.23）+ **事务化批量写入（2026-09-01，§1.28，迁移 0033 `apply_payment_config` RPC 原子写入，任一失败整体回滚，DB 层再验不变量）** | `app/api/admin/payment-products/route.ts`、`__tests__/payment-products-guard.test.ts`、`lib/admin-approval.ts`、`data/migrations/0033_transactional_pricing_write.sql` |
 
 ---
 
@@ -393,7 +401,7 @@
 
 - [x] **~~AI 请求幂等与状态机~~（已关闭 2026-09-01，见 §1.25/§1.26）**：迁移 0032 `ai_requests`（`UNIQUE(user_uuid, request_id)` + 请求体指纹 422 + running/refund_pending 崩溃补偿 + 24h TTL）；输入硬限制已补齐（§1.26：白名单 400 + 字节/条数 413）。
 - [x] **~~支付 webhook inbox 与每日对账~~（已关闭 2026-09-01，见 §1.24）**：迁移 0031 `payment_events`（三渠道先落库再处理 + `UNIQUE(provider, provider_event_id)` 幂等）+ `replayPendingEvents` cron 重放 + `reconcilePayments` 三规则对账（漏单/失败积压/金额抽核）+ `payment.reconcile_anomaly` 告警走 outbox。
-- [x] **~~定价真相源统一~~（已关闭 2026-08-30，见 §1.9）**：运行时权威 = `payment_products`，`data/pricing.ts` 仅种子/回退；写入路由加不变量校验。剩余：事务化批量写入（双人复核 ✅ 已闭合，见 §1.23）。
+- [x] **~~定价真相源统一~~（已关闭 2026-08-30，见 §1.9；事务化批量写入 2026-09-01 闭合，见 §1.28）**：运行时权威 = `payment_products`，`data/pricing.ts` 仅种子/回退；写入路由加不变量校验；双人复核（§1.23）；批准执行走事务化 RPC（迁移 0033）。
 - [ ] **迁移发布机制补全**：为 `CONCURRENTLY` 索引和 expand-contract 建立专用部署过程/CI job（本批只完成了常规事务迁移）。
 - [x] **副作用执行模型**：邮件、埋点、告警统一挂 `after()`（第七批）；关键事件 Transactional Outbox（0029，第十四批）。
 
@@ -436,7 +444,7 @@
 12. **~~Webhook inbox、对账~~（已关闭，2026-09-01 连库）**：迁移 0031 + 三路由 inbox 链 + cron 重放/三规则对账，见 §1.24。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）。**~~AI 请求状态机~~（已关闭，2026-09-01 连库）**：迁移 0032 + 幂等/崩溃补偿/TTL，见 §1.25。可靠副作用与支付/AI 崩溃补偿闭环至此完成。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：事务化定价批量写入 > 迁移发布机制（CONCURRENTLY/expand-contract） > 分布式限流。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）、CSRF（§1.27）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
+> **当前债务优先级（下一步）**：迁移发布机制（CONCURRENTLY/expand-contract） > 分布式限流（Upstash 路径） > 多供应商数据边界声明。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）、CSRF（§1.27）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
 
 ---
 
