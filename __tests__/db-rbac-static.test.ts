@@ -356,3 +356,71 @@ describe("联盟奖励冲销（迁移 0028 静态断言，第十三批）", () =
     expect(zh).toContain('"reversed"');
   });
 });
+
+describe("运营事件 Transactional Outbox（迁移 0029 静态断言，第十四批）", () => {
+  const sql = () =>
+    sourceOf("data/migrations/0029_op_event_outbox.sql").replace(/\s+/g, " ");
+
+  it("0029 队列表与幂等键：private schema + RLS + event_id 部分唯一索引", () => {
+    const src = sql();
+    expect(src).toContain("CREATE TABLE IF NOT EXISTS private.op_event_outbox");
+    // 投递幂等键：op_events.event_id 唯一（部分索引）
+    expect(src).toContain("ALTER TABLE public.op_events ADD COLUMN IF NOT EXISTS event_id UUID");
+    expect(src).toContain("ON public.op_events (event_id) WHERE event_id IS NOT NULL");
+    // deny-all + service_role 表权限（SECURITY INVOKER RPC 需要）
+    expect(src).toContain("ALTER TABLE private.op_event_outbox ENABLE ROW LEVEL SECURITY");
+    expect(src).toContain(
+      "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE private.op_event_outbox TO service_role"
+    );
+    expect(src).toContain(
+      "GRANT USAGE, SELECT ON SEQUENCE private.op_event_outbox_id_seq TO service_role"
+    );
+  });
+
+  it("0029 六个 RPC 齐备且仅授 service_role（REVOKE/GRANT 成对）", () => {
+    const src = sql();
+    const rpcs = [
+      "op_event_outbox_enqueue(TEXT, TEXT, TEXT, TEXT, JSONB)",
+      "op_event_outbox_claim(INT, INT)",
+      "op_event_deliver(UUID, TEXT, TEXT, TEXT, TEXT, JSONB)",
+      "op_event_outbox_ack(BIGINT)",
+      "op_event_outbox_fail(BIGINT, TEXT)",
+      "op_event_outbox_cleanup(INT)",
+    ];
+    for (const r of rpcs) {
+      const fn = r.split("(")[0];
+      expect(src).toContain(`CREATE OR REPLACE FUNCTION private.${fn}`);
+      expect(
+        src.includes(`REVOKE ALL ON FUNCTION private.${r} FROM PUBLIC, anon, authenticated`),
+        `REVOKE for ${r}`
+      ).toBe(true);
+      expect(
+        src.includes(`GRANT EXECUTE ON FUNCTION private.${r} TO service_role`),
+        `GRANT for ${r}`
+      ).toBe(true);
+    }
+    // 队列语义四要素：SKIP LOCKED 并发领取 + ON CONFLICT 幂等投递 + 退避 + 死信
+    expect(src).toContain("FOR UPDATE SKIP LOCKED");
+    expect(src).toContain("ON CONFLICT (event_id) WHERE event_id IS NOT NULL DO NOTHING");
+    expect(src).toContain("make_interval(mins => POWER(2, LEAST(attempts, 6))::int)");
+    expect(src).toContain("'dead'");
+  });
+
+  it("oplog 关键事件走 outbox（warn+ 入队、info 直插、入队失败退回直插、cron 兜底）", () => {
+    const src = sourceOf("lib/oplog.ts")
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n")
+      .replace(/\s+/g, " ");
+    // 入队 + 投递 + 兜底 + 告警链
+    expect(src).toContain('"op_event_outbox_enqueue"');
+    expect(src).toContain('"op_event_outbox_claim"');
+    expect(src).toContain('"op_event_deliver"');
+    expect(src).toContain('"op_event_outbox_ack"');
+    expect(src).toContain('"op_event_outbox_fail"');
+    expect(src).toContain('"op_event_outbox_cleanup"');
+    // cron 路由接入 outboxMaintenance
+    const cron = sourceOf("app/api/cron/daily/route.ts").replace(/\s+/g, " ");
+    expect(cron).toContain("outboxMaintenance");
+  });
+});

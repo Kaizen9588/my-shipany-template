@@ -7,7 +7,7 @@
 - **建表脚本**：唯一建库路径是 `data/migrations/0000_install_base.sql` 起的顺序迁移；`data/install.sql` 是历史脚本，禁止用于新库或生产库
 - **迁移机制**：`pnpm migrate` 是唯一可写 schema 的入口，按文件名序号执行并使用 `schema_migrations` 记录版本、事务级 advisory lock 串行化多实例；应用启动时 `instrumentation.ts` 仅只读校验版本，发现缺失迁移立即拒绝启动（见 `lib/migrate.ts`）
 - **迁移清单**（0000-0019）：基础建表 / 支付配置表 / 积分原子扣减 / 支付事务化 / 外键索引 / 匿名额度 / 密码登录 / 多渠道 / RBAC+审计 / 站内通知 / 金额比对 / 退款原子化 / 安全管理员引导字段 / system_settings / op_events / apikeys 前缀 / 匿名额度 off-by-one / 迟付恢复+联盟首付 / 历史默认账号禁用
-- **迁移清单**（0020-0028）：decrease_credits 用户级 advisory lock / refund_requested + credit_debts / 债务化准入 / 债务审计重键 / 资金 RPC 迁 private（0023）/ 全表 RLS deny-all（0024）/ 验证码列宽（0025）/ credit_lots 批次（0026）/ 默认管理员 pending_activation（0027）/ 联盟奖励冲销 `private.reverse_affiliate_reward`（0028，退款/拒付佣金 `completed→reversed`）
+- **迁移清单**（0020-0029）：decrease_credits 用户级 advisory lock / refund_requested + credit_debts / 债务化准入 / 债务审计重键 / 资金 RPC 迁 private（0023）/ 全表 RLS deny-all（0024）/ 验证码列宽（0025）/ credit_lots 批次（0026）/ 默认管理员 pending_activation（0027）/ 联盟奖励冲销 `private.reverse_affiliate_reward`（0028，退款/拒付佣金 `completed→reversed`）/ 运营事件 outbox（0029，`private.op_event_outbox` + enqueue/claim/deliver/ack/fail/cleanup 六 RPC，warn+ 关键事件持久化重试）
 - **表数量**：16 张（迁移 0000 基础 7 张 + 迁移新增 9 张，含 system_settings、op_events）
 - **存储过程**：资金与额度相关写操作全部下沉数据库原子执行（见文末「存储过程」一节），应用层不做 check-then-write
 

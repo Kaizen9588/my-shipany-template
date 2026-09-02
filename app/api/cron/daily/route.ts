@@ -3,6 +3,7 @@ import { expireStaleOrders } from "@/scripts/expire-orders";
 import { backupKeyTables } from "@/lib/backup";
 import { cleanupVerificationCodes } from "@/models/verification";
 import { cleanupAnonymousUsage } from "@/models/anonymous-usage";
+import { outboxMaintenance } from "@/lib/oplog";
 
 /**
  * GET /api/cron/daily -- 每日定时任务（6.16）
@@ -10,6 +11,7 @@ import { cleanupAnonymousUsage } from "@/models/anonymous-usage";
  * 2. 过期验证码清理（2.15）
  * 3. 匿名试用用量清理（docs/14 §2.6，30 天前记录）
  * 4. 关键表备份到 S3
+ * 5. 运营事件 outbox 兜底投递 + dead 死信清理（N-4，迁移 0029）
  *
  * 安全（2.13 修复）：Vercel Cron 自动带 Authorization: Bearer <CRON_SECRET> 头。
  * 此前端点在 CRON_SECRET 未设置时完全跳过校验，且会触发 users 全量导出上传--
@@ -38,6 +40,7 @@ export async function GET(req: Request) {
     const cleaned = await cleanupVerificationCodes();
     const cleanedAnonUsage = await cleanupAnonymousUsage(30);
     const backup = await backupKeyTables();
+    const outbox = await outboxMaintenance();
 
     return respData({
       expired_orders: expired,
@@ -45,6 +48,10 @@ export async function GET(req: Request) {
       cleaned_anonymous_usage: cleanedAnonUsage,
       backup_files: backup.exported,
       backup_error: backup.error || undefined,
+      outbox_delivered: outbox.delivered,
+      outbox_deduped: outbox.deduped,
+      outbox_failed: outbox.failed,
+      outbox_cleaned_dead: outbox.cleaned_dead,
     });
   } catch (e: any) {
     console.error("[cron/daily] failed:", e);

@@ -133,6 +133,23 @@ export function trackCriticalEvent(...)
 > 请求作用域内在「响应完成后、函数冻结前」的平台保证窗口执行，响应失败/redirect/notFound 仍执行。
 > **边界**：`after()` 只解决「根本没机会跑」（P1-A），不提供持久化重试；进程崩溃/断电仍会丢
 > 事件，「全量不能丢」仍需 Transactional Outbox（N-4，需新表，归迁移批次）落地后才算完全关闭。
+>
+> ✅ **N-4 已关闭（2026-09-02，迁移 0029，handoff §1.22）——Transactional Outbox 落地**：
+> - `private.op_event_outbox` 队列表 + 六个 RPC（全部 private schema、仅授 service_role，与 0023 同规）：
+>   `enqueue`（入队，返回 event_id）/ `claim`（`FOR UPDATE SKIP LOCKED` 原子领取 + processing 崩溃残留
+>   stale 回收）/ `deliver`（幂等落库 `op_events`，`op_events.event_id` 部分唯一索引 + `ON CONFLICT DO NOTHING`，
+>   重试/多 worker 绝不重复）/ `ack`（投递成功删队列行）/ `fail`（指数退避 2^n 分钟封顶 1h，超 8 次置 `dead` 死信）
+>   / `cleanup`（清理 dead 行）。
+> - `lib/oplog.ts` 分级：**info 直插**（可丢）；**warn/error/critical 入队**（INSERT 成功即持久化），随后
+>   ①本轮内联 dispatch 一次（通常立即落库）②后续 trackCriticalEvent 顺带清积压 ③每日 cron `/api/cron/daily`
+>   `outboxMaintenance()` 兜底投递 + 清死信。**入队失败退回直插**（outbox 故障不丢主流程事件）。
+> - **告警外呼移到落库持久化成功之后**：`notifyChannel` 故障只丢告警、不再连累事件本身（此前告警失败
+>   与落库失败耦合在同一个 after 回调）。
+> - 真库 e2e：入队 → claim → deliver(true) → 重复 deliver(false 幂等) → ack → fail 退避（in_backoff）→
+>   重投 → op_events 落库 2 行且队列清空 → cleanup 返 0；service_role 可执行 / anon 42501 拒绝。
+> - 已知边界：关键事件入队与业务变更**不在同一事务**（oplog 是旁路记录，业务 RPC 已自带事务），
+>   「严格 transactional outbox」语义下极端窗口仍可能丢「业务成功但入队前进程崩溃」的事件；
+>   队列 + 重试已覆盖「入队后任何环节失败」。对资金终态一致性而言，对账任务（P1）才是最后防线。
 
 **接入点清单**（v1 只接资金与安全相关事件，不贪多；2026-08 状态：5 类已接入 + 1 类仅落库不推送，2 类预留）：
 

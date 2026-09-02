@@ -154,7 +154,7 @@
 - [x] TypeScript：`tsc --noEmit` 通过。
 - [x] 全量 Vitest：**53 个测试文件、227 个用例通过**（3 个并发用例跳过）。
 - [x] ESLint：0 errors（124 个既有 warnings，与本批无关）。
-- [ ] **待办（N-6 剩余，需新表 → 归迁移批次）**：审批队列/双人复核；管理员操作走 transactional outbox 持久化（依赖 N-4）。
+- [ ] **待办（N-6 剩余，需新表 → 归迁移批次）**：审批队列/双人复核；管理员操作 outbox 持久化（N-4 底座 ✅ 已关闭 0029，见 §1.22，可复用 outbox 表扩展）。
 
 ### 1.14 第七批开发（2026-08-30 续，纯代码：P0-1 webhook 中间态 + 副作用 after() 调度）
 
@@ -169,7 +169,7 @@
 - **副作用执行模型（P1「副作用执行模型」纯代码部分）**
   - 新增 `lib/after-response.ts` `runAfterResponse()`：请求作用域内走 `after()`（next/server，Next 16 stable）——响应完成后、函数冻结前的平台保证窗口执行，响应失败/redirect/notFound 仍执行；请求作用域外（迁移/cron/单测）回退裸后台执行。
   - 接入：`lib/audit.ts`（`fireAndForgetAudit`）、`lib/oplog.ts`（`recordOpEvent` 改 void + `trackCriticalEvent` 告警外呼）、`lib/email/index.ts`（`fireAndForgetEmail`）、`lib/payment/index.ts`（站内通知 + 支付成功邮件 IIFE）。
-  - **边界**：transactional outbox（N-4）仍是正解——`after()` 只保证「进程不被提前冻结」，不提供持久化重试；断电/崩溃仍会丢。outbox 需新表，归迁移批次。
+  - **边界**：transactional outbox（N-4）仍是正解——`after()` 只保证「进程不被提前冻结」，不提供持久化重试；断电/崩溃仍会丢。~~outbox 需新表，归迁移批次~~（✅ 已关闭，0029，见 §1.22）。
   - 测试：`__tests__/oplog.test.ts` mock `next/server` 的 `after` 为微任务立即执行，新增「同步返回不阻塞」用例。
 
 ### 1.15 第七批验证结果（2026-08-30 续）
@@ -275,6 +275,18 @@
 
 **验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 262 用例通过**；ESLint 0 errors（124 warnings 均为既有）。
 
+### 1.22 第十四批：运营事件 Transactional Outbox（N-4 关闭，2026-09-02 连库）
+
+- **缺口**：`recordOpEvent` 对 `op_events` 是 fire-and-forget 直插、吞错——数据库闪断/进程崩溃会让 warn+ 关键事件（支付、退款、调账、webhook 伪造告警）永久丢失。第七批 `after()`（P1-A）只解决「有没有开始跑」，不提供持久化重试。
+- **迁移 0029**（已连库应用）：`private.op_event_outbox` 队列表（pending→processing→删/dead；attempts/max_attempts=8 + last_error + available_at 指数退避）+ `op_events.event_id` UUID 部分唯一索引（投递幂等键）+ 六个 RPC，全部 private schema、REVOKE 后仅授 service_role（与 0023 同规）：`enqueue`/`claim`（`FOR UPDATE SKIP LOCKED` + processing 超 stale 分钟崩溃残留回收）/`deliver`（`ON CONFLICT (event_id) DO NOTHING` 幂等落库，返回是否新插入）/`ack`（成功删队列行）/`fail`（退避 2^n 分钟封顶 1h，超限置 dead）/`cleanup`（清死信）。注意：RPC 为 SECURITY INVOKER，需 GRANT service_role 表 + 序列权限。
+- **oplog 分级改造**：info 直插（可丢，docs/16 明确允许）；warn/error/critical 走 `enqueue`（一条 INSERT，成功即持久化）→ ①本轮内联 dispatch ②后续 trackCriticalEvent 顺带清积压 ③每日 cron `outboxMaintenance()`（投递 100 批 + 清死信）兜底。入队失败退回直插（outbox 故障不丢主流程事件）。**告警外呼移到持久化成功之后**——notifyChannel 故障只丢告警不丢事件（解耦此前告警与落库同回调的耦合）。
+- **cron 接入**：`/api/cron/daily` 增加 `outboxMaintenance()`，响应带 `outbox_delivered/deduped/failed/cleaned_dead`。
+- **真库 e2e**：enqueue×2 → claim 领取 2 行(attempts=1) → deliver(true) → 重复 deliver(false 幂等) → ack → fail（退避生效，立即 claim 空）→ 重投 → op_events 落库 2 行且队列清空 → cleanup 返 0；service_role EXECUTE=真 / anon=假（42501）。
+- **测试**：`oplog.test.ts` 重写 9 用例（info 直插/warn+ 入队/入队成功告警/入队失败退回直插/吞错纪律/void 语义/dispatch delivered+dedup+ack/dispatch fail 退避/cron 兜底）；`db-rbac-static.test.ts` 第十四批 3 用例（0029 表+幂等键+RLS+GRANT；六 RPC REVOKE/GRANT 成对+SKIP LOCKED/ON CONFLICT/退避/死信四要素；oplog 接线+cron）。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 270 用例通过**；ESLint 0 errors。
+**已知边界**：入队与业务变更不在同一事务（oplog 是旁路记录，业务 RPC 自带事务），极端窗口「业务成功但入队前崩溃」仍可能丢事件——对账任务（P1）为最后防线；文档已如实标注。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -315,7 +327,7 @@
 | ~~N-1~~ | ~~管理员通知 API 回显完整 webhook secret~~ | **已关闭（2026-08-30）**：GET/RSC 只出 set 标志 + 末四位掩码，PUT 留空保留现值（见 §1.4） | `models/notify.ts`、`__tests__/notify-settings-mask.test.ts` |
 | N-2 | 资金 RPC 没有数据库权限边界 | ✅ **已关闭（2026-09-01，连库，见 §1.17）**：迁移 0023 五个资金函数迁 `private` + REVOKE/仅授 service_role + 四资金表 RLS；6 处调用点 `serverClient().schema("private")`；Dashboard Exposed schemas 已加 private；连库验证 anon 三层被拒、应用通路 5/5 可达 | `data/migrations/0023_private_schema_fund_rpcs.sql`、`__tests__/db-rbac-static.test.ts`、docs/03 §生产权限基线 |
 | N-3 | 服务端与用户数据库 client 未分离 | **已关闭（2026-08-30）**：`models/db.ts` 拆 `serverClient()`/`userClient()`，资金/支付/退款/后台统计改走 `serverClient()`；兼容入口保留（见 §1.4 续） | `models/db.ts`、`__tests__/db-rbac-static.test.ts` |
-| N-4 | 关键审计事件 fire-and-forget 会丢失 | 支付、退款、调账无法可靠追溯；需 transactional outbox、重试和最后错误 | `lib/oplog.ts`、`data/migrations/0014_op_events.sql` |
+| ~~N-4~~ | ~~关键审计事件 fire-and-forget 会丢失~~ | **已关闭（2026-09-02，0029，见 §1.22）**：Transactional Outbox 队列 + 幂等投递 + 退避死信 + 每日 cron 兜底 | `lib/oplog.ts`、`data/migrations/0029_op_event_outbox.sql` |
 | ~~N-5~~ | ~~高成本端点限流 fail-open~~ | **已关闭（2026-08-30，见 §1.9）**：`rateLimitUser` 回落内存日窗口（fail-closed）；checkout 加 per-IP/per-user 限流；webhook 加 body 64KB 上限 | `lib/ratelimit.ts`、`lib/webhook-guard.ts`、checkout/webhook 路由 |
 | N-6 | 管理员高风险操作无二次确认/审批 | ⚠️ **部分关闭（2026-08-30，见 §1.12）**：6 路由（退款/调账/角色封禁/定价/渠道/告警密钥）服务端强制理由（`lib/admin-reason.ts` parseReason 5~200 字符）+ reason 入审计 + 后台 UI 全部同步。剩余：审批队列/双人复核（需新表，归迁移批次）、CSRF 防护 | `lib/admin-reason.ts`、6 个 admin 路由、`components/dashboard/stats/order-actions.tsx`、3 个 admin 表单 |
 | ~~N-13~~ | ~~争议 / 拒付链路缺失~~ | **已关闭（2026-08-30，见 §1.7 + §1.9；剩余部分 2026-09-01 关闭，见 §1.21）**：状态机 + 三渠道解析器归一化 + 测试齐备；联盟奖励冲销（0028）+ 争议收入确认口径核实均已完成 | `services/dispute.ts`、`services/refund.ts`、`data/migrations/0028_affiliate_reward_reversal.sql`、`lib/payment/types.ts` |
@@ -331,7 +343,7 @@
 - [ ] **支付 webhook inbox 与每日对账**：所有渠道事件先持久化，再幂等处理；处理远端成功但本地失败、退款成功但积分回收为 0 等差异。见 `docs/03-database-schema.md` 中 `payment_events`。
 - [x] **~~定价真相源统一~~（已关闭 2026-08-30，见 §1.9）**：运行时权威 = `payment_products`，`data/pricing.ts` 仅种子/回退；写入路由加不变量校验。剩余：事务化批量写入、双人复核（排产 N-6/P1 项）。
 - [ ] **迁移发布机制补全**：为 `CONCURRENTLY` 索引和 expand-contract 建立专用部署过程/CI job（本批只完成了常规事务迁移）。
-- [ ] **副作用执行模型**：邮件、埋点、告警不能裸 fire-and-forget；Vercel 场景使用 `after()`、critical 同步发送或 transactional outbox。
+- [x] **副作用执行模型**：邮件、埋点、告警统一挂 `after()`（第七批）；关键事件 Transactional Outbox（0029，第十四批）。
 
 ### P2（中优先级）
 
@@ -363,15 +375,16 @@
 5. **~~N-5 限流 fail-closed / N-13 争议链路 / P1-8+pricing 写入校验~~（已关闭，见 §1.9）**：纯代码批次已完成。P0-1 剩余与 N-13 剩余见本行下面：
    - ~~P0-1:webhook 只登记 `refund_requested` 中间态~~（已接线，见 §1.14）：剩 credit_lots 精确批次准入校验、后台回收工作台；~~应用 0021/0022~~（0021/0022 已应用，2026-09-01）。
    - ~~N-13 剩余:联盟奖励冻结、争议收入确认~~（已关闭，见 §1.21）：0028 冲销 RPC + refund/dispute_lost 接线；收入确认口径核实为已正确（stats 只计 paid）。
-6. **~~N-6 高风险操作强制理由~~（服务端+UI 已关闭，见 §1.12）**：纯代码部分完成。剩余归迁移批次：审批队列/双人复核（需新表）+ 管理员操作 outbox 持久化（依赖 N-4）。
+6. **~~N-6 高风险操作强制理由~~（服务端+UI 已关闭，见 §1.12）**：纯代码部分完成。剩余归迁移批次：审批队列/双人复核（需新表）；outbox 底座已就绪（0029，见 §1.22）可复用。
 7. **~~新 P1（advisors 扫描 2026-09-01）：public 其余表 RLS~~（已关闭，2026-09-01 连库）**：迁移 0024 对 public 全部 19 张业务表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated 全部表权限（含 0023 资金四表补 REVOKE），anonymous_usage 两 RPC EXECUTE 仅授 service_role + search_path 钉死；连库验证 anon 直查全部 401、权限归零、应用关键路径回归通过。附带修复两个回归暴露的预存 bug：0025（verification_codes.code 列宽 VARCHAR(10)→64，SHA-256 哈希存不进去，注册/重置全挂）+ `consumeVerificationCode` update 未传 `{ count: "exact" }`（恒 return false）。见 §1.18。
 8. **~~P0-1 剩余：credit_lots 批次账本 + 回收工作台~~（已关闭，2026-09-01 连库）**：迁移 0026 已应用（批次 FIFO 扣减 + 退款精确准入 + `settle_credit_debt` 清偿闭环）；回收工作台 `/admin/recovery` 上线（闭合 webhook 登记的退款 + 清偿债务 + 恢复账号）；真库 e2e 全链路（发放→消费→精确退款→债务→清偿）通过。见 §1.19。
 9. **~~默认管理员恢复 + 强制改密闭环~~（已关闭，2026-09-02）**：迁移 0027 + getAdminUser/getUserInfo/console layout/requireAdmin 四处修复 + 浏览器 e2e 全链路通过。见 §1.20。
 10. **~~N-13 剩余：联盟奖励冲销 + 争议收入确认~~（已关闭，2026-09-01 连库）**：迁移 0028 `private.reverse_affiliate_reward`（completed→reversed，幂等）+ `processRefund`/`dispute_lost` 接线 + my-invites reversed 状态；真库 e2e（冲销/幂等/anon 拒绝）通过；收入确认口径核实 stats 只计 paid。见 §1.21。
-11. **Webhook inbox、对账、AI 请求状态机、outbox**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试仍需新表。
+11. **~~N-4：运营事件 Transactional Outbox~~（已关闭，2026-09-02 连库）**：迁移 0029 `private.op_event_outbox` + 六 RPC（enqueue/claim SKIP LOCKED/deliver 幂等/ack/fail 退避死信/cleanup）+ `lib/oplog.ts` warn+ 分级入队（入队即持久化）+ 三触发面投递（内联/顺带/每日 cron 兜底）+ 告警外呼后移；真库 e2e 全链路通过。见 §1.22。
+12. **Webhook inbox、对账、AI 请求状态机**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）；剩余 = webhook inbox 去重与对账任务（也是 outbox 极端窗口丢失的最后防线）。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：N-4（outbox，after() 只是过渡）> N-6 剩余（审批队列，需新表）> P1（AI 请求状态机、webhook inbox/对账）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1/N-2/N-3/N-5/N-13（含联盟奖励冲销）/public 表 RLS（0024）/迁移应用（0019–0028）均已关闭。
+> **当前债务优先级（下一步）**：N-6 剩余（审批队列/双人复核，需新表）> P1（webhook inbox/对账、AI 请求状态机）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1/N-2/N-3/N-4（outbox 0029）/N-5/N-13（含联盟奖励冲销）/public 表 RLS（0024）/迁移应用（0019–0029）均已关闭。
 
 ---
 
