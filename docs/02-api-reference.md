@@ -94,6 +94,26 @@
 > 向第三方开放前必须把 `/api/v1/*` 端点族的 CSRF/CORS 契约写明并测试
 > （如：带 Bearer 且无 cookie 时跳过 CSRF 校验；全局规则见 boundary-spec §三）。
 
+> ✅ **P3-4 已关闭（第十九批，2026-09-01）——CSRF/CORS/Bearer 防护矩阵**（middleware.ts 第十九批加固 + `__tests__/middleware-csrf.test.ts` 10 用例）：
+>
+> **全局规则（middleware，所有 /api/*）**：非 GET/HEAD/OPTIONS 校验 `Origin` 头——
+> 缺失 Origin 放行（curl/SDK/Bearer 调用无 cookie CSRF 面）；存在则必须命中
+> `NEXT_PUBLIC_WEB_URL`（站点 origin，钉死）∪ 同源 Host 派生 ∪ `CORS_ALLOWED_ORIGINS`，
+> 否则 403。生产 https 站点拒绝 `http://` 同源 origin（HSTS 降级防护）。豁免（精确匹配）：
+> `/api/cron/*`（Bearer CRON_SECRET）与 `/api/*-notify`（渠道签名验证）——两类服务端到服务端
+> 端点无 cookie，CSRF 不适用；豁免从子串匹配改为后缀/前缀精确匹配，防未来路径意外命中。
+>
+> | 端点族 | 认证 | CSRF 层 | 说明 |
+> |---|---|---|---|
+> | `/api/admin/*` | session cookie（requireAdmin） | middleware Origin 校验 | 缺 Origin 放行但无 cookie 即 401；带 cookie 的浏览器请求必带 Origin，跨站被 403 |
+> | `/api/checkout`、`/api/user/*`、`/api/notifications/*`、`/api/ping`、`/api/update-invite*` | session cookie（getUserUuid） | middleware Origin 校验 | 同上；checkout 另有 cancel_url 同源校验（应用层） |
+> | `/api/v1/ai/generate` | session cookie **或** `Authorization: Bearer sk-*` | middleware Origin 校验 | Bearer 调用无 cookie → 无 CSRF 面，缺 Origin 放行（设计行为，非豁免）；session 调用带 cookie 必带 Origin 走校验 |
+> | `/api/v1/ai/demo` | 无认证（IP 配额） | middleware Origin 校验 | 跨站浏览器请求被 403；非浏览器调用靠 IP 配额 + 输入硬限制约束 |
+> | `/api/auth/*` | NextAuth 自管 | NextAuth v5 内建 CSRF token | Auth.js 自带 double-submit cookie，不依赖本矩阵 |
+> | `/api/*-notify`、`/api/cron/*` | 渠道签名 / CRON_SECRET | 豁免（精确匹配） | 服务端到服务端无 Origin；签名/密钥即防护 |
+>
+> CORS 响应头仅对 `CORS_ALLOWED_ORIGINS` 白名单 origin 反射 `Access-Control-Allow-Origin`（默认空 = 不允许跨域）。
+
 ---
 
 ## 接口清单

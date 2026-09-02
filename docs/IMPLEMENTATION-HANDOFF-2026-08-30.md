@@ -299,7 +299,7 @@
 - **测试**：`__tests__/admin-approval.test.ts` 16 用例（双人不变量/单管理员降级/自批拒绝/级别不足/并发抢占/批准即执行/执行失败/驳回/撤回/5 类 dispatch 校验）；`db-rbac-static.test.ts` 第十五批 3 用例（0030 表结构+权限收口；lib 双人复核语义；5 路由不再直改+approvals 路由+页面）；`payment-products-guard.test.ts` 适配审批语义。
 
 **验证**：`tsc --noEmit` 通过；全量 Vitest **55 文件 289 用例通过**；ESLint 0 errors（124 个既有 warnings 不变）。
-**已知边界**：①批准与执行在同一请求内完成（跨服务原子性由各 service 内部事务保证，审批单状态先行）；②CSRF 防护仍缺（N-6 原 P0 表述中的另一项，未关）；③单人部署降级语义使双人复核退化为记录留痕——安全水位取决于管理员账号数量。
+**已知边界**：①批准与执行在同一请求内完成（跨服务原子性由各 service 内部事务保证，审批单状态先行）；②CSRF 防护已于第十九批闭合（2026-09-01，middleware 加固，见 §1.27）；③单人部署降级语义使双人复核退化为记录留痕——安全水位取决于管理员账号数量。
 
 ### 1.24 第十六批：支付事件 Inbox 与每日对账（P1-inbox 关闭，2026-09-01 连库）
 
@@ -331,6 +331,13 @@
 
 - **generate 路由 3.1 节**（鉴权/限流之后、扣费之前）：prompt 非字符串 400、messages 非数组 400；`AI_MAX_PROMPT_BYTES`（默认 32768）prompt 超 413；`AI_MAX_MESSAGES`（默认 50）条数超 413；messages 逐项白名单 `{role: system|user|assistant, content: string}` 违规 400；messages 总字节超 `AI_MAX_PROMPT_BYTES` 413。校验在扣费之前且已过限流——413 不会成为计费绕过或免费重试通道。
 - **测试**：`__tests__/ai-input-limit.test.ts` 7 用例（32KB 上限/环境变量调小/messages 总字节/条数上限/白名单 400/类型 400/合法放行到扣费）；`db-rbac-static.test.ts` 增 1 用例（静态断言限制块存在且位于 decreaseCredits 之前）。全量 **58 文件 342 用例**（基线 334 + 本批 8）。
+
+### 1.27 第十九批：CSRF 防护加固 + 防护矩阵成文（N-6 收尾项 + P3-4 关闭，2026-09-01）
+
+- **背景**：6.22 已有 middleware Origin 校验（所有非 GET /api/*，豁免 webhook/cron），本批为加固而非从零实现。admin 与用户端认证全部是 httpOnly session cookie（NextAuth v5 默认），跨站风险真实存在；`/api/v1/*` 的 Bearer sk- 调用无 cookie，无 CSRF 面。
+- **middleware 加固**（`middleware.ts`）：①豁免从 `includes("-notify")` 子串匹配改为精确匹配（`/api/cron/*` 前缀 + `/api/*-notify` 后缀正则），防未来路径名意外命中绕过 CSRF（fail-open）；②允许集合新增 `NEXT_PUBLIC_WEB_URL` 钉死站点 origin（不再纯依赖客户端可篡改的 Host 头派生）；③生产 https 站点拒绝 `http://` 同源 origin（HSTS 降级防护，开发环境保留）；④缺失 Origin 仍放行（curl/SDK/Bearer 无 cookie CSRF 面，设计行为写入文档）。
+- **防护矩阵成文**（docs/02 §认证机制，P3-4 关闭）：全局规则 + 按端点族矩阵（admin / 用户 session / v1 generate 双认证 / demo / NextAuth 自管 / webhook-cron 豁免）。
+- **测试**：`__tests__/middleware-csrf.test.ts` 10 用例（同源放行/跨站 403/缺 Origin 放行/WEB_URL 钉死/生产 http 降级拒绝/CORS 白名单/四类豁免/子串不豁免/GET-HEAD-OPTIONS 不校验/非 API 路径不走 CSRF）。全量 **59 文件 352 用例**（基线 342 + 本批 10）。
 
 ### 1.11 本次验证结果（第一批）
 
@@ -374,7 +381,7 @@
 | N-3 | 服务端与用户数据库 client 未分离 | **已关闭（2026-08-30）**：`models/db.ts` 拆 `serverClient()`/`userClient()`，资金/支付/退款/后台统计改走 `serverClient()`；兼容入口保留（见 §1.4 续） | `models/db.ts`、`__tests__/db-rbac-static.test.ts` |
 | ~~N-4~~ | ~~关键审计事件 fire-and-forget 会丢失~~ | **已关闭（2026-09-02，0029，见 §1.22）**：Transactional Outbox 队列 + 幂等投递 + 退避死信 + 每日 cron 兜底 | `lib/oplog.ts`、`data/migrations/0029_op_event_outbox.sql` |
 | ~~N-5~~ | ~~高成本端点限流 fail-open~~ | **已关闭（2026-08-30，见 §1.9）**：`rateLimitUser` 回落内存日窗口（fail-closed）；checkout 加 per-IP/per-user 限流；webhook 加 body 64KB 上限 | `lib/ratelimit.ts`、`lib/webhook-guard.ts`、checkout/webhook 路由 |
-| ~~N-6~~ | ~~管理员高风险操作无二次确认/审批~~ | **基本关闭（2026-09-01，见 §1.12 + §1.23）**：第一阶段 6 路由服务端强制理由（§1.12）；第二阶段审批队列/双人复核（§1.23）——5 类高危动作（退款/调积分/改角色/封禁/渠道定价）落 `admin_approvals` 审批单，发起人≠批准人硬校验，批准即执行、失败可重试，单管理员部署自动降级留痕（双人复核需 ≥2 活跃管理员）。仅剩：CSRF 防护（独立项） | `lib/admin-approval.ts`、`data/migrations/0030_admin_approval_queue.sql`、`app/api/admin/approvals/route.ts`、`/admin/approvals` 页面、`lib/admin-reason.ts` |
+| ~~N-6~~ | ~~管理员高风险操作无二次确认/审批~~ | **基本关闭（2026-09-01，见 §1.12 + §1.23）**：第一阶段 6 路由服务端强制理由（§1.12）；第二阶段审批队列/双人复核（§1.23）——5 类高危动作（退款/调积分/改角色/封禁/渠道定价）落 `admin_approvals` 审批单，发起人≠批准人硬校验，批准即执行、失败可重试，单管理员部署自动降级留痕（双人复核需 ≥2 活跃管理员）。CSRF 防护已闭合（第十九批 §1.27，middleware 加固 + 豁免精确化 + 防护矩阵成文） | `lib/admin-approval.ts`、`data/migrations/0030_admin_approval_queue.sql`、`app/api/admin/approvals/route.ts`、`/admin/approvals` 页面、`lib/admin-reason.ts` |
 | ~~N-13~~ | ~~争议 / 拒付链路缺失~~ | **已关闭（2026-08-30，见 §1.7 + §1.9；剩余部分 2026-09-01 关闭，见 §1.21）**：状态机 + 三渠道解析器归一化 + 测试齐备；联盟奖励冲销（0028）+ 争议收入确认口径核实均已完成 | `services/dispute.ts`、`services/refund.ts`、`data/migrations/0028_affiliate_reward_reversal.sql`、`lib/payment/types.ts` |
 | P0-定价-1 | 管理员定价写入在自己收款金额权威源上（真相源钉死后升级） | ✅ **已加固（2026-08-30，见 §1.9）+ 双人复核闭合（2026-09-01，见 §1.23）**：写入路由加不变量上限；定价/渠道写入现走审批队列（双入口同规）。仍待办：事务化批量写入 | `app/api/admin/payment-products/route.ts`、`__tests__/payment-products-guard.test.ts`、`lib/admin-approval.ts` |
 
@@ -404,7 +411,7 @@
 
 - [ ] 清理根目录 `README.md` / `DEVELOPMENT_PLAN.md` 中已删除 `docs/12` 的悬空链接。
 - [ ] 统一文档章节编号及过时“已完成”标记。
-- [ ] 明确 `/api/v1/*` 的 CORS / CSRF / Bearer API Key 防护矩阵。
+- [x] **~~明确 `/api/v1/*` 的 CORS / CSRF / Bearer API Key 防护矩阵~~（已关闭，第十九批 §1.27）**：矩阵成文于 docs/02 §认证机制；middleware CSRF 加固（豁免精确化 + NEXT_PUBLIC_WEB_URL 钉死 + 生产 http 降级拒绝）+ `__tests__/middleware-csrf.test.ts` 10 用例。
 - [ ] 中文 prompt 的 token 估算不能继续用 `prompt.length / 4`。
 - [ ] 新用户赠分的批量注册防刷策略。
 - [ ] 评估并补充用户导出、运营审批和高风险操作确认 UX。
@@ -429,7 +436,7 @@
 12. **~~Webhook inbox、对账~~（已关闭，2026-09-01 连库）**：迁移 0031 + 三路由 inbox 链 + cron 重放/三规则对账，见 §1.24。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）。**~~AI 请求状态机~~（已关闭，2026-09-01 连库）**：迁移 0032 + 幂等/崩溃补偿/TTL，见 §1.25。可靠副作用与支付/AI 崩溃补偿闭环至此完成。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：CSRF 防护 > 事务化定价批量写入 > 迁移发布机制（CONCURRENTLY/expand-contract）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
+> **当前债务优先级（下一步）**：事务化定价批量写入 > 迁移发布机制（CONCURRENTLY/expand-contract） > 分布式限流。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）、CSRF（§1.27）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
 
 ---
 

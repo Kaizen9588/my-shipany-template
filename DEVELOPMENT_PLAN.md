@@ -598,6 +598,7 @@ my-shipany-template/
 | **技术** | NextAuth 自带 CSRF（Auth.js v5），自定义 API 需补充 |
 | **方案** | 使用 `next/headers` cookies + Origin 校验 |
 | **注意** | **必须排除 webhook 端点**（`/api/*-notify` 是服务端到服务端 POST，无 cookie/Origin，已靠签名验证保护）；CSRF 中间件误伤会导致支付回调失败 |
+| **状态** | ✅ 已落地并加固（第十九批，2026-09-01）：middleware Origin 校验 + 豁免精确化 + `NEXT_PUBLIC_WEB_URL` 钉死 + 生产 http 降级拒绝；防护矩阵成文 docs/02；测试 `__tests__/middleware-csrf.test.ts`（另见 docs/02 §认证机制 P3-4 关闭注记） |
 
 #### 6.23 可观测性与告警（日志采集 + 支付告警 + 飞书/企微机器人）
 

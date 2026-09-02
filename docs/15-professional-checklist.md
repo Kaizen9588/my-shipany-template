@@ -35,7 +35,7 @@
 | 项 | 状态 | 实现位置 |
 |----|------|----------|
 | 安全响应头 | ✅ | `next.config.mjs` headers（X-Frame-Options / no sniff / Referrer / Permissions / COOP） |
-| CSRF 防护 | ✅ | `middleware.ts` Origin 校验（webhook/cron 豁免） |
+| CSRF 防护 | ✅ | `middleware.ts` Origin 校验（webhook/cron 豁免精确化 + WEB_URL 钉死 + 生产 http 降级拒绝，第十九批加固；矩阵见 docs/02） |
 | CORS 白名单 | ✅ | `middleware.ts` + `CORS_ALLOWED_ORIGINS` |
 | 密码哈希 | ✅ | bcrypt（`lib/password.ts`） |
 | 默认管理员弱口令 | ❌ No-Go | 迁移 0012 无条件创建 `admin@shipany.local/123456/super_admin`，谁先登谁改密（P0-3，第九轮） |
