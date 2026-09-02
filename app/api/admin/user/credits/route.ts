@@ -1,12 +1,14 @@
 import { respData, respErr } from "@/lib/resp";
 import { requireAdmin } from "@/lib/auth";
-import { adjustCreditsByAdmin } from "@/services/credit";
 import { findUserByUuid } from "@/models/user";
 import { fireAndForgetAudit } from "@/lib/audit";
 import { parseReason } from "@/lib/admin-reason";
+import { submitApproval } from "@/lib/admin-approval";
 
 /**
- * POST /api/admin/user/credits —— 管理员手动调整积分（6.9；N-6：强制 reason）
+ * POST /api/admin/user/credits —— 管理员手动调整积分（6.9）
+ * N-6：强制 reason + 审批队列（双人复核）——不再直接执行，落审批单，
+ * 由另一位管理员在 /admin/approvals 批准即执行（单管理员部署自动降级照常执行）。
  * 请求：{ user_uuid, credits, reason }（credits 可正可负，reason 进审计）
  */
 export async function POST(req: Request) {
@@ -31,21 +33,34 @@ export async function POST(req: Request) {
       return respErr("user not found");
     }
 
-    await adjustCreditsByAdmin({
-      user_uuid,
-      credits,
-      remark: parsed.reason,
+    const { approval, single_admin } = await submitApproval({
+      action: "adjust_credits",
+      requester: admin,
+      reason: parsed.reason,
+      target_uuid: user_uuid,
+      payload: { user_uuid, credits },
     });
 
     fireAndForgetAudit({
       admin_uuid: admin.uuid || "",
-      action: "admin.user.adjust_credits",
+      action: "admin.user.adjust_credits_requested",
       target_type: "user",
       target_uuid: user_uuid,
-      detail: JSON.stringify({ credits, reason: parsed.reason }),
+      detail: JSON.stringify({
+        credits,
+        approval_id: approval.id,
+        approval_status: approval.status,
+        single_admin,
+        reason: parsed.reason,
+      }),
     });
 
-    return respData({ adjusted: true });
+    return respData({
+      approval_required: true,
+      approval_id: approval.id,
+      status: approval.status,
+      single_admin,
+    });
   } catch (e: any) {
     if (e.message === "no admin access") {
       return respErr("no admin access", 403);

@@ -67,6 +67,12 @@ export function RefundButton({ orderNo }: { orderNo: string }) {
       }
       if (data?.manual) {
         toast.info(data.message);
+      } else if (data?.approval_required) {
+        toast.success(
+          data.single_admin
+            ? "单管理员模式：审批单已自动批准并执行"
+            : "已提交审批，等待另一位管理员批准后执行"
+        );
       } else {
         toast.success(
           `refunded, deducted ${data?.deducted_credits || 0} credits`

@@ -37,7 +37,15 @@ export function CloseRefundButton({ orderNo }: { orderNo: string }) {
         toast.error(message);
         return;
       }
-      toast.success(`已闭合：回收 ${data?.deducted_credits || 0} 积分`);
+      if (data?.approval_required) {
+        toast.success(
+          data.single_admin
+            ? "单管理员模式：审批单已自动批准并执行"
+            : "已提交闭合审批，等待另一位管理员批准后执行"
+        );
+      } else {
+        toast.success(`已闭合：回收 ${data?.deducted_credits || 0} 积分`);
+      }
       window.location.reload();
     } catch (e) {
       toast.error("close refund failed");

@@ -154,7 +154,7 @@
 - [x] TypeScript：`tsc --noEmit` 通过。
 - [x] 全量 Vitest：**53 个测试文件、227 个用例通过**（3 个并发用例跳过）。
 - [x] ESLint：0 errors（124 个既有 warnings，与本批无关）。
-- [ ] **待办（N-6 剩余，需新表 → 归迁移批次）**：审批队列/双人复核；管理员操作 outbox 持久化（N-4 底座 ✅ 已关闭 0029，见 §1.22，可复用 outbox 表扩展）。
+- [x] **待办已闭合**：审批队列/双人复核（✅ 2026-09-01 0030，见 §1.23）；管理员操作 outbox 持久化（✅ 0029，见 §1.22）。
 
 ### 1.14 第七批开发（2026-08-30 续，纯代码：P0-1 webhook 中间态 + 副作用 after() 调度）
 
@@ -287,6 +287,20 @@
 **验证**：`tsc --noEmit` 通过；全量 Vitest **54 文件 270 用例通过**；ESLint 0 errors。
 **已知边界**：入队与业务变更不在同一事务（oplog 是旁路记录，业务 RPC 自带事务），极端窗口「业务成功但入队前崩溃」仍可能丢事件——对账任务（P1）为最后防线；文档已如实标注。
 
+### 1.23 第十五批：管理员审批队列/双人复核（N-6 关闭，2026-09-01 连库）
+
+- **缺口**：N-6 第一阶段（§1.12）只做了强制理由，管理员单账号即可执行退款/调账/改角色/封禁/定价——被盗号或误操作仍可直接造成资金损失，缺第二人复核。
+- **迁移 0030**（已连库应用）：`private.admin_approvals` 审批单表（action/required_level/target/payload JSONB 快照/reason/status CHECK 七态 pending→approved→executing→executed、rejected/cancelled 终态、failed 可重试/requester+approver 双方身份/approve_reason/exec_error）+ 双索引（open 队列 partial、requester 历史）+ RLS deny-all + REVOKE anon/authenticated + 仅授 service_role（表+序列，0024/0023 同规）。private schema 无需 RPC，全部走 `serverClient()`。
+- **双人复核语义**：**发起人不得批准/驳回自己的单据**（`decideApproval` 服务端硬校验 `requester_uuid === approver_uuid` 即拒）；批准人须达单据 `required_level`（user_role 单据要求 super_admin）。**单管理员部署不死锁**：`submitApproval` 检查是否存在其他活跃管理员（role∈admin/super_admin 且 active，判定失败抛错不放行）——有则 pending 等复核；无则自动置 approved（`approve_reason='single-admin mode'`）照常执行，流程审计统一。**双人复核保护要求生产部署 ≥2 个活跃管理员**（boundary-spec 已标注）。
+- **5 类动作强制审批**（提交即落单、不再原路由执行）：退款/闭合退款（`/api/admin/refund`，refund_requested 闭合与 Stripe 退款都进队列；无商户退款 API 渠道仍走手动指引豁免）、积分调账（`/api/admin/user/credits` + credits/adjust 页 server action）、改角色（`/api/admin/user` role 段 + users 详情 server action，required_level=super_admin）、封禁/解禁（同路由 status 段；super_admin 账号延续不可改）、渠道+定价（`/api/admin/payment-products` 与 `/api/admin/payment-settings` 双入口合一类 action，payload 服务端快照）。告警密钥（notify-settings）豁免审批保留 reason（应急及时性）。
+- **批准即执行**：`/api/admin/approvals`（GET 队列；POST op=submit/decide/retry/cancel）。`decideApproval` 批准 = 条件更新占用 executing（status 前置匹配防并发双批）→ 按 action 分发复用既有 service（processRefund/adjustCreditsByAdmin/updateUserByAdmin/updatePaymentProduct…），执行前重新校验（定价不变量、目标存在性、refundable 状态）；失败置 failed 留 exec_error（LEFT 500）可重试；重试与 5 分钟 stale 回收走条件占用防双执行。执行成功/失败/提交/驳回全部 trackCriticalEvent（warn+ 走 outbox 持久化）。
+- **UI**：`/admin/approvals` 审批队列页（待处理+最近记录双表、内容摘要/发起人/复核人/失败原因、本人发起单据只可撤回）+ 侧边栏「审批队列」入口；5 个前端调用点 toast 适配 `approval_required/single_admin` 响应。
+- **真库 e2e**：pending 单 → 条件占用 executing（第二个复核人抢占返 0 行）→ executed；failed 重占用；executing 超 5 分钟 stale 回收命中；anon/authenticated 对表零权限（仅 service_role）；RLS 启用。e2e 数据已清理。
+- **测试**：`__tests__/admin-approval.test.ts` 16 用例（双人不变量/单管理员降级/自批拒绝/级别不足/并发抢占/批准即执行/执行失败/驳回/撤回/5 类 dispatch 校验）；`db-rbac-static.test.ts` 第十五批 3 用例（0030 表结构+权限收口；lib 双人复核语义；5 路由不再直改+approvals 路由+页面）；`payment-products-guard.test.ts` 适配审批语义。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest **55 文件 289 用例通过**；ESLint 0 errors（124 个既有 warnings 不变）。
+**已知边界**：①批准与执行在同一请求内完成（跨服务原子性由各 service 内部事务保证，审批单状态先行）；②CSRF 防护仍缺（N-6 原 P0 表述中的另一项，未关）；③单人部署降级语义使双人复核退化为记录留痕——安全水位取决于管理员账号数量。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -329,9 +343,9 @@
 | N-3 | 服务端与用户数据库 client 未分离 | **已关闭（2026-08-30）**：`models/db.ts` 拆 `serverClient()`/`userClient()`，资金/支付/退款/后台统计改走 `serverClient()`；兼容入口保留（见 §1.4 续） | `models/db.ts`、`__tests__/db-rbac-static.test.ts` |
 | ~~N-4~~ | ~~关键审计事件 fire-and-forget 会丢失~~ | **已关闭（2026-09-02，0029，见 §1.22）**：Transactional Outbox 队列 + 幂等投递 + 退避死信 + 每日 cron 兜底 | `lib/oplog.ts`、`data/migrations/0029_op_event_outbox.sql` |
 | ~~N-5~~ | ~~高成本端点限流 fail-open~~ | **已关闭（2026-08-30，见 §1.9）**：`rateLimitUser` 回落内存日窗口（fail-closed）；checkout 加 per-IP/per-user 限流；webhook 加 body 64KB 上限 | `lib/ratelimit.ts`、`lib/webhook-guard.ts`、checkout/webhook 路由 |
-| N-6 | 管理员高风险操作无二次确认/审批 | ⚠️ **部分关闭（2026-08-30，见 §1.12）**：6 路由（退款/调账/角色封禁/定价/渠道/告警密钥）服务端强制理由（`lib/admin-reason.ts` parseReason 5~200 字符）+ reason 入审计 + 后台 UI 全部同步。剩余：审批队列/双人复核（需新表，归迁移批次）、CSRF 防护 | `lib/admin-reason.ts`、6 个 admin 路由、`components/dashboard/stats/order-actions.tsx`、3 个 admin 表单 |
+| ~~N-6~~ | ~~管理员高风险操作无二次确认/审批~~ | **基本关闭（2026-09-01，见 §1.12 + §1.23）**：第一阶段 6 路由服务端强制理由（§1.12）；第二阶段审批队列/双人复核（§1.23）——5 类高危动作（退款/调积分/改角色/封禁/渠道定价）落 `admin_approvals` 审批单，发起人≠批准人硬校验，批准即执行、失败可重试，单管理员部署自动降级留痕（双人复核需 ≥2 活跃管理员）。仅剩：CSRF 防护（独立项） | `lib/admin-approval.ts`、`data/migrations/0030_admin_approval_queue.sql`、`app/api/admin/approvals/route.ts`、`/admin/approvals` 页面、`lib/admin-reason.ts` |
 | ~~N-13~~ | ~~争议 / 拒付链路缺失~~ | **已关闭（2026-08-30，见 §1.7 + §1.9；剩余部分 2026-09-01 关闭，见 §1.21）**：状态机 + 三渠道解析器归一化 + 测试齐备；联盟奖励冲销（0028）+ 争议收入确认口径核实均已完成 | `services/dispute.ts`、`services/refund.ts`、`data/migrations/0028_affiliate_reward_reversal.sql`、`lib/payment/types.ts` |
-| P0-定价-1 | 管理员定价写入在自己收款金额权威源上（真相源钉死后升级） | ✅ **已加固（2026-08-30，见 §1.9）**：写入路由加金额/积分/有效期上限 + 币种仅 USD + 积分≤金额。仍待办：事务化批量写入、双人复核 | `app/api/admin/payment-products/route.ts`、`__tests__/payment-products-guard.test.ts` |
+| P0-定价-1 | 管理员定价写入在自己收款金额权威源上（真相源钉死后升级） | ✅ **已加固（2026-08-30，见 §1.9）+ 双人复核闭合（2026-09-01，见 §1.23）**：写入路由加不变量上限；定价/渠道写入现走审批队列（双入口同规）。仍待办：事务化批量写入 | `app/api/admin/payment-products/route.ts`、`__tests__/payment-products-guard.test.ts`、`lib/admin-approval.ts` |
 
 ---
 
@@ -341,7 +355,7 @@
 
 - [ ] **AI 请求幂等与状态机**：落地 `ai_requests`，按 `(user_uuid, request_id)` 隔离；同键不同请求体返回 422；补 24h 生命周期、崩溃补偿、退款 pending worker。见 `docs/13-ai-gateway.md`。
 - [ ] **支付 webhook inbox 与每日对账**：所有渠道事件先持久化，再幂等处理；处理远端成功但本地失败、退款成功但积分回收为 0 等差异。见 `docs/03-database-schema.md` 中 `payment_events`。
-- [x] **~~定价真相源统一~~（已关闭 2026-08-30，见 §1.9）**：运行时权威 = `payment_products`，`data/pricing.ts` 仅种子/回退；写入路由加不变量校验。剩余：事务化批量写入、双人复核（排产 N-6/P1 项）。
+- [x] **~~定价真相源统一~~（已关闭 2026-08-30，见 §1.9）**：运行时权威 = `payment_products`，`data/pricing.ts` 仅种子/回退；写入路由加不变量校验。剩余：事务化批量写入（双人复核 ✅ 已闭合，见 §1.23）。
 - [ ] **迁移发布机制补全**：为 `CONCURRENTLY` 索引和 expand-contract 建立专用部署过程/CI job（本批只完成了常规事务迁移）。
 - [x] **副作用执行模型**：邮件、埋点、告警统一挂 `after()`（第七批）；关键事件 Transactional Outbox（0029，第十四批）。
 
@@ -375,7 +389,7 @@
 5. **~~N-5 限流 fail-closed / N-13 争议链路 / P1-8+pricing 写入校验~~（已关闭，见 §1.9）**：纯代码批次已完成。P0-1 剩余与 N-13 剩余见本行下面：
    - ~~P0-1:webhook 只登记 `refund_requested` 中间态~~（已接线，见 §1.14）：剩 credit_lots 精确批次准入校验、后台回收工作台；~~应用 0021/0022~~（0021/0022 已应用，2026-09-01）。
    - ~~N-13 剩余:联盟奖励冻结、争议收入确认~~（已关闭，见 §1.21）：0028 冲销 RPC + refund/dispute_lost 接线；收入确认口径核实为已正确（stats 只计 paid）。
-6. **~~N-6 高风险操作强制理由~~（服务端+UI 已关闭，见 §1.12）**：纯代码部分完成。剩余归迁移批次：审批队列/双人复核（需新表）；outbox 底座已就绪（0029，见 §1.22）可复用。
+6. **~~N-6 高风险操作强制理由 + 审批队列~~（全部关闭，见 §1.12 + §1.23）**：5 类高危动作落审批单双人复核（0030），单管理员部署降级留痕；outbox 底座（0029）已承接其审计事件。
 7. **~~新 P1（advisors 扫描 2026-09-01）：public 其余表 RLS~~（已关闭，2026-09-01 连库）**：迁移 0024 对 public 全部 19 张业务表 ENABLE RLS（deny-all）+ REVOKE anon/authenticated 全部表权限（含 0023 资金四表补 REVOKE），anonymous_usage 两 RPC EXECUTE 仅授 service_role + search_path 钉死；连库验证 anon 直查全部 401、权限归零、应用关键路径回归通过。附带修复两个回归暴露的预存 bug：0025（verification_codes.code 列宽 VARCHAR(10)→64，SHA-256 哈希存不进去，注册/重置全挂）+ `consumeVerificationCode` update 未传 `{ count: "exact" }`（恒 return false）。见 §1.18。
 8. **~~P0-1 剩余：credit_lots 批次账本 + 回收工作台~~（已关闭，2026-09-01 连库）**：迁移 0026 已应用（批次 FIFO 扣减 + 退款精确准入 + `settle_credit_debt` 清偿闭环）；回收工作台 `/admin/recovery` 上线（闭合 webhook 登记的退款 + 清偿债务 + 恢复账号）；真库 e2e 全链路（发放→消费→精确退款→债务→清偿）通过。见 §1.19。
 9. **~~默认管理员恢复 + 强制改密闭环~~（已关闭，2026-09-02）**：迁移 0027 + getAdminUser/getUserInfo/console layout/requireAdmin 四处修复 + 浏览器 e2e 全链路通过。见 §1.20。
@@ -384,7 +398,7 @@
 12. **Webhook inbox、对账、AI 请求状态机**：完成可靠副作用与支付/AI 崩溃补偿闭环。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）；剩余 = webhook inbox 去重与对账任务（也是 outbox 极端窗口丢失的最后防线）。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：N-6 剩余（审批队列/双人复核，需新表）> P1（webhook inbox/对账、AI 请求状态机）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1/N-2/N-3/N-4（outbox 0029）/N-5/N-13（含联盟奖励冲销）/public 表 RLS（0024）/迁移应用（0019–0029）均已关闭。
+> **当前债务优先级（下一步）**：P1（webhook inbox/对账、AI 请求状态机）> CSRF 防护 > 事务化定价批量写入。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、N-13/RLS（0024）/迁移应用（0019–0030）均已关闭。
 
 ---
 

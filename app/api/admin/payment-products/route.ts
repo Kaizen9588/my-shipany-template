@@ -1,17 +1,16 @@
 import { respData, respErr } from "@/lib/resp";
 import { requireAdmin } from "@/lib/auth";
 import { fireAndForgetAudit } from "@/lib/audit";
-import {
-  getPaymentProducts,
-  updatePaymentProduct,
-} from "@/models/payment";
+import { getPaymentProducts } from "@/models/payment";
 import { parseReason } from "@/lib/admin-reason";
 import { validatePricingFields } from "@/lib/pricing-guard";
+import { submitApproval } from "@/lib/admin-approval";
 
 /**
  * GET/PUT /api/admin/payment-products
  * 后台「定价映射」专用路由：只有 product_id → 金额/积分/有效期/渠道产品 ID
  * （支付渠道启用/优先级在 /api/admin/payment-settings）
+ * N-6：PUT 落审批单（双人复核），批准后由 lib/admin-approval 执行不变量校验后的写入
  */
 export async function GET() {
   try {
@@ -39,8 +38,9 @@ export async function PUT(req: Request) {
       return respErr(`pricing update reason required: ${parsed.error}`);
     }
 
-    // P0-定价-1：`payment_products` 是运行时定价真相源，写入必须过不变量校验
-    // （与 /api/admin/payment-settings 共用 lib/pricing-guard，双入口同规则）。
+    // P0-定价-1：`payment_products` 是运行时定价真相源，提交前先过不变量校验
+    // （与 /api/admin/payment-settings 共用 lib/pricing-guard，双入口同规则；
+    // 批准执行时 admin-approval 会再次校验）
     for (const prod of products) {
       if (!prod?.product_id) {
         continue;
@@ -64,32 +64,40 @@ export async function PUT(req: Request) {
         });
         if (err) return respErr(err);
       }
-      if (amount !== undefined) fields.amount = amount;
-      if (credits !== undefined) fields.credits = credits;
-      if (validMonths !== undefined) fields.valid_months = validMonths;
       if (prod.currency && prod.currency !== "USD") {
         return respErr("v1 only supports USD currency");
       }
-      if (typeof prod.creem_product_id === "string") fields.creem_product_id = prod.creem_product_id;
-      if (typeof prod.stripe_price_id === "string") fields.stripe_price_id = prod.stripe_price_id;
-      if (typeof prod.waffo_product_id === "string") fields.waffo_product_id = prod.waffo_product_id;
-      if (Object.keys(fields).length > 0) {
-        await updatePaymentProduct(prod.product_id, fields);
-      }
     }
+
+    // N-6 审批门：payload 快照由服务端写入（不信任客户端重放），批准后执行
+    const { approval, single_admin } = await submitApproval({
+      action: "payment_settings",
+      requester: admin,
+      reason: parsed.reason,
+      target_uuid: "",
+      payload: { products },
+    });
 
     fireAndForgetAudit({
       admin_uuid: admin.uuid || "",
-      action: "admin.payment_products.update",
+      action: "admin.payment_products.update_requested",
       target_type: "config",
       target_uuid: "",
       detail: JSON.stringify({
         productIds: products.map((p: any) => p?.product_id),
+        approval_id: approval.id,
+        approval_status: approval.status,
+        single_admin,
         reason: parsed.reason,
       }),
     });
 
-    return respData({ updated: true });
+    return respData({
+      approval_required: true,
+      approval_id: approval.id,
+      status: approval.status,
+      single_admin,
+    });
   } catch (e: any) {
     if (e.message === "no admin access") {
       return respErr("no admin access", 403);

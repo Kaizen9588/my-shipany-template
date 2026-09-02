@@ -424,3 +424,87 @@ describe("运营事件 Transactional Outbox（迁移 0029 静态断言，第十�
     expect(cron).toContain("outboxMaintenance");
   });
 });
+
+// ==================== 第十五批：N-6 审批队列（0030） ====================
+
+describe("N-6 审批队列静态断言（迁移 0030 + lib/admin-approval）", () => {
+  const sql0030 = () => sourceOf("data/migrations/0030_admin_approval_queue.sql");
+
+  it("0030 审批表：双人复核不变量字段 + 状态机 + RLS/权限收口", () => {
+    const src = sql0030();
+    expect(src).toContain("CREATE TABLE IF NOT EXISTS private.admin_approvals");
+    // 状态机：pending/approved/rejected/executing/executed/failed/cancelled
+    expect(src).toContain("'pending','approved','rejected','executing','executed','failed','cancelled'");
+    // 双人复核载体字段
+    expect(src).toContain("requester_uuid");
+    expect(src).toContain("approver_uuid");
+    expect(src).toContain("required_level");
+    // 执行失败可重试 + 错误留痕
+    expect(src).toContain("exec_error");
+    // deny-all 纵深防御（0024 模式）：RLS + REVOKE anon/authenticated + 仅授 service_role
+    expect(src).toContain("ALTER TABLE private.admin_approvals ENABLE ROW LEVEL SECURITY");
+    expect(src).toContain("REVOKE ALL ON TABLE private.admin_approvals FROM anon, authenticated");
+    expect(src).toContain(
+      "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE private.admin_approvals TO service_role"
+    );
+    expect(src).toContain(
+      "GRANT USAGE, SELECT ON SEQUENCE private.admin_approvals_id_seq TO service_role"
+    );
+  });
+
+  it("lib/admin-approval：发起人≠批准人硬校验 + 单管理员降级 + 批准即执行", () => {
+    const src = sourceOf("lib/admin-approval.ts")
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n")
+      .replace(/\s+/g, " ");
+    // 双人复核核心不变量（服务端强制）
+    expect(src).toContain("requester cannot review own approval");
+    // 批准人级别校验
+    expect(src).toContain("hasAdminLevel");
+    // 单管理员部署自动降级留痕（不死锁）
+    expect(src).toContain("single-admin mode");
+    // 存在其他活跃管理员判定（失败不放行）
+    expect(src).toContain('in("role", ["admin", "super_admin"])');
+    expect(src).toContain('eq("status", "active")');
+    // 批准即执行 + 并发抢占 + 执行失败置 failed
+    expect(src).toContain("status: \"executing\"");
+    expect(src).toContain("exec_error");
+    expect(src).toContain('status: "failed"');
+    // super_admin 保护延续到执行端
+    expect(src).toContain("cannot modify super_admin via approval queue");
+    expect(src).toContain("cannot demote super_admin via approval queue");
+  });
+
+  it("5 个高危路由接入审批门（提交不执行）+ approvals 路由 + 审批页", () => {
+    const refund = sourceOf("app/api/admin/refund/route.ts").replace(/\s+/g, " ");
+    expect(refund).toContain("submitApproval");
+    expect(refund).not.toContain("await processRefund"); // 执行移出路由（注释提及不算）
+
+    const credits = sourceOf("app/api/admin/user/credits/route.ts").replace(/\s+/g, " ");
+    expect(credits).toContain("submitApproval");
+    expect(credits).not.toContain("adjustCreditsByAdmin");
+
+    const user = sourceOf("app/api/admin/user/route.ts").replace(/\s+/g, " ");
+    expect(user).toContain("submitApproval");
+    expect(user).not.toContain("await updateUserByAdmin(uuid, { role"); // role/status 不直改（nickname 豁免除外）
+
+    const products = sourceOf("app/api/admin/payment-products/route.ts").replace(/\s+/g, " ");
+    expect(products).toContain("submitApproval");
+    expect(products).toContain("validatePricingFields"); // 提交前仍校验不变量
+
+    const settings = sourceOf("app/api/admin/payment-settings/route.ts").replace(/\s+/g, " ");
+    expect(settings).toContain("submitApproval");
+    expect(settings).toContain("validatePricingFields");
+
+    const route = sourceOf("app/api/admin/approvals/route.ts").replace(/\s+/g, " ");
+    expect(route).toContain('"decide"');
+    expect(route).toContain('"retry"');
+    expect(route).toContain('"cancel"');
+
+    // admin 页面 + 侧边栏入口
+    expect(sourceOf("app/[locale]/(admin)/admin/approvals/page.tsx")).toContain("listOpenApprovals");
+    const layout = sourceOf("app/[locale]/(admin)/layout.tsx").replace(/\s+/g, " ");
+    expect(layout).toContain("/admin/approvals");
+  });
+});

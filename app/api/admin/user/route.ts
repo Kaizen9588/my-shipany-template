@@ -1,15 +1,17 @@
 import { respData, respErr } from "@/lib/resp";
 import { isSuperAdmin, requireAdmin } from "@/lib/auth";
-import { findUserByUuid, updateUserByAdmin } from "@/models/user";
+import { findUserByUuid } from "@/models/user";
 import { fireAndForgetAudit } from "@/lib/audit";
 import { parseReason } from "@/lib/admin-reason";
+import { submitApproval } from "@/lib/admin-approval";
 
 const VALID_ROLES = ["user", "operator", "admin", "super_admin"];
 
 /**
- * PUT /api/admin/user —— 管理员更新用户（6.7；N-6：强制 reason）
+ * PUT /api/admin/user —— 管理员更新用户（6.7）
  * 可更新：role（角色）、status（active/banned）、nickname
- * N-6：role / status 是授权与风控操作，必须带理由（进审计）；nickname 豁免。
+ * N-6：role / status 是授权与风控操作，强制理由 + 审批队列（双人复核）——
+ * 落审批单由另一位管理员批准即执行；nickname 豁免审批照旧直接改。
  */
 export async function PUT(req: Request) {
   try {
@@ -63,18 +65,52 @@ export async function PUT(req: Request) {
       return respErr("nothing to update");
     }
 
-    await updateUserByAdmin(uuid, fields as any);
+    // nickname 豁免审批：低敏字段照旧直接改
+    if (fields.nickname && !fields.role && !fields.status) {
+      const { updateUserByAdmin } = await import("@/models/user");
+      await updateUserByAdmin(uuid, { nickname: fields.nickname } as any);
+      fireAndForgetAudit({
+        admin_uuid: admin.uuid || "",
+        action: "admin.user.update",
+        target_type: "user",
+        target_uuid: uuid,
+        detail: JSON.stringify({ nickname: fields.nickname }),
+      });
+      return respData({ updated: true });
+    }
 
-    // 操作审计（fire-and-forget；N-6：reason 入审计）
-    fireAndForgetAudit({
-      admin_uuid: admin.uuid || "",
-      action: "admin.user.update",
-      target_type: "user",
+    // role/status：一个审批单承载一次变更（role 优先，二者同传时拆开提交会被
+    // 前端避免；服务端按语义归一为单一动作）
+    const action = fields.role ? "user_role" : "user_status";
+    const payload = { user_uuid: uuid, ...(fields as object) };
+    const { approval, single_admin } = await submitApproval({
+      action,
+      requester: admin,
+      reason: reasonText,
       target_uuid: uuid,
-      detail: JSON.stringify({ ...fields, ...(reasonText ? { reason: reasonText } : {}) }),
+      payload,
     });
 
-    return respData({ updated: true });
+    fireAndForgetAudit({
+      admin_uuid: admin.uuid || "",
+      action: "admin.user.update_requested",
+      target_type: "user",
+      target_uuid: uuid,
+      detail: JSON.stringify({
+        ...fields,
+        approval_id: approval.id,
+        approval_status: approval.status,
+        single_admin,
+        reason: reasonText,
+      }),
+    });
+
+    return respData({
+      approval_required: true,
+      approval_id: approval.id,
+      status: approval.status,
+      single_admin,
+    });
   } catch (e: any) {
     if (e.message === "no admin access") {
       return respErr("no admin access", 403);

@@ -1,9 +1,8 @@
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { parseReason } from "@/lib/admin-reason";
-import { adjustCreditsByAdmin } from "@/services/credit";
+import { submitApproval } from "@/lib/admin-approval";
 import { findUserByEmail } from "@/models/user";
-import { fireAndForgetAudit } from "@/lib/audit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,7 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 /**
  * 后台手动调整积分（6.9）
  * 按邮箱定位用户（或直接 user_uuid），增减积分并备注。
- * N-6：调整积分是资金操作，理由必填（与 /api/admin/user/credits 同规则）。
+ * N-6：调整积分是资金操作，理由必填 + 审批队列（双人复核）——落审批单，
+ * 由另一位管理员在 /admin/approvals 批准即执行，不再直接生效。
  */
 export default function AdjustCreditsPage() {
   async function adjust(formData: FormData) {
@@ -43,21 +43,15 @@ export default function AdjustCreditsPage() {
       throw new Error("user_uuid or email is required");
     }
 
-    await adjustCreditsByAdmin({
-      user_uuid: targetUuid,
-      credits: creditsNum,
-      remark: parsed.reason,
-    });
-
-    fireAndForgetAudit({
-      admin_uuid: admin.uuid || "",
-      action: "admin.credits.adjust",
-      target_type: "user",
+    await submitApproval({
+      action: "adjust_credits",
+      requester: admin,
+      reason: parsed.reason,
       target_uuid: targetUuid,
-      detail: JSON.stringify({ credits: creditsNum, reason: parsed.reason }),
+      payload: { user_uuid: targetUuid, credits: creditsNum },
     });
 
-    redirect("/admin/credits");
+    redirect("/admin/approvals");
   }
 
   return (
@@ -91,7 +85,7 @@ export default function AdjustCreditsPage() {
             placeholder="例如：客诉补偿，工单 #1234"
           />
         </div>
-        <Button type="submit">应用调整</Button>
+        <Button type="submit">提交调整审批</Button>
       </form>
     </div>
   );

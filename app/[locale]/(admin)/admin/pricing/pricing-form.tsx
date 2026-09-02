@@ -59,12 +59,20 @@ export default function PricingForm({ products }: { products: ProductRow[] }) {
           })),
         }),
       });
-      const { code, message } = await resp.json();
+      const { code, message, data } = await resp.json();
       if (code !== 0) {
         toast.error(message);
         return;
       }
-      toast.success("定价映射已保存（即时生效）");
+      if (data?.approval_required) {
+        toast.success(
+          data.single_admin
+            ? "单管理员模式：审批单已自动批准并生效"
+            : "已提交审批，等待另一位管理员批准后生效"
+        );
+      } else {
+        toast.success("定价映射已保存（即时生效）");
+      }
       setReason("");
       router.refresh();
     } catch (e) {

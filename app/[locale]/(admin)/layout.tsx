@@ -63,6 +63,11 @@ export default async function AdminLayout({
           icon: "RiCoinsLine",
         },
         {
+          title: "审批队列",
+          url: "/admin/approvals",
+          icon: "RiShieldCheckLine",
+        },
+        {
           title: "操作审计",
           url: "/admin/audit-logs",
           icon: "RiFileList3Line",

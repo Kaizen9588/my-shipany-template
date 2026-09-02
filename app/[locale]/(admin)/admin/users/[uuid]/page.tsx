@@ -1,10 +1,10 @@
 import { redirect } from "next/navigation";
-import { findUserByUuid, updateUserByAdmin } from "@/models/user";
+import { findUserByUuid } from "@/models/user";
 import { getCreditsByUserUuid } from "@/models/credit";
-import { getUserCredits, adjustCreditsByAdmin } from "@/services/credit";
+import { getUserCredits } from "@/services/credit";
 import { requireAdmin } from "@/lib/auth";
 import { parseReason } from "@/lib/admin-reason";
-import { fireAndForgetAudit } from "@/lib/audit";
+import { submitApproval } from "@/lib/admin-approval";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,8 @@ import moment from "moment";
 
 /**
  * 后台用户详情（6.7）：角色/状态修改 + 手动调整积分（6.9）
+ * N-6 双人复核：三个高危操作均落审批单（/admin/approvals 批准即执行），
+ * 不再直接生效。单管理员部署自动降级批准照常执行（单据留痕）。
  */
 export default async function UserDetailPage({
   params,
@@ -44,13 +46,12 @@ export default async function UserDetailPage({
     if (!parsed.ok) {
       throw new Error(`reason required: ${parsed.error}`);
     }
-    await updateUserByAdmin(uuid, { role });
-    fireAndForgetAudit({
-      admin_uuid: adminUser.uuid || "",
-      action: "admin.user.update",
-      target_type: "user",
+    await submitApproval({
+      action: "user_role",
+      requester: adminUser,
+      reason: parsed.reason,
       target_uuid: uuid,
-      detail: JSON.stringify({ role, reason: parsed.reason }),
+      payload: { user_uuid: uuid, role },
     });
     redirect(`/admin/users/${uuid}`);
   }
@@ -65,13 +66,12 @@ export default async function UserDetailPage({
       throw new Error(`reason required: ${parsed.error}`);
     }
     const next = currentUser.status === "banned" ? "active" : "banned";
-    await updateUserByAdmin(uuid, { status: next });
-    fireAndForgetAudit({
-      admin_uuid: adminUser.uuid || "",
-      action: "admin.user.update",
-      target_type: "user",
+    await submitApproval({
+      action: "user_status",
+      requester: adminUser,
+      reason: parsed.reason,
       target_uuid: uuid,
-      detail: JSON.stringify({ status: next, reason: parsed.reason }),
+      payload: { user_uuid: uuid, status: next },
     });
     redirect(`/admin/users/${uuid}`);
   }
@@ -89,17 +89,12 @@ export default async function UserDetailPage({
     if (!creditsNum || creditsNum === 0) {
       throw new Error("invalid credits");
     }
-    await adjustCreditsByAdmin({
-      user_uuid: uuid,
-      credits: creditsNum,
-      remark: parsed.reason,
-    });
-    fireAndForgetAudit({
-      admin_uuid: adminUser.uuid || "",
-      action: "admin.user.adjust_credits",
-      target_type: "user",
+    await submitApproval({
+      action: "adjust_credits",
+      requester: adminUser,
+      reason: parsed.reason,
       target_uuid: uuid,
-      detail: JSON.stringify({ credits: creditsNum, reason: parsed.reason }),
+      payload: { user_uuid: uuid, credits: creditsNum },
     });
     redirect(`/admin/users/${uuid}`);
   }
@@ -185,7 +180,7 @@ export default async function UserDetailPage({
               />
             </div>
             <Button type="submit" size="sm">
-              Update Role
+              提交角色变更审批
             </Button>
           </form>
           <form action={toggleStatus} className="flex items-end gap-2">
@@ -202,7 +197,7 @@ export default async function UserDetailPage({
               />
             </div>
             <Button type="submit" variant="destructive" size="sm">
-              {user.status === "banned" ? "解封" : "封禁"}
+              {user.status === "banned" ? "提交解封审批" : "提交封禁审批"}
             </Button>
           </form>
         </div>
