@@ -7,7 +7,7 @@
 >
 > ✅ **v1 落地记录（2026-08）**：`/api/v1/ai/generate`（非流式：鉴权→限流→402→原子扣减→模型路由→生成→失败退款）、
 > `data/model-pricing.ts` 模型白名单 + 预估一次扣清、`lib/ai/registry.ts` Provider 抽象、
-> `lib/ratelimit.ts` 内存级限流、`ai_generate`/`ai_refund` 交易类型。v2（流式/图片/视频/Idempotency-Key）待落地。
+> `lib/ratelimit.ts` 内存级限流、`ai_generate`/`ai_refund` 交易类型。v1.5 幂等/状态机/崩溃补偿已落地（迁移 0032，2026-09-01）；v2（流式/图片/视频）待落地。
 >
 > ⚠️ **生产就绪状态（2026-08 第八轮审查结论）**：v1 闭环可跑通，
 > 但**缺少幂等键、崩溃补偿和可恢复状态机**，真实收费（尤其高成本模型）下会造成重复扣费、
@@ -207,9 +207,9 @@ export enum CreditsTransType {
 }
 ```
 
-**幂等**：`Idempotency-Key` 请求头为**规划能力，v1 代码未实现**（generate 路由无任何幂等处理，重复请求会重复扣费）。接入第三方 API 前必须先落地，否则网络重试即重复计费。
+**幂等**：✅ 已实现（2026-09-01，迁移 0032 + lib/ai-request.ts）——`Idempotency-Key` 头按 `(user_uuid, request_id)` 幂等，同键同体在途/已成功 409、同键异体 422、终态可重跑；详见 §七 v1.5 落地注记。
 
-> ⚠️ **P1-5（第九轮，2026-08-26）——幂等键作用域必须按用户隔离**：`ai_requests.request_id` 若做成全局 `UNIQUE`
+> ✅ **P1-5（第九轮，2026-08-26）——已关闭（2026-09-01，迁移 0032）**：`ai_requests` 落地为 `UNIQUE(user_uuid, request_id)` 按用户隔离、键必填校验（`isValidRequestId`，1~128 位 URL 安全字符）、请求体指纹 `sha256(model+prompt|messages+max_tokens)` 同键异体返 422、`created_at/updated_at/completed_at` 落地 24h TTL 清理（`cleanupCompletedAiRequests`）。以下为历史设计正文：`ai_requests.request_id` 若做成全局 `UNIQUE`
 > 是「全局唯一 + 客户端可控」的公共键空间，批量抢注 `"1"`、`"test"`、常见客户端库默认键会使受害者被永久拒服或读到别人结果。
 > **修法**：`UNIQUE(user_uuid, request_id)`（匿名端点用 `anonymous_key` 作租户维度）+ 补齐键的必填性/字符集/长度
 > + 存请求体指纹 `hash(model+prompt+max_tokens)`、同键不同体返 422 + 用 `created_at` 落地 24h 口径与清理任务（详见 docs/03 §规划中 / v1 收费前必须完成）。
@@ -264,14 +264,23 @@ export enum CreditsTransType {
 
 | 阶段 | 内容 | 生产就绪度 |
 |------|------|------------|
-| v1（当前） | `/api/v1/ai/generate` 非流式（预估一次扣清 + 失败退款）+ 模型白名单 + MODEL_PRICING 常量 + 402/429/401 状态码 + 内存级限流 | ⚠️ 沙箱可用 / 真实收费 No-Go（缺幂等、崩溃补偿、状态持久化） |
-| v1.5（真实收费前必须） | **Idempotency-Key + ai_requests 状态机 + 崩溃补偿 Cron** + 输入大小限制 + 请求记录持久化 | ✅ 可进入真实收费（小流量） |
+| v1 | `/api/v1/ai/generate` 非流式（预估一次扣清 + 失败退款）+ 模型白名单 + MODEL_PRICING 常量 + 402/409/422/429/401 状态码 + 内存级限流 | ✅ 已完成（2026-09-01，第十七批） |
+| v1.5（真实收费前必须） | **Idempotency-Key + ai_requests 状态机 + 崩溃补偿 Cron**（迁移 0032 已落地）+ 输入大小限制 + 请求记录持久化 | ✅ 已完成（2026-09-01，见下方 v1.5 落地注记）；输入大小限制中 prompt 字节上限仍待补 |
 | v2 | 流式 streamText + 图片/视频端点 + 流式中断结算 | ⬜ 规划中 |
 | v3 | 模型定价入数据库（后台可调价）+ 用量统计页联动 + 精确按 token 结算 + 多供应商路由策略 | ⬜ 规划中 |
 
-> **v1.5 是上线门槛**：当前 v1 的"失败退款"依赖请求进程继续运行，
-> 进程崩溃、网络断开、数据库闪断都会导致积分永久丢失且用户没拿到结果。
-> 不可作为收费产品的计费可靠性。
+> ✅ **v1.5 已落地（2026-09-01，迁移 0032 + lib/ai-request.ts，handoff §1.25）**：
+> 1. **幂等**：`Idempotency-Key` 头（可选，1~128 位 URL 安全字符，非法 400）；未提供则服务端生成
+>    `srv-*` 键（不可重试）。按 `(user_uuid, request_id)` 隔离；同键同体在途/已成功返 409
+>    （带已有记录摘要，另有 `GET ?request_id=` 查询端点），同键异体返 422，failed/refunded
+>    终态可同键重跑（条件重占 running，与崩溃补偿互斥）。幂等判定发生在扣费之后，409/422
+>    路径一律先退本次扣费（不能吞用户的钱）。
+> 2. **状态机**：行存在即代表已扣费（扣费成功后才建 running 行）；running→succeeded/failed
+>    条件流转；failed 退款失败落 refund_pending（refund_attempts+1）。
+> 3. **崩溃补偿**：cron `/api/cron/daily` 扫 running 超 30 分钟（扣费后进程崩溃）与
+>    refund_pending 超 10 分钟（退款重试），条件更新互斥防双退，退款成功置 refunded。
+> 4. **TTL**：completed 超 24h 的终态行每日清理（幂等键有效期口径）。
+> 剩余 No-Go：prompt/messages 字节与条数上限（413）——见下方「幂等键生命周期与输入限制」。
 
 ---
 
@@ -281,8 +290,8 @@ export enum CreditsTransType {
 |------|------|----------|--------------|
 | 预估高于实际用量（短输出付满额） | P2 | 接受：换取流水干净、无结算复杂度 | v3 精确结算；或超量不追加、少用不退还的简单规则 |
 | 流式中途断连 | P2 | v1 非流式，无此问题 | v2 流式需定义：服务端观测到 provider usage 后结算；用户中断 vs 网络异常需区分 |
-| **重复扣费（超时重试）** | **P0** | ❌ 无防护，每次重试生成新 trans_no | `Idempotency-Key` + `ai_requests` 状态机，同键只扣一次 |
-| **扣费后崩溃永久损失** | **P0** | ❌ 只靠请求进程内回补，失败仅日志 | `ai_requests` 持久化 + 补偿 Cron 扫描 `refund_pending` 指数退避 |
+| **重复扣费（超时重试）** | **P0** | ✅ 已关闭（2026-09-01）：Idempotency-Key 幂等 + ai_requests 状态机，同键在途/已成功 409 | `Idempotency-Key` + `ai_requests` 状态机，同键只扣一次 |
+| **扣费后崩溃永久损失** | **P0** | ✅ 已关闭（2026-09-01）：ai_requests 持久化 + cron 补偿（running 超 30 分钟退款、refund_pending 超 10 分钟重试，条件更新互斥防双退） | `ai_requests` 持久化 + 补偿 Cron 扫描 `refund_pending` 指数退避 |
 | **输入无大小限制** | **P1** | ❌ prompt/messages 无 schema、无字节限制、无消息条数上限 | 按模型分别限制输入 token、消息条数、字段白名单；超大请求直接 413 |
 | 模型白名单维护成本 | P2 | v1 用常量表，改动即发版 | v3 入数据库，后台可调 |
 | 「积分 vs 金额」汇率漂移 | P2 | 积分是抽象单位，运营方自行定义换算 | 积分价格版本化，每次扣费写入当时的模型价格版本 |

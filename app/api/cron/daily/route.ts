@@ -5,6 +5,10 @@ import { cleanupVerificationCodes } from "@/models/verification";
 import { cleanupAnonymousUsage } from "@/models/anonymous-usage";
 import { outboxMaintenance } from "@/lib/oplog";
 import { replayPendingEvents, reconcilePayments } from "@/lib/webhook-inbox";
+import {
+  cleanupCompletedAiRequests,
+  compensateStaleAiRequests,
+} from "@/lib/ai-request";
 
 /**
  * GET /api/cron/daily -- 每日定时任务（6.16）
@@ -14,6 +18,8 @@ import { replayPendingEvents, reconcilePayments } from "@/lib/webhook-inbox";
  * 4. 关键表备份到 S3
  * 5. 运营事件 outbox 兜底投递 + dead 死信清理（N-4，迁移 0029）
  * 6. 支付事件 inbox 重放（pending/failed 超 5 分钟）+ 每日对账（P1，迁移 0031）
+ * 7. AI 请求崩溃补偿（running 超 30 分钟 / refund_pending 超 10 分钟退款）
+ *    + 幂等键 TTL 清理（completed 超 24h，P1，迁移 0032）
  *
  * 安全（2.13 修复）：Vercel Cron 自动带 Authorization: Bearer <CRON_SECRET> 头。
  * 此前端点在 CRON_SECRET 未设置时完全跳过校验，且会触发 users 全量导出上传--
@@ -63,6 +69,20 @@ export async function GET(req: Request) {
       console.error("[cron/daily] payment inbox/reconcile failed:", e);
     }
 
+    // AI 请求崩溃补偿 + 幂等键 TTL 清理（P1-AI，迁移 0032）；失败不阻塞其他任务
+    const aiRecover = { compensated: 0, refunded: 0, still_pending: 0, cleaned: 0 };
+    let aiError = "";
+    try {
+      const recover = await compensateStaleAiRequests(20);
+      aiRecover.compensated = recover.compensated;
+      aiRecover.refunded = recover.refunded;
+      aiRecover.still_pending = recover.still_pending;
+      aiRecover.cleaned = await cleanupCompletedAiRequests(24);
+    } catch (e: any) {
+      aiError = String(e?.message || e);
+      console.error("[cron/daily] ai request compensation failed:", e);
+    }
+
     return respData({
       expired_orders: expired,
       cleaned_verification_codes: cleaned,
@@ -81,6 +101,11 @@ export async function GET(req: Request) {
       reconcile_failed_events: reconcile.failed_events,
       reconcile_amount_mismatches: reconcile.amount_mismatches,
       ...(inboxError ? { inbox_error: inboxError } : {}),
+      ai_compensated: aiRecover.compensated,
+      ai_refunded: aiRecover.refunded,
+      ai_still_pending: aiRecover.still_pending,
+      ai_cleaned: aiRecover.cleaned,
+      ...(aiError ? { ai_error: aiError } : {}),
     });
   } catch (e: any) {
     console.error("[cron/daily] failed:", e);

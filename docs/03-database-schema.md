@@ -7,7 +7,7 @@
 - **建表脚本**：唯一建库路径是 `data/migrations/0000_install_base.sql` 起的顺序迁移；`data/install.sql` 是历史脚本，禁止用于新库或生产库
 - **迁移机制**：`pnpm migrate` 是唯一可写 schema 的入口，按文件名序号执行并使用 `schema_migrations` 记录版本、事务级 advisory lock 串行化多实例；应用启动时 `instrumentation.ts` 仅只读校验版本，发现缺失迁移立即拒绝启动（见 `lib/migrate.ts`）
 - **迁移清单**（0000-0019）：基础建表 / 支付配置表 / 积分原子扣减 / 支付事务化 / 外键索引 / 匿名额度 / 密码登录 / 多渠道 / RBAC+审计 / 站内通知 / 金额比对 / 退款原子化 / 安全管理员引导字段 / system_settings / op_events / apikeys 前缀 / 匿名额度 off-by-one / 迟付恢复+联盟首付 / 历史默认账号禁用
-- **迁移清单**（0020-0031）：decrease_credits 用户级 advisory lock / refund_requested + credit_debts / 债务化准入 / 债务审计重键 / 资金 RPC 迁 private（0023）/ 全表 RLS deny-all（0024）/ 验证码列宽（0025）/ credit_lots 批次（0026）/ 默认管理员 pending_activation（0027）/ 联盟奖励冲销 `private.reverse_affiliate_reward`（0028，退款/拒付佣金 `completed→reversed`）/ 运营事件 outbox（0029，`private.op_event_outbox` + enqueue/claim/deliver/ack/fail/cleanup 六 RPC，warn+ 关键事件持久化重试）/ 管理员审批队列（0030，`private.admin_approvals`，N-6 双人复核：5 类高危动作审批单 + 发起人≠批准人 + 批准即执行/失败重试，RLS deny-all 仅授 service_role）/ 支付事件 inbox（0031，public `payment_events`：三渠道 webhook 先落库再处理，`UNIQUE(provider, provider_event_id)` 幂等，RLS deny-all 仅授 service_role）
+- **迁移清单**（0020-0032）：decrease_credits 用户级 advisory lock / refund_requested + credit_debts / 债务化准入 / 债务审计重键 / 资金 RPC 迁 private（0023）/ 全表 RLS deny-all（0024）/ 验证码列宽（0025）/ credit_lots 批次（0026）/ 默认管理员 pending_activation（0027）/ 联盟奖励冲销 `private.reverse_affiliate_reward`（0028，退款/拒付佣金 `completed→reversed`）/ 运营事件 outbox（0029，`private.op_event_outbox` + enqueue/claim/deliver/ack/fail/cleanup 六 RPC，warn+ 关键事件持久化重试）/ 管理员审批队列（0030，`private.admin_approvals`，N-6 双人复核：5 类高危动作审批单 + 发起人≠批准人 + 批准即执行/失败重试，RLS deny-all 仅授 service_role）/ 支付事件 inbox（0031，public `payment_events`：三渠道 webhook 先落库再处理，`UNIQUE(provider, provider_event_id)` 幂等，RLS deny-all 仅授 service_role）/ AI 请求状态机（0032，public `ai_requests`：`UNIQUE(user_uuid, request_id)` 按用户隔离幂等 + 崩溃补偿 + 24h TTL，RLS deny-all 仅授 service_role）
 - **表数量**：16 张（迁移 0000 基础 7 张 + 迁移新增 9 张，含 system_settings、op_events）
 - **存储过程**：资金与额度相关写操作全部下沉数据库原子执行（见文末「存储过程」一节），应用层不做 check-then-write
 
@@ -605,8 +605,18 @@ CREATE INDEX idx_refunds_provider ON refunds(provider, provider_refund_id);
 >    `refund_requested` 由后台回收工作台 `/admin/recovery` 本地闭合（不触达渠道）。
 
 -- ============================================
--- P1：AI 请求状态机（幂等 + 崩溃补偿）
+-- P1：AI 请求状态机（幂等 + 崩溃补偿）（已落地：迁移 0032，2026-09-01 连库）
 -- ============================================
+-- 实际实现与下述目标 schema 的差异：
+-- - 无 provider_request_id / actual_credits 列（v3 精确结算时再补 actual_credits）
+-- - 增加 body_fingerprint（请求体指纹，同键异体 422 判据）与 refund_attempts
+-- - status 六态 CHECK：created / running / succeeded / failed / refund_pending / refunded
+--   （行存在即代表已扣费：路由扣费成功后才建 running 行，消除「扣费后崩溃已扣未记」歧义）
+-- - 索引 idx_ai_requests_recover 为 partial（仅 running/refund_pending，崩溃补偿扫描面）
+-- - 处理链：lib/ai-request.ts（beginAiRequest 幂等 / markAiRequest* 条件流转 /
+--   compensateStaleAiRequests 崩溃补偿 / cleanupCompletedAiRequests 24h TTL），
+--   generate 路由接入（Idempotency-Key 头，同键同体 409、异体 422、终态可重跑）
+-- - 幂等冲突发生在扣费之后：409/422 路径一律先退本次扣费
 
 CREATE TABLE ai_requests (
     id BIGSERIAL PRIMARY KEY,

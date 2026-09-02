@@ -314,6 +314,19 @@
 **验证**：`tsc --noEmit` 通过；全量 Vitest **56 文件 315 用例通过**（基线 289 + 本批 26）；ESLint 0 errors（124 个既有 warnings 不变）。
 **已知边界**：①inbox 落库与业务处理仍非同一事务（inbox 先行持久化，处理失败由重试+重放兜底——这正是 inbox 的设计语义，与 outbox 旁路窗口互补）；②`____normalized` 摘要只覆盖归一化字段，渠道侧扩展字段仍以 raw_body 为准；③对账窗口默认 7 天/500 单上限，超量需人工介入（告警样本已含 order_no）。
 
+### 1.25 第十七批：AI 请求状态机（P1-AI 关闭，2026-09-01 连库）
+
+- **缺口**：generate 路由无幂等（客户端超时重试 = 重复扣费，每次生成新 trans_no）；「失败退款」依赖请求进程存活——扣费后进程崩溃积分永久丢失；无请求持久化，不可审计、不可恢复（docs/13 v1 上线门槛 v1.5 整块缺失）。
+- **迁移 0032**（已连库应用）：public `ai_requests`——request_id/user_uuid/model/provider/estimated_credits/body_fingerprint（请求体指纹）/status CHECK 六态（created/running/succeeded/failed/refund_pending/refunded）/input_tokens/output_tokens/error_message/refund_attempts/completed_at；**幂等键 `UNIQUE(user_uuid, request_id)` 按用户隔离**（P1-5：防客户端可控公共键空间跨租户抢注）；partial `idx_ai_requests_recover`（仅 running/refund_pending）；RLS deny-all + REVOKE anon/authenticated + 仅授 service_role（表+序列）。
+- **幂等语义**（`lib/ai-request.ts beginAiRequest`）：`Idempotency-Key` 头可选（1~128 位 URL 安全字符，非法 400；未提供服务端生成 `srv-*` 键不可重试）；请求体指纹 `sha256(model+prompt|messages+max_tokens)`——同键同体 running/succeeded 返 409（带已有记录摘要，另有 `GET /api/v1/ai/generate?request_id=` 查询端点），同键异体返 422，failed/refunded 终态条件重占 running 可重跑（与崩溃补偿互斥，0 行命中当 409）。**幂等判定发生在扣费之后**：409/422 路径一律先退本次扣费（refundQuietly，退不掉记日志），不能吞用户的钱。
+- **状态机**：**行存在即代表已扣费**（扣费成功后才建 running 行，消除「扣费后崩溃已扣未记」歧义）；`markAiRequestSucceeded`（running→succeeded 记 usage）、`markAiRequestFailed`（running→refund_pending 条件占用→退款→failed；退款失败 refund_attempts+1 留 refund_pending；占用 0 行=崩溃补偿已处理不重复退）。
+- **崩溃补偿**（cron `/api/cron/daily` 第 7 项，失败不阻塞其他任务）：`compensateStaleAiRequests`——running 超 30 分钟（扣费后进程崩溃）条件占用→退款→refunded；refund_pending 超 10 分钟退款重试；全部条件更新互斥防双退。`cleanupCompletedAiRequests`——completed 超 24h 终态行清理（幂等键 TTL 口径）。响应加 ai_compensated/ai_refunded/ai_still_pending/ai_cleaned + ai_error。
+- **真库 e2e**：UNIQUE 冲突复现 + 不同用户同 request_id 可共存（按用户隔离验证）；running→refund_pending 条件流转、二次流转 0 行（互斥）；TTL 清理查询形态；anon/authenticated 零权限 + service_role 有效权限 + RLS 启用；e2e 数据已清理。
+- **测试**：`__tests__/ai-request.test.ts` 15 用例（键格式/指纹稳定性/新键落账/409 两态/422/终态重占/重占 0 行/成功流转/退款成败两路/占用互斥/补偿两查询面/重试仍失败 still_pending/TTL 只删终态）；`db-rbac-static.test.ts` 第十七批 4 用例（0032 表结构+隔离键+权限收口；lib 条件流转/补偿/TTL 语义；路由幂等链接入+冲突退款；cron 接线）。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest **57 文件 334 用例通过**（基线 315 + 本批 19）；ESLint 0 errors（124 个既有 warnings 不变）。
+**已知边界**：①prompt/messages 字节与条数上限（413）仍未做（docs/13 输入限制条目，归入 v1.5 收尾）；②幂等结果缓存不做——同键已成功只回状态摘要不给生成结果（结果不落库，客户端需自存）；③服务端生成键不可重试（客户端不传 Idempotency-Key 时超时重试仍会重复扣费，契约文档已注明强烈推荐）。
+
 ### 1.11 本次验证结果（第一批）
 
 - [x] TypeScript：`tsc --noEmit` 通过。
@@ -366,7 +379,7 @@
 
 ### P1（高优先级）
 
-- [ ] **AI 请求幂等与状态机**：落地 `ai_requests`，按 `(user_uuid, request_id)` 隔离；同键不同请求体返回 422；补 24h 生命周期、崩溃补偿、退款 pending worker。见 `docs/13-ai-gateway.md`。
+- [x] **~~AI 请求幂等与状态机~~（已关闭 2026-09-01，见 §1.25）**：迁移 0032 `ai_requests`（`UNIQUE(user_uuid, request_id)` + 请求体指纹 422 + running/refund_pending 崩溃补偿 + 24h TTL）；剩余：prompt 字节/条数上限（413，docs/13 输入限制）。
 - [x] **~~支付 webhook inbox 与每日对账~~（已关闭 2026-09-01，见 §1.24）**：迁移 0031 `payment_events`（三渠道先落库再处理 + `UNIQUE(provider, provider_event_id)` 幂等）+ `replayPendingEvents` cron 重放 + `reconcilePayments` 三规则对账（漏单/失败积压/金额抽核）+ `payment.reconcile_anomaly` 告警走 outbox。
 - [x] **~~定价真相源统一~~（已关闭 2026-08-30，见 §1.9）**：运行时权威 = `payment_products`，`data/pricing.ts` 仅种子/回退；写入路由加不变量校验。剩余：事务化批量写入（双人复核 ✅ 已闭合，见 §1.23）。
 - [ ] **迁移发布机制补全**：为 `CONCURRENTLY` 索引和 expand-contract 建立专用部署过程/CI job（本批只完成了常规事务迁移）。
@@ -408,10 +421,10 @@
 9. **~~默认管理员恢复 + 强制改密闭环~~（已关闭，2026-09-02）**：迁移 0027 + getAdminUser/getUserInfo/console layout/requireAdmin 四处修复 + 浏览器 e2e 全链路通过。见 §1.20。
 10. **~~N-13 剩余：联盟奖励冲销 + 争议收入确认~~（已关闭，2026-09-01 连库）**：迁移 0028 `private.reverse_affiliate_reward`（completed→reversed，幂等）+ `processRefund`/`dispute_lost` 接线 + my-invites reversed 状态；真库 e2e（冲销/幂等/anon 拒绝）通过；收入确认口径核实 stats 只计 paid。见 §1.21。
 11. **~~N-4：运营事件 Transactional Outbox~~（已关闭，2026-09-02 连库）**：迁移 0029 `private.op_event_outbox` + 六 RPC（enqueue/claim SKIP LOCKED/deliver 幂等/ack/fail 退避死信/cleanup）+ `lib/oplog.ts` warn+ 分级入队（入队即持久化）+ 三触发面投递（内联/顺带/每日 cron 兜底）+ 告警外呼后移；真库 e2e 全链路通过。见 §1.22。
-12. **~~Webhook inbox、对账~~（已关闭，2026-09-01 连库）**：迁移 0031 + 三路由 inbox 链 + cron 重放/三规则对账，见 §1.24。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）。**剩余 = AI 请求状态机（`ai_requests` 幂等/生命周期/崩溃补偿）**。
+12. **~~Webhook inbox、对账~~（已关闭，2026-09-01 连库）**：迁移 0031 + 三路由 inbox 链 + cron 重放/三规则对账，见 §1.24。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）。**~~AI 请求状态机~~（已关闭，2026-09-01 连库）**：迁移 0032 + 幂等/崩溃补偿/TTL，见 §1.25。可靠副作用与支付/AI 崩溃补偿闭环至此完成。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：P1（AI 请求状态机）> CSRF 防护 > 事务化定价批量写入。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账已关闭（0031，见 §1.24）、N-13/RLS（0024）/迁移应用（0019–0031）均已关闭。
+> **当前债务优先级（下一步）**：CSRF 防护 > 事务化定价批量写入 > AI 输入字节上限（413，v1.5 收尾）。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）与 P1-AI 状态机（0032，见 §1.25）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
 
 ---
 

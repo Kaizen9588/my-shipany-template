@@ -600,3 +600,60 @@ describe("P1 支付事件 inbox 与每日对账静态断言（迁移 0031 + lib/
     expect(src).toContain("inbox_error");
   });
 });
+
+describe("P1 AI 请求状态机静态断言（迁移 0032 + lib/ai-request，第十七批）", () => {
+  const sql0032 = () => sourceOf("data/migrations/0032_ai_requests_state.sql");
+
+  it("0032 ai_requests：幂等键按用户隔离 + 状态机 + RLS/权限收口", () => {
+    const src = sql0032();
+    expect(src).toContain("CREATE TABLE IF NOT EXISTS ai_requests");
+    // P1-5：幂等键按用户隔离（不做全局 UNIQUE，防客户端可控公共键空间）
+    expect(src).toContain("CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_requests_user_request ON ai_requests(user_uuid, request_id)");
+    // 状态机
+    expect(src).toContain("'created', 'running', 'succeeded', 'failed', 'refund_pending', 'refunded'");
+    // 崩溃补偿扫描索引（running + refund_pending）
+    expect(src).toContain("idx_ai_requests_recover");
+    // deny-all（0024 模式）
+    expect(src).toContain("ENABLE ROW LEVEL SECURITY");
+    expect(src).toContain("REVOKE ALL ON TABLE ai_requests FROM anon, authenticated");
+    expect(src).toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ai_requests TO service_role");
+    expect(src).toContain("GRANT USAGE, SELECT ON SEQUENCE ai_requests_id_seq TO service_role");
+  });
+
+  it("lib/ai-request：同键异体 422 / 条件流转互斥 / 崩溃补偿 / TTL 清理", () => {
+    const src = sourceOf("lib/ai-request.ts")
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n")
+      .replace(/\s+/g, " ");
+    // 幂等判定
+    expect(src).toContain('in("status", ["failed", "refunded"])');
+    expect(src).toContain('eq("status", "running")');
+    // 崩溃补偿：running 超 30 分钟 + refund_pending 超 10 分钟
+    expect(src).toContain('eq("status", "running")');
+    expect(src).toContain('eq("status", "refund_pending")');
+    // TTL 清理只删终态
+    expect(src).toContain('in("status", ["succeeded", "failed", "refunded"])');
+    expect(src).toContain('lt("completed_at", cutoff)');
+  });
+
+  it("generate 路由接入幂等链（Idempotency-Key + 先扣费后落账 + 条件退款）+ GET 查询", () => {
+    const src = sourceOf("app/api/v1/ai/generate/route.ts").replace(/\s+/g, " ");
+    expect(src).toContain("idempotency-key");
+    expect(src).toContain("beginAiRequest");
+    expect(src).toContain("markAiRequestSucceeded");
+    expect(src).toContain("markAiRequestFailed");
+    expect(src).toContain("isValidRequestId");
+    // 幂等冲突发生在扣费之后：冲突路径必须退款（不能吞用户的钱）
+    expect(src).toContain("refundQuietly");
+    expect(src).toContain("422");
+    expect(src).toContain("409");
+  });
+
+  it("cron/daily 接线 AI 崩溃补偿 + TTL 清理（失败不阻塞其他任务）", () => {
+    const src = sourceOf("app/api/cron/daily/route.ts").replace(/\s+/g, " ");
+    expect(src).toContain("compensateStaleAiRequests");
+    expect(src).toContain("cleanupCompletedAiRequests");
+    expect(src).toContain("ai_error");
+  });
+});
