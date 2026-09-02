@@ -70,6 +70,15 @@ export class Storage {
         Key: key,
         Body: body,
         ContentDisposition: disposition,
+        // 服务端加密落盘（备份合规）：默认 SSE-S3；配置 STORAGE_SSE_KMS_KEY 时升级 KMS
+        ...(process.env.STORAGE_SSE_KMS_KEY
+          ? {
+              ServerSideEncryption: "aws:kms" as const,
+              ...(process.env.STORAGE_SSE_KMS_KEY !== "kms-default" && {
+                SSEKMSKeyId: process.env.STORAGE_SSE_KMS_KEY,
+              }),
+            }
+          : { ServerSideEncryption: "AES256" as const }),
         ...(contentType && { ContentType: contentType }),
       },
     });

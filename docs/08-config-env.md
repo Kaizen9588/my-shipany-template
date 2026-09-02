@@ -197,6 +197,7 @@ export const config = {
 | `STORAGE_ACCESS_KEY` | ❌ | S3 Access Key |
 | `STORAGE_SECRET_KEY` | ❌ | S3 Secret Key |
 | `STORAGE_BUCKET` | ❌ | S3 Bucket 名称 |
+| `STORAGE_SSE_KMS_KEY` | ❌ | 备份上传服务端加密升级 KMS：未设时用 AES256（SSE-S3）；设为 `kms-default` 用账户默认 KMS 密钥，否则为指定 KMS key id |
 | `STORAGE_DOMAIN` | ❌ | CDN 域名（用于拼接文件 URL） |
 | `STORAGE_PREFIX` | ❌ | 文件 key 前缀（默认项目名，替代硬编码 "shipany/"，P-1.8） |
 

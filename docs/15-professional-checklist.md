@@ -85,11 +85,11 @@
 | Waffo（MoR+PSP） | ✅ | `lib/payment/providers/waffo.ts` |
 | 渠道热切换 | ✅ | `payment_settings` 表 |
 | 健康检测 failover | ✅ | `lib/payment/health.ts` |
-| 退款 | ⚠️ 部分实现 | `services/refund.ts` 存在；但部分退款与积分回收不一致（P0），缺少 refunds 表、幂等、对账 |
+| 退款 | ✅ 已闭环（2026-09-01 核实口径） | refunds 表 + 幂等登记（0022）+ 按订单 credit_lots 批次精确回收（0026）+ 债务化/回收工作台（0021）；每日对账（0031）。部分退款积分回收口径：回收量 = 订单批次 remaining（非按退款金额比例拆分，金额比例拆分留 v2 多次退款需求出现时再评估） |
 | 订阅 | ⚠️ | 代码存在，v1 不启用（见 DEVELOPMENT_PLAN 5.3） |
 | 支付事件 inbox / 对账 | ❌ No-Go | 缺少 webhook 原始事件持久化、幂等、重放防护、每日对账（P0） |
 | 远端成功本地失败补偿 | ❌ No-Go | 先建远端再写本地，失败无 outbox/补偿/对账（P0） |
-| 退款对已消费积分无回收路径 | ❌ No-Go | 方案 A/B 都不闭环，缺退款准入校验 + 债务化 + refund_blocked（P0-1，第九轮） |
+| ~~退款对已消费积分无回收路径~~ | ✅ 已关闭 | 退款准入校验（批次 remaining）+ 债务化（credit_debts）+ refund_blocked + 回收工作台全链路落地（P0-1，0021/0022/0026） |
 | 争议/拒付链路 | ❌ 未完成 | `PaymentEventType` 无争议类型、`orders.status` 无 disputed/charged_back（P2-2，第九轮） |
 
 ## 六、AI 能力

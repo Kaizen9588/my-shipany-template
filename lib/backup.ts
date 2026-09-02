@@ -9,6 +9,11 @@ import { Storage, getStorageKey } from "@/lib/storage";
  * 2.13 修复：users 表不再 select(*) -- 整行导出会把 password_hash /
  * signin_openid / signin_ip 明文写进备份文件，bucket 公开性又完全依赖
  * 部署方自觉，等于把密码哈希库放在门外。现按白名单收敛导出字段。
+ *
+ * 2.15 备份加固（P2 批量，docs/07 §备份策略）：
+ * - 服务端加密：SSE-S3（AES256），可选 KMS（STORAGE_SSE_KMS_KEY 设定时升级 aws:kms）
+ * - 备份对象默认私有（bucket 策略须保证非公开读，详见 docs/07 备份策略节）
+ * - 恢复演练：每月用备份 JSON 在 staging 空库回灌校验（步骤见 docs/07）
  */
 const USER_BACKUP_FIELDS = [
   "id",

@@ -631,9 +631,10 @@ AffiliateRewardAmount = {
 > 缺 `user_uuid` 的事件不登记不回收，告警人工核查。admin 退款路径（`/api/admin/refund`）
 > 保持 `processRefund` 直回收 + 终态（管理员已决策）。`PaymentEvent` 增加
 > `provider`/`provider_ref_id` 字段，三渠道适配器（stripe/creem/waffo）已填充。
-> **仍待办**：①迁移 0021/0022 未应用（待连库，见 handoff §1.4）；②部分退款/多次退款准入校验
-> 用 credit_lots 精确批次计算（当前为近似口径 + 债务化兜底）；③后台回收工作台
-> （消费 refund_requested/refund_blocked 队列的运营界面）随审批队列一起排产。
+> ✅ **上段三项待办全部关闭（2026-08-30 连库 + 2026-09-01 收尾）**：①迁移 0021/0022 已连库应用；
+> ②准入校验已升级为 credit_lots 精确批次（0026：回收量 = 订单批次 remaining，含过期批次防套利）；
+> ③回收工作台已上线（`/admin/recovery`：refund_requested/refund_blocked 队列 + outstanding 债务清偿）。
+> 金额比例拆分式部分退款（一单按金额退一半）v1 未启用，出现多次退款需求时再按批次比例评估。
 
 ---
 
@@ -647,7 +648,7 @@ AffiliateRewardAmount = {
 | # | 风险 | 根因 | 验收标准 |
 |---|------|------|----------|
 | P0-积分-1 | 积分过期账本会在过期后改变历史消费结果 | 永久负数流水 + 净额模型无法区分批次 | 引入 credit_lots + credit_consumptions，跨批次消费/过期/退款后余额可审计且不凭空增减 |
-| P0-退款-1 | 部分退款与积分回收不一致 | `process_order_refund` 不区分退款金额，统一标 refunded | **退款准入校验 + 已消费额度债务化 + refund_blocked 人工态**三项齐备（原「v1 只允许全额退款，或完成 refunds 表 + 比例/批次扣回」验收标准有洞，照它关闭后资金口子依然敞着，见 §4.3 P0-1）。⚠️ 部分完成（2026-08-30）：债务化 + refund_blocked + restricted 落地（`credit_debts`/`refunds`/`debt_regulate_order_refund` + `processRefund` 债务化，见 §4.3 链接块）；**webhook 中间态已接线（迁移 0022 + `registerRefundRequest`，见 §4.3 第七批块）**；准入校验（credit_lots 精确批次）与回收工作台待补，迁移 0021/0022 未应用 |
+| ~~P0-退款-1~~ | ~~部分退款与积分回收不一致~~ | `process_order_refund` 不区分退款金额，统一标 refunded | **✅ 全部关闭（2026-09-01 核实，2026-08-30/09-01 分批落地）**：准入校验（迁移 0026 `process_order_refund` 按订单 `credit_lots` 批次 remaining 精确回收，用户级 advisory 锁消除快照漂移）+ 已消费额度债务化（0021 `credit_debts` + `debt_regulate_order_refund`）+ refund_blocked 人工态（回收工作台 /admin/recovery + 债务清偿 RPC）+ webhook 中间态登记（0022 + `registerRefundRequest`）。金额比例拆分式部分退款（一单按金额退一半）v1 未启用，留 v2 多次退款需求出现时评估 |
 | P0-Webhook-1 | Webhook 缺少事件 inbox 与强绑定 | 仅凭订单号处理，无 provider_event_id 唯一约束，无原始 body 留存 | 统一 webhook_inbox 表，(provider, provider_event_id) 唯一，原始 body 持久化，处理可重试 |
 | P0-对账-1 | 远端支付成功、本地落库失败无可靠恢复 | 先建远端 checkout 再写本地，失败后渠道收入无对账单据 | 本地先建订单 + 幂等键；每日对账：渠道成功/退款清单 vs 本地订单/积分/退款；差异告警 + 人工修复 |
 | P0-金额-1 | 金额/币种空值可绕过校验 | `handle_order_payment` 参数为空时跳过校验 | 空金额/空币种一律失败并告警；金额统一为最小货币单位整数，禁止浮点 |

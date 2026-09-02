@@ -80,6 +80,19 @@ pnpm build                          # 默认不启用（Vercel / next start 兼�
 - Docker 构建命令已内置 `NEXT_OUTPUT=standalone`；standalone 产物被复制到镜像 `/app` 根目录，启动命令为 `CMD ["node", "server.js"]`
 - Dockerfile 中的 `RUN NEXT_OUTPUT=standalone pnpm build` 已处理
 
+### 2.4.1 数据备份策略（P2 批量，2026-09-01 成文）
+
+| 项 | 口径 |
+|----|------|
+| 备份内容 | 关键表 `users`（字段白名单，不含 password_hash/signin_openid/signin_ip——2.13）/ `orders` / `credits`，每日 02:00 UTC 经 `/api/cron/daily` 导出 JSON 到 S3 `backups/` 前缀 |
+| 加密 | 上传强制 SSE：默认 AES256（SSE-S3）；设置 `STORAGE_SSE_KMS_KEY` 后升级 aws:kms（值为 `kms-default` 时用账户默认 KMS 密钥，否则为指定 key id） |
+| 脱敏 | 备份文件里的个人数据以 users 白名单为界；email 仍为真实值（恢复演练需要），**bucket 必须阻止公开读**（S3 Public Access Block 全开），仅部署方可读 |
+| 保留周期 | S3 副本建议生命周期规则：`backups/` 前缀 90 天到期删除（与 Supabase 免费版自带 7 天快照互补）；合规要求更长的（税务 7 年）由订单/交易层冷存解决，不在本备份范围 |
+| 恢复演练 | **每月一次**：取最近一份备份 JSON，在 staging 空库（`pnpm migrate` 建库后）按表回灌，校验 ① 行数与生产一致 ② 抽 3 条订单的 credits 关联完整 ③ 演练记录写入运营日志；演练失败视为备份失效，当周修复 |
+
+> **注意**：备份走应用层 JSON 导出，不是数据库物理快照——结构变更（新表/新列）不会自动纳入备份范围。
+> 新增关键表时同步更新 `lib/backup.ts` 的表清单。
+
 ### 2.5 Stripe Webhook 配置
 
 1. Stripe Dashboard -> Developers -> Webhooks -> Add Endpoint

@@ -495,6 +495,36 @@
 
 **文档**：docs/04 §8 待补清单 1/2/6 关闭（4 数据导出/5 冷静期留产品项）、docs/15 checklist 行更新、docs/03 迁移清单补 0035。
 
+### 1.33 第二十五批：P2 批量第二组——GDPR 日志匿名化 + PostHog 删除联动（2026-09-01）
+
+**① 迁移 0035：`private.anonymize_user_personal_data(TEXT)`**
+- 问题：`delete-account` 软删除只匿名化 users 行；`op_events.subject_uuid/ip/detail`、`audit_logs.admin_uuid/target_uuid/ip` 属 GDPR「个人数据」却无限期残留（docs/04 §8 待补 6，第十轮 P3-7）。
+- 修复：SECURITY DEFINER RPC（search_path 钉死、REVOKE 后仅授 service_role）匿名化三张表——op_events、op_event_outbox 队列残留（防投递又写出真实 uuid）、audit_logs；uuid 字段改 `deleted+{uuid}` 占位（保住审计可关联性，不再指向真实身份），ip 置空，detail 内 `user_uuid/user_email/ip` 键移除；`order_no` 保留（财务关联键，非直接标识符）。UPDATE 而非 DELETE，幂等可重放。
+- e2e（连库）：三类日志各 1 行匿名化后 subject/uuid 全为占位、ip/PII 键清空。
+
+**② delete-account 路由接入**
+- 匿名化 RPC 调用吞错（失败不阻塞删除主流程，占位符规则可人工重放）；`getSupabaseClient()` 升级为 `serverClient()`（跨 schema RPC + 与 N-3 服务端边界一致）。
+- PostHog 联动（docs/04 §8 待补 1）：posthog-node v5 已移除 deletePerson API（`Object.getOwnPropertyNames` 原型链核实无 delete/gdpr 方法），按官方口径改发 `$delete_person` capture 事件；`lib/telemetry/server.ts` 新增 `deleteTelemetryUser()`，吞错 + 未配置静默跳过。
+
+**测试**：db-rbac-static +3（0035 三表覆盖/权限/definer 静态断言、路由接线断言、telemetry `$delete_person` 断言）。
+
+**文档**：docs/04 §8 待补清单 1/2/6 关闭（4 数据导出/5 冷静期留产品项）、docs/15 checklist 行更新、docs/03 迁移清单补 0035。
+
+### 1.34 第二十六批：P2 批量第三组——备份策略成文 + SSE 加密 + P2 清单核实收口（2026-09-01）
+
+**① 备份加密（lib/storage.ts）**
+- `uploadFile` 强制带 `ServerSideEncryption`：默认 `AES256`（SSE-S3）；`STORAGE_SSE_KMS_KEY` 设置后升级 `aws:kms`（`kms-default` = 账户默认密钥，其他值为指定 key id）。全站上传统一受益，备份文件（含用户 email）落盘即加密。
+
+**② 备份策略成文（docs/07 §2.4.1）**
+- 内容/加密/脱敏/保留周期（S3 生命周期 90 天 + Supabase 自带快照互补）/月度恢复演练五项口径表；部署检查项：bucket Public Access Block 全开。
+- 注意事项成文：应用层 JSON 导出不含结构变更，新增关键表须同步 `lib/backup.ts` 表清单。
+
+**③ P2 清单核实收口**
+- 部分退款/多次退款：核实 0026 `process_order_refund` 已按订单 credit_lots 批次 remaining 精确回收（含过期批次防套利）+ 0021/0022 债务化/回收工作台已上线——docs/05 P0-退款-1 验收三项齐备，docs/15 两行陈旧口径修正；金额比例拆分式部分退款标记 v2 需求驱动。
+- 争议举证导出：明确 v1 口径（admin 从 /admin/logs + my-orders 手工导出），自动化导出接口需求驱动。
+
+**测试**：无新逻辑分支（SSE 参数为上传元数据），既有 371 用例回归通过。
+
 
 ---
 
@@ -549,13 +579,13 @@
 
 ### P2（中优先级）
 
-- [ ] 部分退款、多次退款与按批次积分回收规则。
-- [ ] 争议 / 拒付的运营处理与举证导出。
+- [x] **~~部分退款、多次退款与按批次积分回收规则~~（已核实 2026-09-01 全链路已落地，docs/05 P0-退款-1 验收标准三项齐备）**：按批次精确回收（0026 `process_order_refund` 读订单 credit_lots remaining + advisory 锁）+ 债务化/回收工作台（0021/0022 + /admin/recovery）此前已分批上线，本次核实文档口径并把金额比例拆分式部分退款标记为 v2 需求驱动项（v1 未启用，无收入路径依赖）。
+- [ ] 争议 / 拒付的运营处理与举证导出（dispute 时导出该用户 AI 调用日志 + 消费流水作为渠道举证材料；v1 由 admin 从 /admin/logs 与 my-orders 手工导出，自动化导出接口待需求驱动）。
 - [x] **~~GDPR 删除覆盖 `op_events.subject_uuid` 与 `audit_logs` 中的个人数据~~（已关闭 2026-09-01，迁移 0035 + e2e，见 §1.33）**：`private.anonymize_user_personal_data` RPC 匿名化三张日志表（uuid 占位 + ip 抹除 + detail 脱敏），delete-account 路由接入；PostHog `$delete_person` 联动同批落地。
 - [x] **~~`payment_success` 邮件触发点改到真实 webhook 成功路径~~（已核实无需改动，2026-09-01，见 §1.32）**：webhook 归一化路径（lib/payment/index.ts）已在落账成功后经 `runAfterResponse` 发送；services/order.ts 的 `handleOrderSession` 是 pay-success 页面收敛后的无调用方遗留代码（仅测试引用），其邮件块属死路径，不构成重复触发。
 - [x] **~~Stripe 部署文档补 `charge.refunded` 订阅事件~~（已关闭 2026-09-01，见 §1.32）**：docs/07 §2.5 事件清单补齐 `charge.dispute.created/closed`；docs/payment/stripe-integration.md §2.3 争议行改"已处理"+ P2-2 警告块闭合。
 - [x] **~~`orders.expired_at` 从支付时刻计算，而不是下单时刻冻结~~（已关闭 2026-09-01，迁移 0034 + e2e，见 §1.32）**：落账时 `paid_at + valid_months` 重算并写回订单行与积分行；public 残留副本顺带 DROP。
-- [ ] 数据备份加密、脱敏、保留周期与恢复演练。
+- [x] **~~数据备份加密、脱敏、保留周期与恢复演练~~（已关闭 2026-09-01，见 §1.34）**：S3 上传强制 SSE（AES256 默认 / KMS 可选 `STORAGE_SSE_KMS_KEY`）、users 字段白名单脱敏（2.13 已有）、保留周期与月度恢复演练口径成文 docs/07 §2.4.1；bucket 防公开读列为部署检查项。
 
 ### P3（工程与文档收口）
 
