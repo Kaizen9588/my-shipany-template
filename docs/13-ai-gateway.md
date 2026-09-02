@@ -88,9 +88,9 @@ export type ModelId = keyof typeof MODEL_PRICING;
 
 ```
 1. 预估：预估积分 = ceil((估算输入 token + max_output_tokens) × credits_per_1k / 1000)
-   估算输入 token ≈ prompt.length / 4（v1 粗估，够用）
-   ✅ 2.9 已修复：messages 按 JSON 序列化长度计入输入估算（与 prompt 同口径），
-   传 messages 不再免费
+   ✅ 2.9 已修复：messages 按 JSON 序列化计入输入估算（与 prompt 同口径），传 messages 不再免费
+   ✅ P3-6 已修复（2026-09-01，P3 批量）：token 粗估按字符类型加权——CJK 字符 1 token/字、
+   其余 4 字符/token（`estimateTextTokens`，data/model-pricing.ts）。中文输入不再被低估 2–4 倍。
 
 2. 原子扣减：decreaseCredits（P-1.2 RPC + 行锁），trans_type = "ai_generate"
    └─ 余额不足 → 402
@@ -100,10 +100,9 @@ export type ModelId = keyof typeof MODEL_PRICING;
    └─ 失败 → 全额退款（insertCredit 正数，trans_type = "ai_refund"）
 ```
 
-> ⚠️ **P3-6（第十轮，2026-08-26）——中文输入 token 预估系统性低估**：`prompt.length / 4` 是英文语料的粗估系数；
-> 中文约 0.6–1 token/字符，同一公式对中文输入低估 2–4 倍——而模板目标市场含 zh locale 与支付宝/微信渠道。
-> 低估方向对平台不利：「一次扣清 + 成功不补收」模型下，真实输入成本高于预扣的部分由平台承担。
-> 修法：按内容做简单 CJK 字符占比判断（CJK 区间按 length×~0.9 折算、其余 /4），或直接上调安全系数并记录在定价表里。
+> ✅ **P3-6 已关闭（2026-09-01，P3 批量）**：`estimateCredits` 输入 token 粗估改为按字符类型加权
+> （CJK 区间 1 token/字 + 其余 4 字符/token），messages JSON 序列化同口径。测试覆盖：纯中文/纯拉丁
+> token 折算、混合文本、扣费差异传导。多估优于漏估的方向保持不变（无精确结算依赖）。
 
 **为什么不用「预扣 + 结算 + 多退少补」**（第六轮审查否决）：
 - 一次调用产生 3 条流水，用户对账困难

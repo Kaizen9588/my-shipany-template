@@ -8,12 +8,35 @@ import { getOneYearLaterTimestr } from "@/lib/time";
 import { getUserUuidByApiKey } from "@/models/apikey";
 import { headers } from "next/headers";
 import { increaseCredits } from "./credit";
+import { getClientIp } from "@/lib/ip";
+import { rateLimitByIp } from "@/lib/ratelimit";
 
 export async function saveUser(user: User) {
   try {
     const provider = user.signin_provider || "";
     const existUser = await findUserByEmail(user.email, provider);
     if (!existUser) {
+      // P3 防刷：OAuth 首次注册按 IP 日配额，批量注册薅赠分与邮箱注册同规
+      // （credentials 注册在 verify-code 路由限流；这里覆盖 OAuth 首登通道）。
+      // 限流失败放行（fail-open 仅影响防刷，不阻断正常登录）。
+      try {
+        const ip = user.signin_ip || (await getClientIp());
+        const registerRl = rateLimitByIp(
+          `register-oauth:daily:${ip}`,
+          5,
+          24 * 60 * 60 * 1000
+        );
+        if (!registerRl.ok) {
+          throw new Error(
+            "registration limit reached for this network, try tomorrow"
+          );
+        }
+      } catch (rlE: any) {
+        if (String(rlE?.message || "").includes("registration limit")) {
+          throw rlE;
+        }
+        // getClientIp 等基础设施失败：继续注册（不因防刷组件故障拒绝用户）
+      }
       try {
         await insertUser(user);
       } catch (e: any) {

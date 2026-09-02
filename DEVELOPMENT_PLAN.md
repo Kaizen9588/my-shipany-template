@@ -14,7 +14,7 @@
 > （迁移 0010，不匹配置 `mismatch` 不充值）、订单写入 payment_provider、退款存储过程原子化
 > （迁移 0011，并发双扣修复）、IP 信任按 TRUSTED_PROXY 收敛、验证码 crypto 随机+限流+发送冷却、
 > 匿名 demo 模型服务端固定且额度改纯 IP；Stripe 优惠码因金额精确比对暂时禁用。
-> 单测 126 用例（含对抗性回归）。遗留 6 项待办见 [docs/12](./docs/12-architecture-adversarial-review.md) §2.7~2.12。
+> 单测 126 用例（含对抗性回归）。遗留项后续已全部纳入 [docs/IMPLEMENTATION-HANDOFF-2026-08-30.md](./docs/IMPLEMENTATION-HANDOFF-2026-08-30.md) 跟踪并逐批关闭。
 
 ---
 
@@ -793,7 +793,7 @@ my-shipany-template/
 ├── ✅ P-1.6 配置安全（strictMode=true + images 白名单 + middleware en/zh + standalone 条件化）
 ├── ✅ P-1.7 环境变量校验（lib/env.ts zod fail fast）+ 日志封装（lib/logger.ts）
 ├── ✅ P-1.8 基础设施（单例 + 幽灵字段 + 联盟比例奖励 + 时间格式 + 死代码清理 + STORAGE_PREFIX + FK/索引迁移）
-├── ✅ P-1.9 测试基础设施（Vitest 18 用例：FIFO RPC 契约/支付流程/定价/哈希/env；支付 E2E 见 docs/12 §2.6 补充说明）
+├── ✅ P-1.9 测试基础设施（Vitest 用例：FIFO RPC 契约/支付流程/定价/哈希/env）
 ├── ✅ P-1.10 CORS 配置（middleware API 路由 + CORS_ALLOWED_ORIGINS）
 ├── ✅ P-1.11 认证与 ID 生成安全（One-Tap aud 校验 + Snowflake 单例/workerId + provider 维度 + 并发注册兜底）
 └── ✅ 阶段 1.5 完成（tsc 类型检查 + Vitest + next build 验证通过）
@@ -850,7 +850,7 @@ my-shipany-template/
 
 ### 审查结论跟踪约定（重要）
 
-> 历轮架构审查的结论统一维护在 [docs/12-architecture-adversarial-review.md](./docs/12-architecture-adversarial-review.md)（遗留项跟踪表）。每轮审查完成后：
+> 历轮架构审查的结论统一维护在 [docs/ADVERSARIAL-REVIEW-2026-08-26.md](./docs/ADVERSARIAL-REVIEW-2026-08-26.md) 与 [docs/IMPLEMENTATION-HANDOFF-2026-08-30.md](./docs/IMPLEMENTATION-HANDOFF-2026-08-30.md)（遗留项跟踪）。每轮审查完成后：
 
 1. 已采纳的建议 → 落地到对应文档，跟踪表标注 ✅ + 指向
 2. 未采纳的建议 → 跟踪表标注 ❌ + 理由，或 ⬜ 待落地 + 优先级

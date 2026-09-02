@@ -336,7 +336,7 @@ docker run -p 3000:3000 my-shipany-template:latest
 | [08-config-env.md](./docs/08-config-env.md) | 配置与环境变量 |
 | [10-email-system.md](./docs/10-email-system.md) | 邮件系统 |
 | [11-telemetry-analytics.md](./docs/11-telemetry-analytics.md) | 埋点与监控 |
-| [12-architecture-adversarial-review.md](./docs/12-architecture-adversarial-review.md) | 架构审查遗留项 |
+| [ADVERSARIAL-REVIEW-2026-08-26.md](./docs/ADVERSARIAL-REVIEW-2026-08-26.md) | 对抗式审查结论汇总 |
 | [13-ai-gateway.md](./docs/13-ai-gateway.md) | AI 网关闭环 |
 | [14-anonymous-trial.md](./docs/14-anonymous-trial.md) | 免费试用额度 |
 | [boundary-spec.md](./docs/boundary-spec.md) | 项目边界规范（禁止提交 / 密钥安全 / 越权与资金边界 / Git 自查） |

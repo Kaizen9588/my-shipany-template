@@ -11,7 +11,7 @@ import { getUuid } from "@/lib/hash";
 import { hashPassword, validatePasswordStrength } from "@/lib/password";
 import { getSupabaseClient } from "@/models/db";
 import { getClientIp } from "@/lib/ip";
-import { rateLimit } from "@/lib/ratelimit";
+import { rateLimit, rateLimitByIp } from "@/lib/ratelimit";
 
 import { User } from "@/types/user";
 
@@ -44,6 +44,16 @@ export async function POST(req: Request) {
     const ipRl = await rateLimit(`verify:ip:${ip}`, 20);
     if (!ipRl.ok) {
       return respErr("too many attempts, please try later", 429);
+    }
+
+    // P3 防刷：注册模式按 IP 日配额（内存级降级近似，多实例由 Upstash 精确）——
+    // 批量注册薅 NewUserGet 赠分的主要通道就是本路由，验证码单 IP 20 次/分钟
+    // 只防爆破不防慢速刷号，这里按天限流封顶（docs/04 §8）
+    if (mode === "register") {
+      const registerRl = rateLimitByIp(`register:daily:${ip}`, 5, 24 * 60 * 60 * 1000);
+      if (!registerRl.ok) {
+        return respErr("registration limit reached for this network, try tomorrow", 429);
+      }
     }
 
     const modeValue = mode === "reset" ? "reset" : "register";

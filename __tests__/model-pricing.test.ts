@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MODEL_PRICING,
   estimateCredits,
+  estimateTextTokens,
   getModelPricing,
 } from "@/data/model-pricing";
 
@@ -39,5 +40,25 @@ describe("data/model-pricing（6.0 AI 网关闭环）", () => {
     const short = estimateCredits(pricing, "hi");
     const long = estimateCredits(pricing, "x".repeat(4000));
     expect(long).toBeGreaterThan(short);
+  });
+
+  it("中文 prompt 不再按 /4 低估：CJK 1 token/字，同字符数下中文扣费高于英文", () => {
+    const pricing = getModelPricing("gpt-4o")!; // 2.5 积分/1k，粗估差异可传导到积分差
+    // 同一输出上限下，1000 个汉字的输入 token 粗估应 ≥ 1000（1 token/字），
+    // 而旧口径 1000/4=250 会把 1000 字中文按 250 token 收费
+    const cjkTokens = estimateTextTokens("测".repeat(1000));
+    expect(cjkTokens).toBeGreaterThanOrEqual(1000);
+    const latinTokens = estimateTextTokens("a".repeat(1000));
+    expect(latinTokens).toBe(250); // 1000/4
+    // 扣费差异传导：中文预估积分高于等长英文
+    expect(estimateCredits(pricing, "测".repeat(1000), 100)).toBeGreaterThan(
+      estimateCredits(pricing, "a".repeat(1000), 100)
+    );
+    // 混合文本：JSON 序列化里的标点/引号按拉丁口径
+    const mixed = estimateTextTokens('{"role":"user","content":"你好"}');
+    expect(mixed).toBeGreaterThan(0);
+    expect(mixed).toBeLessThan(
+      estimateTextTokens("你好".repeat(5)) // 纯中文相同汉字数
+    );
   });
 });

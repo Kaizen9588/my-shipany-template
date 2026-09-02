@@ -49,11 +49,13 @@ export function getModelPricing(model: string): ModelPricing | undefined {
 
 /**
  * 预估一次扣清的积分：ceil((估算输入 token + 输出上限) × credits_per_1k / 1000)
- * 输入 token 粗估 ≈ 输入文本长度 / 4
  *
- * 2.9 修复：messages 数组按 JSON 序列化长度计入输入（此前传 messages 时
- * prompt 为空串，全部上下文 0 计费而调用优先使用 messages，平台白担成本）。
- * 粗估口径与 prompt 一致，不追求精确 token 数（多估一点点优于漏估）。
+ * 输入 token 粗估（P3 修复，2026-09-01）：按字符类型加权——
+ * - CJK 字符（中日韩）按 1 token/字计（多字节编码，分词器切分粒度≈字）
+ * - 其他字符（拉丁/数字/符号）按 4 字符/token 计
+ * 原口径 prompt.length/4 对中文低估约 4 倍（1000 字中文实耗约 1000 token
+ * 只按 250 计），且 messages 序列化后含大量 JSON 标点同样偏移。
+ * 粗估不追求精确，多估优于漏估。
  */
 export function estimateCredits(
   pricing: ModelPricing,
@@ -61,22 +63,39 @@ export function estimateCredits(
   maxTokens?: number,
   messages?: unknown
 ): number {
-  const promptLength = prompt.length + estimateMessagesLength(messages);
-  const inputTokens = Math.ceil(promptLength / 4);
+  const promptTokens =
+    estimateTextTokens(prompt) + estimateMessagesTokens(messages);
   const outputTokens = maxTokens || pricing.max_output_tokens;
   const estimated =
-    ((inputTokens + outputTokens) * pricing.credits_per_1k_tokens) / 1000;
+    ((promptTokens + outputTokens) * pricing.credits_per_1k_tokens) / 1000;
 
   return Math.max(1, Math.ceil(estimated));
 }
 
-/** messages 序列化长度估算：非法类型按 0 计（generate 路由会另行校验） */
-function estimateMessagesLength(messages: unknown): number {
+const CJK_RE =
+  /[\u2E80-\u9FFF\u3400-\u4DBF\uF900-\uFAFF\u3000-\u303F\uFF00-\uFFEF]/;
+
+/** 文本 token 粗估：CJK 字符 1 token/字，其余 4 字符/token */
+export function estimateTextTokens(text: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const ch of text) {
+    if (CJK_RE.test(ch)) {
+      cjk++;
+    } else {
+      other++;
+    }
+  }
+  return cjk + Math.ceil(other / 4);
+}
+
+/** messages 序列化 token 粗估：非法类型按 0 计（generate 路由会另行校验） */
+function estimateMessagesTokens(messages: unknown): number {
   if (!Array.isArray(messages) || messages.length === 0) {
     return 0;
   }
   try {
-    return JSON.stringify(messages).length;
+    return estimateTextTokens(JSON.stringify(messages));
   } catch {
     return 0;
   }

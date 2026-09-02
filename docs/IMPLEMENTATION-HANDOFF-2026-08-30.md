@@ -525,6 +525,36 @@
 
 **测试**：无新逻辑分支（SSE 参数为上传元数据），既有 371 用例回归通过。
 
+### 1.34 第二十六批：P2 批量第三组——备份策略成文 + SSE 加密 + P2 清单核实收口（2026-09-01）
+
+**① 备份加密（lib/storage.ts）**
+- `uploadFile` 强制带 `ServerSideEncryption`：默认 `AES256`（SSE-S3）；`STORAGE_SSE_KMS_KEY` 设置后升级 `aws:kms`（`kms-default` = 账户默认密钥，其他值为指定 key id）。全站上传统一受益，备份文件（含用户 email）落盘即加密。
+
+**② 备份策略成文（docs/07 §2.4.1）**
+- 内容/加密/脱敏/保留周期（S3 生命周期 90 天 + Supabase 自带快照互补）/月度恢复演练五项口径表；部署检查项：bucket Public Access Block 全开。
+- 注意事项成文：应用层 JSON 导出不含结构变更，新增关键表须同步 `lib/backup.ts` 表清单。
+
+**③ P2 清单核实收口**
+- 部分退款/多次退款：核实 0026 `process_order_refund` 已按订单 credit_lots 批次 remaining 精确回收（含过期批次防套利）+ 0021/0022 债务化/回收工作台已上线——docs/05 P0-退款-1 验收三项齐备，docs/15 两行陈旧口径修正；金额比例拆分式部分退款标记 v2 需求驱动。
+- 争议举证导出：明确 v1 口径（admin 从 /admin/logs + my-orders 手工导出），自动化导出接口需求驱动。
+
+**测试**：无新逻辑分支（SSE 参数为上传元数据），既有 371 用例回归通过。
+
+### 1.35 第二十七批：P3 批量——悬空链接 / CJK token 估算 / 注册防刷 / 文档收口（2026-09-01）
+
+**① 悬空链接清理**：README 文档表行、DEVELOPMENT_PLAN 三处 `docs/12` 链接改指 ADVERSARIAL-REVIEW-2026-08-26 / IMPLEMENTATION-HANDOFF；全仓 grep 无功能性残留。
+
+**② CJK token 估算（P3-6 关闭，data/model-pricing.ts）**
+- `estimateCredits` 输入粗估从 `length/4` 改为 `estimateTextTokens`：CJK 字符（含扩展区/全角/标点）1 token/字、其余 4 字符/token；messages JSON 序列化同口径。
+- 测试（model-pricing.test.ts +1）：纯 CJK ≥ 字数、纯拉丁 = 字数/4、混合文本上界、扣费差异传导（选 gpt-4o 费率使积分差可见——deepseek 0.14/1k 粗费率下 1000-token 差被 ceil 吞掉，测试选型注意）。
+
+**③ 注册防刷（两条通道同规）**
+- credentials：`app/api/verify-code/route.ts` register 模式加 `rateLimitByIp("register:daily:"+ip, 5, 24h)`。
+- OAuth：`services/user.ts` saveUser 首次注册分支加 `register-oauth:daily:*` 同配额；getClientIp 基础设施工具失败放行（不因防刷组件故障拒绝真实用户），限流命中抛错由 jwt 回调吞掉（用户可过 session 但无账号/赠分，注册未落库）。
+- 静态断言（db-rbac-static +2）双通道兜底。
+
+**④ 文档口径**：docs/13 P3-6 关闭 + 预估公式注记更新。
+
 
 ---
 
@@ -589,12 +619,12 @@
 
 ### P3（工程与文档收口）
 
-- [ ] 清理根目录 `README.md` / `DEVELOPMENT_PLAN.md` 中已删除 `docs/12` 的悬空链接。
+- [x] **~~清理根目录 `README.md` / `DEVELOPMENT_PLAN.md` 中已删除 `docs/12` 的悬空链接~~（已关闭 2026-09-01）**：README 文档表行与 DEVELOPMENT_PLAN 三处链接改指 ADVERSARIAL-REVIEW-2026-08-26 / IMPLEMENTATION-HANDOFF，全仓 grep 无残留（历史记录性提及除外）。
 - [ ] 统一文档章节编号及过时“已完成”标记。
 - [x] **~~明确 `/api/v1/*` 的 CORS / CSRF / Bearer API Key 防护矩阵~~（已关闭，第十九批 §1.27）**：矩阵成文于 docs/02 §认证机制；middleware CSRF 加固（豁免精确化 + NEXT_PUBLIC_WEB_URL 钉死 + 生产 http 降级拒绝）+ `__tests__/middleware-csrf.test.ts` 10 用例。
-- [ ] 中文 prompt 的 token 估算不能继续用 `prompt.length / 4`。
-- [ ] 新用户赠分的批量注册防刷策略。
-- [ ] 评估并补充用户导出、运营审批和高风险操作确认 UX。
+- [x] **~~中文 prompt 的 token 估算不能继续用 `prompt.length / 4`~~（已关闭 2026-09-01，P3-6，见 §1.35）**：`estimateTextTokens` 按字符类型加权（CJK 1 token/字、其余 /4），中文输入扣费不再系统性低估；测试覆盖折算与扣费传导。
+- [x] **~~新用户赠分的批量注册防刷策略~~（已关闭 2026-09-01，见 §1.35）**：两条注册通道同规按 IP 日配额 5 次/天——credentials（verify-code 路由 `register:daily:*`）与 OAuth 首登（saveUser `register-oauth:daily:*`，基础设施工具故障放行不拒绝用户）；静态断言双通道 CI 兜底。分布式精确计数随 Upstash 配置自动生效（§1.30）。
+- [ ] 评估并补充用户导出、运营审批和高风险操作确认 UX（审批队列 /admin/approvals 与回收工作台 /admin/recovery 已上线为功能底线；UX 细节打磨——批量操作、筛选、导出格式选项——留产品迭代，需求驱动）。
 
 ---
 

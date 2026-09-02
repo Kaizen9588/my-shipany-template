@@ -800,3 +800,19 @@ describe("GDPR 日志匿名化静态断言（迁移 0035 + delete-account，P2 �
     expect(src).toContain("export function deleteTelemetryUser");
   });
 });
+
+describe("新用户赠分批量注册防刷静态断言（P3 批量）", () => {
+  it("credentials 注册（verify-code）有按 IP 日配额", () => {
+    const src = readFileSync("app/api/verify-code/route.ts", "utf8");
+    expect(src).toContain("register:daily:");
+    expect(src).toContain("rateLimitByIp");
+    // 日窗口毫秒数
+    expect(src).toContain("24 * 60 * 60 * 1000");
+  });
+
+  it("OAuth 首次注册（saveUser）同规按 IP 日配额", () => {
+    const src = readFileSync("services/user.ts", "utf8");
+    expect(src).toContain("register-oauth:daily:");
+    expect(src).toContain("rateLimitByIp");
+  });
+});
