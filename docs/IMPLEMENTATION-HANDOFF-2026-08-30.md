@@ -555,6 +555,35 @@
 
 **④ 文档口径**：docs/13 P3-6 关闭 + 预估公式注记更新。
 
+### 1.36 第二十八批：联盟奖励发放闭环（方案 A 拍板，2026-09-01）
+
+**决策**：用户拍板 docs/05 §3.4 方案 A——奖励自动转积分（方案 B 提现 + KYC/税务/跨境合规留作规模化后升级路径）。
+
+**① 迁移 0036（发放侧）**：`private.handle_order_payment` 内 affiliates INSERT 改
+`ON CONFLICT ... DO NOTHING RETURNING reward_amount INTO v_reward_amount`——返回行存在
+（本次真实插入）才发放：奖励积分 `LEAST(订单积分 × reward_percent / 100, max_reward / 100)`
+（与佣金同比例同上限，$50 ≈ 50 积分）、`expired_at NULL` 永久有效（system_add 口径）、
+`credit_lots` 批次同步（`source_type='affiliate_reward'`，`lot-<trans_no>` 与流水同源）。
+与佣金记录同事务原子；webhook 重试经佣金幂等检查天然不重复发放。
+
+**② 迁移 0036（冲销侧，升级 0028）**：`reverse_affiliate_reward` 从只翻状态升级为
+「翻状态 + 该订单 affiliate_reward 批次精确扣回（FOR UPDATE 循环 + 用户级 advisory lock，
+过期批次照扣——与 0026 退款防过期套利同口径）+ credits 负流水（与发放对称）」；
+**签名/返回值不变**（佣金分），processRefund/dispute_lost 调用方零改动。
+
+**③ 应用层接线**：枚举 `CreditsTransType.AffiliateReward`；邮件模板
+`affiliate_reward`（emails/templates/affiliate-reward.tsx + 注册）；`notifyAffiliateReward`
+（services/affiliate.ts，按存在性判断补发通知防重复）+ checkout session（services/order.ts）
+与通用 webhook（lib/payment/index.ts）两路径 `runAfterResponse` 接线；「我的邀请」页主指标
+改累计奖励积分净额（`models/credit.ts getAffiliateRewardCredits`，en/zh i18n 各 +1 键）。
+
+**④ 验证**：真库事务内 e2e 全绿（发放 20 积分/重试不重复发/冲销扣回 + 负流水/二次冲销幂等 0，
+BEGIN/ROLLBACK 不留痕）；静态断言 +5（db-rbac-static，59 全过）；全套 379 测试通过。
+注意坑：psql e2e 首轮失败是测试脚本自身 users INSERT 顺序违反 FK 被 ON CONFLICT 吞掉（邀请链不成立），
+非迁移缺陷——最小复现确认 `RETURNING INTO` 在冲突路径返回 NULL、插入路径正常。
+
+**⑤ 文档**：docs/05 §3.4 重写为已落地 + P1-联盟-1 关闭；docs/03 迁移清单 +0036；docs/10 触发点表 +affiliate_reward 行。
+
 
 ---
 
@@ -606,6 +635,7 @@
 - [x] **~~定价真相源统一~~（已关闭 2026-08-30，见 §1.9；事务化批量写入 2026-09-01 闭合，见 §1.28）**：运行时权威 = `payment_products`，`data/pricing.ts` 仅种子/回退；写入路由加不变量校验；双人复核（§1.23）；批准执行走事务化 RPC（迁移 0033）。
 - [x] **~~迁移发布机制补全~~（已关闭 2026-09-01，见 §1.29）**：`pnpm migrate:concurrent` 非事务迁移入口（CONCURRENTLY 专用，autocommit + 静态语句校验 + 版本冲突防护）+ expand-contract 模板固化。
 - [x] **副作用执行模型**：邮件、埋点、告警统一挂 `after()`（第七批）；关键事件 Transactional Outbox（0029，第十四批）。
+- [x] **~~联盟奖励发放闭环~~（已关闭 2026-09-01，用户拍板方案 A，见 §1.36）**：迁移 0036 奖励自动转积分（affiliates RETURNING 同事务发放、批次账本同步、永久有效）+ 冲销侧批次精确扣回 + 负流水（签名不变）；两支付路径通知接线；邀请页累计奖励积分。方案 B（提现 + KYC/税务）留作规模化后升级路径。
 
 ### P2（中优先级）
 

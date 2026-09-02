@@ -95,6 +95,7 @@
     "invite_code": "Invite Code",
     "invite_tip": "Invite 1 friend to buy ShipAny, reward $50.",
     "invite_balance": "Invite Reward Balance",
+    "reward_credits_total": "Total Reward Credits (net)",
     "total_invite_count": "Total Invite Count",
     "total_paid_count": "Total Paid Count",
     "total_award_amount": "Total Award Amount",

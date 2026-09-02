@@ -12,7 +12,13 @@ import { toast } from "sonner";
 import { useAppContext } from "@/contexts/app";
 import { useTranslations } from "next-intl";
 
-export default function Invite({ summary }: { summary: any }) {
+export default function Invite({
+  summary,
+  reward_credits,
+}: {
+  summary: any;
+  reward_credits?: number;
+}) {
   const t = useTranslations();
 
   const [open, setOpen] = useState(false);
@@ -103,18 +109,18 @@ export default function Invite({ summary }: { summary: any }) {
         <p className="text-sm text-gray-500">{t("my_invites.invite_tip")}</p>
       </Card>
 
-      {/* 右侧奖励卡片 */}
+      {/* 右侧奖励卡片（迁移 0036：方案 A 奖励自动转积分，主指标改为累计奖励积分） */}
       <Card className="flex-1 p-6">
         <div className="flex justify-between items-end mb-8">
           <div>
             <h2 className="text-sm text-gray-500 mb-4">
               {t("my_invites.invite_balance")}
             </h2>
-            <p className="text-4xl font-bold">${summary.total_reward / 100}</p>
+            <p className="text-4xl font-bold">{reward_credits ?? 0}</p>
+            <p className="text-sm text-gray-500 mt-2">
+              {t("my_invites.reward_credits_total")}
+            </p>
           </div>
-          {/* <Button className="" size="sm">
-            奖励提现
-          </Button> */}
         </div>
 
         <div className="grid grid-cols-4 gap-4">

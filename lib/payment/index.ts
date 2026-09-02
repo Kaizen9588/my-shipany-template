@@ -10,6 +10,7 @@ import { runAfterResponse } from "@/lib/after-response";
 import { createNotification } from "@/models/notification";
 import { registerRefundRequest } from "@/services/refund";
 import { handleDisputeEvent } from "@/services/dispute";
+import { notifyAffiliateReward } from "@/services/affiliate";
 import { TelemetryEvents, trackServer } from "@/lib/telemetry/server";
 import { trackCriticalEvent } from "@/lib/oplog";
 
@@ -91,6 +92,9 @@ export async function handlePaymentEvent(event: PaymentEvent): Promise<void> {
           })
         );
       }
+
+      // 迁移 0036：联盟奖励到账通知（fire-and-forget；发放本体在存储过程内）
+      runAfterResponse(() => notifyAffiliateReward(event.order_no));
 
       // 6.5：支付成功服务端埋点（t3）
       trackServer({

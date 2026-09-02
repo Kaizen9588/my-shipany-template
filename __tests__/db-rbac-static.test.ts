@@ -816,3 +816,93 @@ describe("新用户赠分批量注册防刷静态断言（P3 批量）", () => {
     expect(src).toContain("rateLimitByIp");
   });
 });
+
+describe("联盟奖励发放闭环静态断言（迁移 0036 + 接线，方案 A 拍板）", () => {
+  const src = readFileSync(
+    path.join("data", "migrations", "0036_affiliate_reward_credits.sql"),
+    "utf8"
+  );
+
+  it("发放内联在 handle_order_payment 的 affiliates RETURNING 之后（同事务原子+幂等）", () => {
+    // RETURNING 捕获本次真实插入的 reward_amount（冲突 DO NOTHING 无返回行 → 不发）
+    expect(src).toContain("RETURNING reward_amount INTO v_reward_amount");
+    // 发放门卫：有佣金才发
+    expect(src).toContain(
+      "IF v_reward_amount IS NOT NULL AND v_reward_amount > 0 AND v_order.credits > 0 THEN"
+    );
+    // 事务内原子顺序：affiliate INSERT 先于奖励积分 INSERT
+    const affiliatePos = src.indexOf("INSERT INTO affiliates");
+    const grantPos = src.indexOf("INSERT INTO credits (trans_no, created_at, user_uuid, trans_type, credits, order_no, expired_at)\n            VALUES (v_reward_trans_no");
+    expect(affiliatePos).toBeGreaterThan(-1);
+    expect(grantPos).toBeGreaterThan(affiliatePos);
+  });
+
+  it("奖励积分折算与佣金同比例同上限；永久有效；批次账本同步", () => {
+    // 订单积分 × reward_percent，上限 max_reward 分 ÷ 100 分/积分
+    expect(src).toContain(
+      "LEAST(\n            (v_order.credits * p_reward_percent) / 100,\n            p_max_reward / 100\n          )"
+    );
+    // affiliate_reward 批次：永久（NULL expired_at）+ source_type 锚定
+    expect(src).toContain("'affiliate_reward', v_order.order_no,");
+    // 发放与批次同一 trans_no（对齐 0026 order_pay 双写惯例）
+    expect(src).toContain("VALUES ('lot-' || v_reward_trans_no");
+    // 冲销负流水与发放同 trans_type（对称）
+    expect(
+      src.match(/'affiliate_reward',\s*\n\s*-v_deducted/gm)?.length
+    ).toBe(1);
+  });
+
+  it("reverse_affiliate_reward 升级为翻状态 + 批次精确扣回（签名与调用方零改动）", () => {
+    // 0028 版只有状态翻转；0036 必须扣回已发积分，否则「发分→退款→保留分」套利
+    expect(src).toContain("SET status = 'reversed'");
+    // 批次定向：仅该邀请人 + 该订单 + affiliate_reward 来源
+    expect(src).toContain(
+      "AND source_type = 'affiliate_reward'\n    AND source_ref = p_order_no"
+    );
+    // 与 0026 退款同款：用户级 advisory lock + FOR UPDATE 批次循环
+    expect(src).toContain("pg_advisory_xact_lock(736925141, hashtext(v_inviter))");
+    expect(src).toContain("ORDER BY id ASC\n      FOR UPDATE");
+    // 过期批次照扣（与 0026 退款防过期套利同口径）
+    expect(src).toContain("AND status = 'active'");
+    // 返回值语义不变（佣金分），签名保持 (TEXT, TEXT)
+    expect(src).toContain("private.reverse_affiliate_reward(\n  p_order_no TEXT,\n  p_reason TEXT DEFAULT ''\n) RETURNS INT");
+  });
+
+  it("权限与调用方接线：service_role 独占 + 两支付路径通知 + 枚举/邮件/页面", () => {
+    expect(src).toContain(
+      "REVOKE ALL ON FUNCTION private.reverse_affiliate_reward(TEXT, TEXT) FROM PUBLIC, anon, authenticated"
+    );
+    expect(src).toContain(
+      "GRANT EXECUTE ON FUNCTION private.reverse_affiliate_reward(TEXT, TEXT) TO service_role"
+    );
+    // 两支付路径 fire-and-forget 通知
+    const orderSvc = readFileSync("services/order.ts", "utf8");
+    expect(orderSvc).toContain("notifyAffiliateReward");
+    const paymentIdx = readFileSync("lib/payment/index.ts", "utf8");
+    expect(paymentIdx).toContain("notifyAffiliateReward");
+    // 枚举 + 邮件模板注册
+    const creditSvc = readFileSync("services/credit.ts", "utf8");
+    expect(creditSvc).toContain('AffiliateReward = "affiliate_reward"');
+    const emailTypes = readFileSync("lib/email/types.ts", "utf8");
+    expect(emailTypes).toContain('"affiliate_reward"');
+    const emailRegistry = readFileSync("emails/index.ts", "utf8");
+    expect(emailRegistry).toContain("affiliate_reward:");
+    // 邀请页累计奖励积分（方案 A 主指标）
+    const invitePage = readFileSync(
+      "app/[locale]/(default)/(console)/my-invites/page.tsx",
+      "utf8"
+    );
+    expect(invitePage).toContain("getAffiliateRewardCredits");
+    const inviteComp = readFileSync("components/invite/index.tsx", "utf8");
+    expect(inviteComp).toContain("reward_credits");
+  });
+
+  it("0034 的重算/mismatch/有效口径在 0036 中未被回退（函数体整体重建防漂移）", () => {
+    // 0036 重建了 handle_order_payment，0034 的三个关键口径必须仍在
+    expect(src).toContain("v_order.order_no, v_expired_at)");
+    expect(src).toContain("THEN p_paid_at + make_interval(months => v_order.valid_months)");
+    expect(src).toContain("expired_at = v_expired_at");
+    // 充值积分行仍以 order_pay 写入（credits 双写惯例中 order_pay 侧未被回退）
+    expect(src).toContain("v_order.user_uuid, 'order_pay',");
+  });
+});

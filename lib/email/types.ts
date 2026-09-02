@@ -9,6 +9,7 @@ export type EmailTemplate =
   | "payment_success"
   | "credit_low"
   | "credit_exhausted"
+  | "affiliate_reward" // 联盟奖励到账（迁移 0036，docs/05 §3.4 方案 A）
   | "subscription_renewal_reminder" // 预留：订阅续费提醒（ROSCA/ARL 合规必须）
   | "subscription_canceled" // 预留
   | "password_reset"; // 预留

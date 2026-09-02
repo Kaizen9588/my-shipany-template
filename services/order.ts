@@ -3,6 +3,8 @@ import { serverClient } from "@/models/db";
 import { findOrderByOrderNo } from "@/models/order";
 import { fireAndForgetEmail } from "@/lib/email";
 import { trackCriticalEvent } from "@/lib/oplog";
+import { runAfterResponse } from "@/lib/after-response";
+import { notifyAffiliateReward } from "@/services/affiliate";
 
 import Stripe from "stripe";
 
@@ -73,6 +75,10 @@ export async function handleOrderSession(session: Stripe.Checkout.Session) {
       paid_at,
       paid_email
     );
+
+    // 迁移 0036：联盟奖励到账通知（fire-and-forget；发放本体在存储过程内，
+    // 这里按存在性判断补发通知，两个支付路径共用）
+    runAfterResponse(() => notifyAffiliateReward(order_no));
 
     // 6.2：支付成功邮件（fire-and-forget，不阻塞 webhook 响应）
     void (async () => {

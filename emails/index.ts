@@ -4,6 +4,7 @@ import VerificationCodeEmail from "./templates/verification-code";
 import PaymentSuccessEmail from "./templates/payment-success";
 import CreditLowEmail from "./templates/credit-low";
 import CreditExhaustedEmail from "./templates/credit-exhausted";
+import AffiliateRewardEmail from "./templates/affiliate-reward";
 
 /**
  * 模板注册表（docs/10 §3.2）
@@ -26,6 +27,10 @@ const TEMPLATES = {
   credit_exhausted: {
     subject: "Your credits are exhausted",
     component: CreditExhaustedEmail,
+  },
+  affiliate_reward: {
+    subject: "You earned a referral reward",
+    component: AffiliateRewardEmail,
   },
 } as const;
 

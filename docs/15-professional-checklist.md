@@ -112,7 +112,7 @@
 | Landing Page | ✅ | `app/[locale]/(default)` + `i18n/pages/landing/` |
 | 定价展示 | ✅ | `components/blocks/pricing` |
 | 博客 | ✅ | `app/[locale]/(default)/posts` + Markdown 编辑器 |
-| 联盟营销 | ✅ | `services/affiliate.ts` + `models/affiliate.ts` |
+| 联盟营销 | ✅ | `services/affiliate.ts` + `models/affiliate.ts`；奖励自动转积分闭环（迁移 0036 方案 A：发放/冲销扣回/通知/邀请页累计积分） |
 | 邀请码 | ✅ | `app/[locale]/(default)/i/[code]` |
 | SEO metadata | ✅ | `app/[locale]/layout.tsx`（OG / Twitter / robots） |
 | Sitemap | ✅ | `app/sitemap.ts`（动态，多语言） |

@@ -191,6 +191,7 @@ export function renderTemplate(message: EmailMessage) {
 | 支付成功（积分充值） | payment_success | transactional | **webhook 路径**：`handlePaymentEvent` 收到 `handle_order_payment` RPC 返回 `'paid'` 后发送（⚠️ P2-B，第十轮修正：原表写 `services/order.ts` handleOrderPayment 后——该函数在多渠道改造后退化为历史存档、支付路径无调用方（docs/05 §2.6），按原表字面实现会导致支付成功邮件永远不发） | v1 |
 | 积分低于阈值（如 <10） | credit_low | transactional | `services/credit.ts` decreaseCredits 后检查 | v1 |
 | 积分耗尽 | credit_exhausted | transactional | 同上（余额 == 0） | v1 |
+| 联盟奖励到账（✅ 迁移 0036 方案 A） | affiliate_reward | transactional | `notifyAffiliateReward`（services/affiliate.ts）：checkout session（services/order.ts）与通用 webhook（lib/payment/index.ts）两路径 `runAfterResponse` fire-and-forget；按存在性判断（该订单 completed 佣金 + 邀请人 affiliate_reward 流水）补发 | v1 |
 | **订阅续费前 3/7 天** | subscription_renewal_reminder | transactional | 订阅模块调度（Vercel Cron） | 预留 |
 | 订阅取消确认 | subscription_canceled | transactional | 订阅 webhook | 预留 |
 | 密码重置 | password_reset | transactional | auth 模块 | 预留 |

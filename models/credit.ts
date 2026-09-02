@@ -48,6 +48,28 @@ export async function findCreditByOrderNo(
   return data;
 }
 
+/**
+ * 联盟奖励累计净额（迁移 0036：奖励自动转积分，docs/05 §3.4 方案 A）。
+ * 正数发放 - 冲销负流水 = 当前有效奖励积分；无任何 affiliate_reward 流水返回 0。
+ */
+export async function getAffiliateRewardCredits(
+  user_uuid: string
+): Promise<number> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("credits")
+    .select("credits")
+    .eq("user_uuid", user_uuid)
+    .eq("trans_type", "affiliate_reward");
+
+  if (error || !data) {
+    return 0;
+  }
+
+  return data.reduce((sum, row) => sum + (row.credits || 0), 0);
+}
+
+
 export async function getUserValidCredits(
   user_uuid: string
 ): Promise<Credit[] | undefined> {

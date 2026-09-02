@@ -531,33 +531,39 @@ AffiliateRewardAmount = {
 > P-1.4 已把 user_uuid 从请求体改为 session 获取（防伪造），但 2 小时时效的服务端校验
 > 尚未下放 —— 待 6.0/联盟相关改造时一并补上。
 
-### 3.4 奖励发放闭环（⚠️ 待设计）
+### 3.4 奖励发放闭环（✅ 已落地：方案 A 自动转积分，2026-09-01 拍板）
 
-> **现状缺口**：联盟奖励只写到 affiliates 表（记录 `reward_amount`），流程到「INSERT affiliates (completed)」就结束。邀请人如何拿到奖励、如何查看收益，全无设计。这是「记录完成、发放缺失」的半成品。
+> **原状缺口**：联盟奖励只写到 affiliates 表（记录 `reward_amount`），「记录完成、发放缺失」。
+> 用户已拍板**方案 A（奖励自动转积分）**，迁移 0036 落地，发放与冲销两侧一次闭合。
+> 方案 B（提现 + KYC/税务/跨境合规）留作联盟规模化后的升级路径——积分发放历史不构成迁移障碍。
 
-> ✅ **冲销半边已闭合（2026-09-01，迁移 0028）**：退款/拒付成立时同步把佣金
-> `completed → reversed`（终态），`private.reverse_affiliate_reward(p_order_no, p_reason)`
-> 由 `processRefund` 与 `dispute_lost` 接线调用——「邀请人与被邀请人合谋：首付拿佣金 → 退款/拒付」
-> 的套利口子已堵死。冲销幂等（无佣金/已冲销返回 0）、失败不阻塞退款主流程、
-> 结果进 `payment.refund_processed` / `payment.dispute_lost` 埋点 detail（`reversed_affiliate_reward`）。
-> 0017 部分唯一索引 `affiliates_single_completed_per_user` 意味着冲销后邀请人可因新的真实订单
-> 再次获得佣金（可接受：冲销只作废该笔订单的奖励）。「我的邀请」页已渲染 `reversed` 状态。
-> 下文发放方式决策仍待设计。
+**发放侧（迁移 0036）**：
+- 发放点内联在 `private.handle_order_payment` 的 affiliates INSERT 之后，
+  `INSERT ... ON CONFLICT ... DO NOTHING RETURNING reward_amount INTO v_reward_amount`——
+  返回行存在（本次真实插入，非冲突跳过）才发放，**与佣金记录同事务原子**；
+  webhook 重试时佣金幂等检查不通过 → 不再插入 → 不重复发放（e2e 已验证）。
+- 折算规则（与佣金同比例同上限）：`奖励积分 = LEAST(订单积分 × reward_percent / 100, max_reward / 100)`
+  —— $1 ≈ 1 积分定价下等价于佣金金额数值；`$50` 上限 ≈ `50` 积分。
+- 有效期：**NULL 永久有效**（与 system_add 口径一致）——奖励是平台信用而非付费商品，
+  不随被邀请人订单积分的有效期过期。
+- 批次账本同步：发放即建 `credit_lots` 批次（`source_type='affiliate_reward'`，
+  `source_ref=订单号`，`lot-<trans_no>` 与流水同源）——冲销侧按此精确扣回。
 
-**发放方式决策**（二选一，建议方案 A）：
+**冲销侧（0036 升级 0028）**：`private.reverse_affiliate_reward` 从「只翻状态」升级为
+「翻状态 + 批次精确扣回 + credits 负流水」——退款/拒付成立时扣回邀请人名下该订单的
+`affiliate_reward` 批次（含过期批次，与 0026 退款防过期套利同口径），负流水
+`trans_type='affiliate_reward'` 与发放对称。**签名与返回值语义不变**（返回佣金金额分），
+`processRefund` / `dispute_lost` 调用方零改动；用户级 advisory lock 与批次 `FOR UPDATE`
+循环防并发。否则「发分 → 退款/拒付 → 保留分」会成为新套利口子。
 
-| 方案 | 做法 | 适用 |
-|------|------|------|
-| A（推荐） | 奖励自动**转积分**：webhook 记录 completed 时，同步 `increaseCredits(inviter_uuid, trans_type="affiliate_reward", credits=折算积分)` | v1 简单闭环，无需提现/法务 |
-| B | 记录金额 + 邀请人后台**申请提现**（接 Payout） | 涉及 KYC、税务、跨境提现，重 |
-
-**方案 A 落地要点**：
-- 新增积分交易类型 `affiliate_reward`（正数，与 order_pay 区分，便于「我的邀请」页统计）
-- 折算规则：`reward_amount`（分）按固定汇率转积分（如 1 元 = 10 积分），或直接按订单积分的 20% 计（更简单：`reward_credits = ceil(order.credits * 20%)`）
-- 幂等：与 `updateCreditForOrder` 同款 `findCreditByOrderNo` 防重（复用 affiliates.paid_order_no 唯一性）
-- 通知：发放时发邮件 `affiliate_reward`（模板加入 docs/10 触发点表）
-
-**「我的邀请」页补充**：显示「累计邀请 N 人 / 累计奖励 X 积分」，数据来自 affiliates 表 + credits 流水（trans_type=affiliate_reward）。
+**通知与展示**：
+- `services/affiliate.ts` `notifyAffiliateReward(order_no)`：按存在性判断（该订单有
+  completed 佣金 + 邀请人名下有该订单的 affiliate_reward 流水）补发站内通知 + 邮件
+  `affiliate_reward`（模板已注册 docs/10 §3.2）；checkout session 与通用 webhook
+  两个支付路径 `runAfterResponse` fire-and-forget 接线。
+- 新增积分交易类型 `AffiliateReward = "affiliate_reward"`（services/credit.ts 枚举）。
+- 「我的邀请」页主指标改为**累计奖励积分（净额 = 发放正流水 − 冲销负流水）**，
+  `models/credit.ts getAffiliateRewardCredits`；原 `$` 佣金金额降为次级指标保留。
 
 ---
 
@@ -660,7 +666,7 @@ AffiliateRewardAmount = {
 |---|------|------|
 | P1-定价-1 | ~~管理员定价更新缺少不变量校验~~ | ✅ 已加固（2026-08-30，重定为 P0 关闭项）：真相源钉死为 `payment_products`，写入路由已加金额/积分/有效期上限 + 币种白名单(USD) + 积分≤金额（详见上表 P0-定价-1 与 §1.2 落地块）。双人复核（0030）与事务化批量写入（0033）已闭合；多币种（v1 不做） |
 | P1-Webhook-1 | Webhook 无重放/乱序防护 | 签名验了，但同一事件并发重放、乱序到达可能造成状态机错误；需 inbox + 幂等 + 状态校验 |
-| P1-联盟-1 | 联盟奖励只有记录、没有发放闭环 | 只写 `affiliates.completed` + `reward_amount`，无转积分/提现；~~退款回冲~~ ✅ 已闭合（0028：refund/dispute_lost 冲销佣金）；转积分/提现仍待设计（§3.4） |
+| P1-联盟-1 | 联盟奖励只有记录、没有发放闭环 | ✅ **已闭合（2026-09-01 拍板方案 A，迁移 0036）**：奖励自动转积分（与佣金同比例同上限、永久有效、批次账本同步）；冲销侧 0028 翻状态 + 0036 批次精确扣回 + 负流水；两个支付路径通知接线（§3.4） |
 | P1-邀请-1 | 邀请绑定存在竞态 | 「读取→更新→插入」非事务；2 小时时效仅前端校验；并发可能产生重复邀请记录 |
 | P1-调账-1 | 管理员积分调账缺少双重控制 | 加减积分属于资产变更，应要求原因、工单号、上限、审批；统一 ledger API，禁止直接写表 |
 | P1-订单-1 | 远端 checkout 与本地订单创建顺序不当 | 先建远端 session 再写本地，失败时可能产生"孤儿 session"，需补偿查询 |

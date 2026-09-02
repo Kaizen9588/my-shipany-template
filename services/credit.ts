@@ -24,6 +24,7 @@ export enum CreditsTransType {
   AiGenerate = "ai_generate", // AI 调用扣费（负数，一次扣清，见 docs/13）
   AiRefund = "ai_refund", // AI 失败退款（正数回补，仅服务端异常时）
   OrderRefund = "order_refund", // 订单退款扣回积分（负数，见 6.1 退款口径）
+  AffiliateReward = "affiliate_reward", // 联盟奖励积分（正数发放/冲销负数，迁移 0036）
 }
 
 export enum CreditsAmount {

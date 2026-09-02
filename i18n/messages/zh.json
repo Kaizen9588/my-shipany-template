@@ -95,6 +95,7 @@
     "invite_code": "邀请码",
     "invite_tip": "每邀请 1 位朋友购买 ShipAny，奖励 $50。",
     "invite_balance": "邀请奖励余额",
+    "reward_credits_total": "累计奖励积分（净额）",
     "total_invite_count": "总邀请人数",
     "total_paid_count": "已充值人数",
     "total_award_amount": "总奖励金额",

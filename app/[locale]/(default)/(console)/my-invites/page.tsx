@@ -1,5 +1,6 @@
 import { RiDiscordFill, RiEmotionSadFill, RiGithubFill } from "react-icons/ri";
 import { getAffiliateSummary, getUserAffiliates } from "@/models/affiliate";
+import { getAffiliateRewardCredits } from "@/models/credit";
 import { getOrdersByPaidEmail, getOrdersByUserUuid } from "@/models/order";
 import { getUserEmail, getUserUuid } from "@/services/user";
 
@@ -78,6 +79,7 @@ export default async function () {
   const affiliates = await getUserAffiliates(user_uuid);
 
   const summary = await getAffiliateSummary(user_uuid);
+  const reward_credits = await getAffiliateRewardCredits(user_uuid);
 
   const columns: TableColumn[] = [
     {
@@ -147,7 +149,7 @@ export default async function () {
 
   return (
     <div className="space-y-8">
-      <Invite summary={summary} />
+      <Invite summary={summary} reward_credits={reward_credits} />
       <TableBlock {...table} />
     </div>
   );
