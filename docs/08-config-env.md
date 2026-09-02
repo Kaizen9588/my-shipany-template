@@ -242,8 +242,9 @@ export const config = {
 | `TRUSTED_PROXY` | IP 信任拓扑：`none`（默认，不信任任何代理头）/ `vercel`（只信 x-forwarded-for 首跳）/ `cloudflare`（只信 cf-connecting-ip）。**Vercel 部署必须显式设 vercel；Docker/自托管保持 none 或声明真实拓扑** | ✅ 第五轮 2.16 默认值收敛 |
 | `SNOWFLAKE_WORKER_ID` | Snowflake workerId（多实例唯一） | ✅ P-1.11 已落地 |
 | `NEXT_OUTPUT` | `standalone` 时启用 standalone 输出（Docker 构建用，P-1.6） | ✅ P-1.6 已落地 |
-| `UPSTASH_REDIS_REST_URL` | 限流 Redis | ✅ 6.18 已落地 |
+| `UPSTASH_REDIS_REST_URL` | 限流 Redis。配置后自动切 Upstash 分布式限流；未配置回落内存限流（仅单实例有效，重启清零） | ✅ 6.18 已落地 |
 | `UPSTASH_REDIS_REST_TOKEN` | 限流 Redis Token | ✅ 6.18 已落地 |
+| `NEXT_PUBLIC_PROJECT_NAME` | 限流 prefix 环境隔离的一部分：`ratelimit:${NEXT_PUBLIC_PROJECT_NAME || "app"}`。多环境/多站点共用同一 Upstash Redis 时必须设不同值，否则计数互相串扰 | ✅ 6.18 已落地（prefix 隔离） |
 | `ADMIN_BOOTSTRAP_EMAIL` | 初始管理员邮箱（条件建号开关） | ✅ P0-3 已落地 |
 | `ADMIN_BOOTSTRAP_PASSWORD` | 初始管理员一次性密码（未设置则随机生成） | ✅ P0-3 已落地 |
 

@@ -362,6 +362,40 @@
 - [x] 定向 ESLint：迁移与引导相关文件通过。
 - [x] 全量 Vitest：**45 个测试文件、185 个用例通过**。
 - [x] `git diff --check` 通过。
+### 1.29 第二十一批：CONCURRENTLY 非事务迁移入口 + expand-contract 模板（N-11 全关闭，2026-09-01）
+
+- **缺口**：`CREATE INDEX CONCURRENTLY` 不能在事务内执行，runMigrations 全程单事务无法承载；expand-contract 执行模板只存在于部署文档一句话，无固化纪律。
+- **`lib/migrate-concurrent.ts` + `scripts/migrate-concurrent.ts`（`pnpm migrate:concurrent`）**：`data/migrations-concurrent/` 专用目录，autocommit 逐文件执行（无 BEGIN）；`assertConcurrentOnly` 静态拒绝非 CONCURRENTLY 语句（autocommit 无回滚，混入普通 DDL 失败即留半成品）；版本写入 `schema_migrations.mode='concurrent'`（表自动补 mode 列）；与事务迁移共用 advisory lock 键防多实例并发；失败提示 INVALID 索引需 DROP INDEX CONCURRENTLY 后重试。
+- **版本冲突防护**（`findVersionConflicts`，接入 runMigrations 与 verifyMigrations）：同一版本号不得同时出现在两个迁移目录——重号会被先执行方抢先注册、另一方静默跳过。
+- **expand-contract 模板固化**（`data/migrations-concurrent/README.md`）：expand（可空/带默认值加列）→ migrate（分批回填）→ contract（全实例发布后删旧结构，禁止同发布内做 contract）三段纪律 + 大表判定基准（>100 万行或持续写入走并发目录）。
+- **真库 e2e**：mode 列自动补齐；真实 `CREATE INDEX CONCURRENTLY` 迁移执行 + version 记录 mode='concurrent' + DROP INDEX CONCURRENTLY 清理；两迁移入口均幂等可重入。
+- **测试**：`__tests__/migrate-concurrent.test.ts` 4 用例（CONCURRENTLY 放行/事务 DDL 拒绝/版本冲突检测/目录空态）。全量 **61 文件 362 用例**（基线 356 + 本批 6）。
+
+### 1.11 本次验证结果（第一批）
+
+- [x] TypeScript：`tsc --noEmit` 通过。
+- [x] 定向 ESLint：迁移与引导相关文件通过。
+- [x] 全量 Vitest：**45 个测试文件、185 个用例通过**。
+- [x] `git diff --check` 通过。
+
+### 1.30 第二十二批：Upstash 限流路径 fail-closed 加固（2026-09-01）
+
+**背景**：`lib/ratelimit.ts` 在配置 Upstash 后走 `@upstash/ratelimit` SDK。审查发现两处 fail-open 面：
+① SDK `applyTimeout` 在超过 `timeout`（默认 **5000ms**）后仍 resolve `{success:true, reason:"timeout"}`——此时 Redis 计数并未确认，高并发/Redis 抖动下等于限流失效静默放行；
+② prefix 固定 `@upstash/ratelimit`（SDK 默认），多环境/多站点共用同一 Redis 时计数互相串扰。
+
+**修复**（`lib/ratelimit.ts`）：
+- `timeout: 500`——超时窗口收窄到 500ms，Redis 抖动时不再挂 5 秒；
+- `rateLimit()` 检测 `res.reason === "timeout"` 后 **回落内存降级**（`rateLimitByIp`），把"计数未确认"当不可信继续计数并拒绝，不静默放行（fail-closed）；
+- prefix 按环境隔离：分钟级 `ratelimit:${NEXT_PUBLIC_PROJECT_NAME || "app"}`、日配额 `ratelimit-daily:...`；
+- 新增 `isUpstashConfigured()` 导出，供观测/诊断判断当前限流模式。
+
+**测试**：`__tests__/ratelimit.test.ts` 扩至 11 用例——timeout 回落（mock limit 返回 `reason:"timeout"`，连打 31 次 > DEFAULT_MAX=30 后第 31 次拒绝）、prefix/timeout 配置捕获（`vi.resetModules()` 强制重建单例后断言 `ratelimit:proj-a` 隔离与未设 env 回退 `ratelimit:app`）、`isUpstashConfigured()` 两态。
+
+**文档同步**：docs/13（6.18 行 + 跨实例限流块改"已落地" + 风险表 P1 行关闭）、docs/08（Upstash 行注记 + NEXT_PUBLIC_PROJECT_NAME prefix 隔离行）。
+
+**遗留**：生产 Vercel 需确认已配置 `UPSTASH_REDIS_REST_URL/TOKEN`——未配置时仍是内存限流（单实例有效）。
+
 
 ---
 
@@ -397,7 +431,7 @@
 | N-2 | 资金 RPC 没有数据库权限边界 | ✅ **已关闭（2026-09-01，连库，见 §1.17）**：迁移 0023 五个资金函数迁 `private` + REVOKE/仅授 service_role + 四资金表 RLS；6 处调用点 `serverClient().schema("private")`；Dashboard Exposed schemas 已加 private；连库验证 anon 三层被拒、应用通路 5/5 可达 | `data/migrations/0023_private_schema_fund_rpcs.sql`、`__tests__/db-rbac-static.test.ts`、docs/03 §生产权限基线 |
 | N-3 | 服务端与用户数据库 client 未分离 | **已关闭（2026-08-30）**：`models/db.ts` 拆 `serverClient()`/`userClient()`，资金/支付/退款/后台统计改走 `serverClient()`；兼容入口保留（见 §1.4 续） | `models/db.ts`、`__tests__/db-rbac-static.test.ts` |
 | ~~N-4~~ | ~~关键审计事件 fire-and-forget 会丢失~~ | **已关闭（2026-09-02，0029，见 §1.22）**：Transactional Outbox 队列 + 幂等投递 + 退避死信 + 每日 cron 兜底 | `lib/oplog.ts`、`data/migrations/0029_op_event_outbox.sql` |
-| ~~N-5~~ | ~~高成本端点限流 fail-open~~ | **已关闭（2026-08-30，见 §1.9）**：`rateLimitUser` 回落内存日窗口（fail-closed）；checkout 加 per-IP/per-user 限流；webhook 加 body 64KB 上限 | `lib/ratelimit.ts`、`lib/webhook-guard.ts`、checkout/webhook 路由 |
+| ~~N-5~~ | ~~高成本端点限流 fail-open~~ | **已关闭（2026-08-30，见 §1.9）**：`rateLimitUser` 回落内存日窗口（fail-closed）；checkout 加 per-IP/per-user 限流；webhook 加 body 64KB 上限。**Upstash 路径 fail-open 已补齐（2026-09-01，见 §1.30）**：SDK 超时不再静默放行，prefix 按环境隔离 | `lib/ratelimit.ts`、`lib/webhook-guard.ts`、checkout/webhook 路由 |
 | ~~N-6~~ | ~~管理员高风险操作无二次确认/审批~~ | **基本关闭（2026-09-01，见 §1.12 + §1.23）**：第一阶段 6 路由服务端强制理由（§1.12）；第二阶段审批队列/双人复核（§1.23）——5 类高危动作（退款/调积分/改角色/封禁/渠道定价）落 `admin_approvals` 审批单，发起人≠批准人硬校验，批准即执行、失败可重试，单管理员部署自动降级留痕（双人复核需 ≥2 活跃管理员）。CSRF 防护已闭合（第十九批 §1.27，middleware 加固 + 豁免精确化 + 防护矩阵成文） | `lib/admin-approval.ts`、`data/migrations/0030_admin_approval_queue.sql`、`app/api/admin/approvals/route.ts`、`/admin/approvals` 页面、`lib/admin-reason.ts` |
 | ~~N-13~~ | ~~争议 / 拒付链路缺失~~ | **已关闭（2026-08-30，见 §1.7 + §1.9；剩余部分 2026-09-01 关闭，见 §1.21）**：状态机 + 三渠道解析器归一化 + 测试齐备；联盟奖励冲销（0028）+ 争议收入确认口径核实均已完成 | `services/dispute.ts`、`services/refund.ts`、`data/migrations/0028_affiliate_reward_reversal.sql`、`lib/payment/types.ts` |
 | ~~P0-定价-1~~ | ~~管理员定价写入在自己收款金额权威源上~~ | ✅ **全部关闭**：加固（2026-08-30，§1.9）+ 双人复核（2026-09-01，§1.23）+ **事务化批量写入（2026-09-01，§1.28，迁移 0033 `apply_payment_config` RPC 原子写入，任一失败整体回滚，DB 层再验不变量）** | `app/api/admin/payment-products/route.ts`、`__tests__/payment-products-guard.test.ts`、`lib/admin-approval.ts`、`data/migrations/0033_transactional_pricing_write.sql` |
@@ -453,7 +487,7 @@
 12. **~~Webhook inbox、对账~~（已关闭，2026-09-01 连库）**：迁移 0031 + 三路由 inbox 链 + cron 重放/三规则对账，见 §1.24。副作用调度已切 `after()`（见 §1.14），outbox 持久化重试已完成（0029，见 §1.22）。**~~AI 请求状态机~~（已关闭，2026-09-01 连库）**：迁移 0032 + 幂等/崩溃补偿/TTL，见 §1.25。可靠副作用与支付/AI 崩溃补偿闭环至此完成。
 
 > 注意：每一批完成后要同步更新本文件、对应方案文档、测试和 `.workbuddy-ai/memory/2026-08-30.md`。不要把“有 UI / 有接口”误标为“生产就绪”。
-> **当前债务优先级（下一步）**：分布式限流（Upstash 路径） > 多供应商数据边界声明。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）、CSRF（§1.27）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
+> **当前债务优先级（下一步）**：多供应商数据边界声明。注：P0 全部关闭（P0-1/P0-2/P0-3/P0-4），N-1~N-6 全部关闭（N-6 双人复核 0030，见 §1.23）、P1-inbox/对账（0031，见 §1.24）、P1-AI 状态机（0032，见 §1.25）与其输入硬限制（见 §1.26）、CSRF（§1.27）均已关闭、N-13/RLS（0024）/迁移应用（0019–0032）均已关闭。
 
 ---
 

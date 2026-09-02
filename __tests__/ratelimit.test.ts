@@ -7,18 +7,24 @@ import {
   vi,
 } from "vitest";
 
-const store = vi.hoisted(() => ({ limiters: [] as any[] }));
+const store = vi.hoisted(() => ({ limiters: [] as any[], configs: [] as any[], mockLimit: null as any }));
 
 // mock @upstash，捕获每个 Ratelimit 实例用的滑动窗口配置（max/window），
 // 用于验证 Upstash 路径是否真的按调用方的 max 限制（回归 S2 半成品 bug）
 vi.mock("@upstash/ratelimit", () => {
   class MockRatelimit {
     limiter: any;
+    config: any;
     constructor(config: any) {
       this.limiter = config?.limiter;
+      this.config = config;
       store.limiters.push(config?.limiter);
+      store.configs.push(config);
     }
     limit(identifier: string) {
+      if (store.mockLimit) {
+        return store.mockLimit(identifier);
+      }
       return this.limiter.limit(identifier);
     }
     static slidingWindow(max: number, window: string) {
@@ -107,10 +113,53 @@ describe("lib/ratelimit 无 Upstash 时 fail-closed（N-5）", () => {
 describe("lib/ratelimit Upstash 路径（回归：max 生效 + 付费配额）", () => {
   beforeEach(() => {
     store.limiters = [];
+    store.configs = [];
+    store.mockLimit = null;
     setUpstashEnv();
   });
   afterEach(() => {
     clearUpstashEnv();
+  });
+
+  it("SDK 内部超时（reason=timeout）不 fail-open：回落内存降级拒绝", async () => {
+    store.mockLimit = async () => ({
+      success: true,
+      limit: 0,
+      remaining: 0,
+      reset: 0,
+      reason: "timeout",
+    });
+    // timeout 路径计数未确认 → 用内存降级继续计数；连打 31 次（>DEFAULT_MAX=30）第 31 次拒绝
+    let last: Awaited<ReturnType<typeof rateLimit>> | undefined;
+    for (let i = 0; i < 31; i++) {
+      last = await rateLimit("timeout-key");
+    }
+    expect(last?.ok).toBe(false);
+  });
+
+  it("限流器配置：timeout 收窄到 500ms（SDK 默认 5s fail-open）+ prefix 按环境隔离", async () => {
+    vi.resetModules(); // lib/ratelimit 缓存单例，重置模块强制重建 Ratelimit
+    (process.env as Record<string, string | undefined>).NEXT_PUBLIC_PROJECT_NAME = "proj-a";
+    const mod = await import("@/lib/ratelimit");
+    await mod.rateLimit("prefix-check");
+    await mod.rateLimitUser("prefix-user", true);
+    const windowCfg = store.configs.find((c) => String(c?.prefix).startsWith("ratelimit:"));
+    const dailyCfg = store.configs.find((c) => String(c?.prefix).startsWith("ratelimit-daily:"));
+    expect(windowCfg?.timeout).toBe(500);
+    expect(windowCfg?.prefix).toBe("ratelimit:proj-a");
+    expect(dailyCfg?.timeout).toBe(500);
+    expect(dailyCfg?.prefix).toBe("ratelimit-daily:proj-a");
+    delete (process.env as Record<string, string | undefined>).NEXT_PUBLIC_PROJECT_NAME;
+    vi.resetModules();
+    await (await import("@/lib/ratelimit")).rateLimit("fallback-check");
+    expect(store.configs.at(-1)?.prefix).toBe("ratelimit:app");
+  });
+
+  it("isUpstashConfigured 反映环境变量配置状态", async () => {
+    const { isUpstashConfigured } = await import("@/lib/ratelimit");
+    expect(isUpstashConfigured()).toBe(true);
+    clearUpstashEnv();
+    expect(isUpstashConfigured()).toBe(false);
   });
 
   it("rateLimit 把调用方的 max 传给 Upstash（此前被忽略为 DEFAULT_MAX=30）", async () => {

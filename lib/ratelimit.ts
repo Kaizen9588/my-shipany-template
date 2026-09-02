@@ -91,6 +91,13 @@ export function rateLimitByIp(
 // Upstash 路径被忽略、一律按 DEFAULT_MAX 限流，导致更严格的限制不生效）
 const upstashLimiters = new Map<number, Ratelimit>();
 
+/** 供部署自检/文档展示：Upstash 是否已配置（配置后跨实例共享计数） */
+export function isUpstashConfigured(): boolean {
+  return Boolean(
+    process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
+  );
+}
+
 function getUpstash(max: number = DEFAULT_MAX): Ratelimit | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -102,13 +109,22 @@ function getUpstash(max: number = DEFAULT_MAX): Ratelimit | null {
     limiter = new Ratelimit({
       redis: Redis.fromEnv(),
       limiter: Ratelimit.slidingWindow(max, "60 s"),
+      // 环境隔离：同一 Redis 实例被多套环境共用时计数不互相污染
+      prefix: `ratelimit:${process.env.NEXT_PUBLIC_PROJECT_NAME || "app"}`,
+      // SDK 默认 timeout=5000ms 且超时会 resolve {success:true}（fail-open）——
+      // Redis 慢 5 秒的请求会被无条件放行。收窄到 500ms：Redis 慢时立即走下方
+      // catch 的内存降级（fail-closed 路径），而不是放行。
+      timeout: 500,
     });
     upstashLimiters.set(max, limiter);
   }
   return limiter;
 }
 
-/** 统一限流入口：Upstash 配置时用 Upstash，否则内存降级 */
+/**
+ * 统一限流入口：Upstash 配置时用 Upstash，否则内存降级。
+ * Upstash 超时/抖动回落内存降级（同 key 继续计数，不 fail-open）。
+ */
 export async function rateLimit(
   identifier: string,
   max: number = DEFAULT_MAX
@@ -119,6 +135,11 @@ export async function rateLimit(
   if (up) {
     try {
       const res = await up.limit(identifier);
+      if (res.reason === "timeout") {
+        // SDK 内部超时：resolve 出 success:true 但计数未确认。当作不可信，
+        // 回落内存降级（fail-closed），不放行。
+        return rateLimitByIp(identifier, max);
+      }
       return {
         ok: res.success,
         remaining: res.remaining,
@@ -155,6 +176,9 @@ function getUpstashDaily(max: number): Ratelimit | null {
     limiter = new Ratelimit({
       redis: Redis.fromEnv(),
       limiter: Ratelimit.slidingWindow(max, "1 d"),
+      prefix: `ratelimit-daily:${process.env.NEXT_PUBLIC_PROJECT_NAME || "app"}`,
+      // 与分钟级同规：SDK 默认 5s 超时 fail-open，收窄到 500ms 走 catch 降级
+      timeout: 500,
     });
     upstashDailyLimiters.set(max, limiter);
   }

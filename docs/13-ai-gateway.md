@@ -221,14 +221,16 @@ export enum CreditsTransType {
 | 依赖 | 关系 |
 |------|------|
 | P-1.2 原子扣减 | **前置依赖**：「余额检查 + 扣减」必须原子化，否则并发透支 |
-| 6.18 限流 | 网关第 2 步。✅ v1 已自带内存级限流（IP 层 `rateLimit` + 用户层 `rateLimitUser`，lib/ratelimit.ts）；Upstash 落地后替换。已知边界：内存限流多实例不共享，重启清零 |
+| 6.18 限流 | 网关第 2 步。✅ v1 已自带内存级限流（IP 层 `rateLimit` + 用户层 `rateLimitUser`，lib/ratelimit.ts）；✅ 2026-09-01 起配置 Upstash 后自动切分布式路径（见下方「跨实例限流」），未配置时回落内存实现 |
 | 6.5 埋点 | ✅ 已接入：`trackServer(AiGenerated)` 在扣费后调用，吞错不阻塞 |
 | P-1.4 Demo API 修复 | demo API 修复后可作为网关的「免费演示模式」（登录即可试一次） |
 | 6.2 邮件 | 积分耗尽时触发 `credit_exhausted` 邮件 |
 
-> ⚠️ **跨实例限流的落地路径（第九轮整块缺失）**：当前限流是内存级、多实例不共享、重启清零（§五 6.18 已自认），
-> `boundary-spec` 把 fail-open 挂账（N-5），但没有给设计。生产方案：Upstash/Redis 分布式限流；
-> 高成本端点（AI 生成）在无分布式限流时应 **fail-closed**，不能静默放行。匿名演示端点的失败退还语义与输入限制见 docs/14（P0-4）。
+> ✅ **跨实例限流已落地（2026-09-01，第二十二批）**：配置 `UPSTASH_REDIS_REST_URL/TOKEN` 后走 Upstash 分布式限流，
+> 未配置时回落内存实现（fail-closed 不放行，N-5 已闭合）。Upstash 路径做了两处 fail-open 防护：
+> ① SDK `timeout` 从默认 5000ms 收窄到 500ms——SDK 在超时后仍 resolve `{success:true, reason:"timeout"}`，
+> 但此时 Redis 计数并未确认，代码检测 `reason==="timeout"` 后回落内存降级继续计数并拒绝，不静默放行；
+> ② prefix 按环境隔离 `ratelimit:${NEXT_PUBLIC_PROJECT_NAME || "app"}`（日配额 `ratelimit-daily:`），多环境/多站点共用同一 Redis 时计数不串。
 
 ---
 
@@ -299,7 +301,7 @@ export enum CreditsTransType {
 | **输入无大小限制** | **P1** | ✅ 已关闭（2026-09-01）：messages 逐项白名单（role 枚举 + content 字符串，违规 400）+ 字节上限 `AI_MAX_PROMPT_BYTES`（默认 32KB）+ 条数上限 `AI_MAX_MESSAGES`（默认 50），超限 413；校验在扣费之前 | 字段白名单 + 字节/条数上限；超大请求直接 413（已落地） |
 | 模型白名单维护成本 | P2 | v1 用常量表，改动即发版 | v3 入数据库，后台可调 |
 | 「积分 vs 金额」汇率漂移 | P2 | 积分是抽象单位，运营方自行定义换算 | 积分价格版本化，每次扣费写入当时的模型价格版本 |
-| 限流多实例不共享 | P1 | v1 内存级限流 | 生产部署 Upstash/Redis 分布式限流；高成本端点缺限流时应 fail-closed |
+| 限流多实例不共享 | P1 | ✅ 已关闭（2026-09-01）：配置 Upstash 即走分布式路径，timeout fail-open 已收窄为 fail-closed 回落 | 生产仍需确认 Vercel 环境变量已配 Upstash；未配置时回落内存限流（单实例有效） |
 | **多供应商数据边界不清** | P1 | ❌ 只做功能路由，不考虑数据保留/区域/训练用途 | 每个模型维护价格版本、数据处理声明、区域、PII 脱敏策略、重试降级规则 |
 
 > **P0 项为真实收费 No-Go**，必须在 v1.5 阶段关闭。
