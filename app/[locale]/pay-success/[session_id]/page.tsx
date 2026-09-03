@@ -1,4 +1,5 @@
-import { redirect } from "next/navigation";
+import { redirect } from "@/i18n/navigation";
+import { getLocale } from "next-intl/server";
 
 /**
  * Stripe 支付成功回跳页（2.19-① 收敛）
@@ -21,5 +22,7 @@ export default async function ({
   // 参数仅用于路由匹配，不做任何服务端调用
   void params;
 
-  redirect(process.env.NEXT_PUBLIC_PAY_SUCCESS_URL || "/");
+  const locale = await getLocale();
+
+  redirect({ href: process.env.NEXT_PUBLIC_PAY_SUCCESS_URL || "/", locale });
 }

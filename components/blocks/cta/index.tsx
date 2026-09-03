@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import Icon from "@/components/icon";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { Section as SectionType } from "@/types/blocks/section";
 
 export default function CTA({ section }: { section: SectionType }) {

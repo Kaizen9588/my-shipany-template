@@ -26,7 +26,7 @@ import {
 
 import { Header as HeaderType } from "@/types/blocks/header";
 import Icon from "@/components/icon";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import LocaleToggle from "@/components/locale/toggle";
 import { Menu } from "lucide-react";
 import SignToggle from "@/components/sign/toggle";
@@ -43,8 +43,8 @@ export default function Header({ header }: { header: HeaderType }) {
       <div className="md:max-w-7xl mx-auto px-4">
         <nav className="hidden justify-between lg:flex">
           <div className="flex items-center gap-6">
-            <a
-              href={header.brand?.url || ""}
+            <Link
+              href={header.brand?.url || "/"}
               className="flex items-center gap-2"
             >
               {header.brand?.logo?.src && (
@@ -59,7 +59,7 @@ export default function Header({ header }: { header: HeaderType }) {
                   {header.brand?.title || ""}
                 </span>
               )}
-            </a>
+            </Link>
             <div className="flex items-center">
               <NavigationMenu>
                 <NavigationMenuList>
@@ -84,11 +84,11 @@ export default function Header({ header }: { header: HeaderType }) {
                               <NavigationMenuLink>
                                 {item.children.map((iitem, ii) => (
                                   <li key={ii}>
-                                    <a
+                                    <Link
                                       className={cn(
                                         "flex select-none gap-4 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
                                       )}
-                                      href={iitem.url}
+                                      href={iitem.url || ""}
                                       target={iitem.target}
                                     >
                                       {iitem.icon && (
@@ -105,7 +105,7 @@ export default function Header({ header }: { header: HeaderType }) {
                                           {iitem.description}
                                         </p>
                                       </div>
-                                    </a>
+                                    </Link>
                                   </li>
                                 ))}
                               </NavigationMenuLink>
@@ -117,7 +117,7 @@ export default function Header({ header }: { header: HeaderType }) {
 
                     return (
                       <NavigationMenuItem key={i}>
-                        <a
+                        <Link
                           className={cn(
                             "text-muted-foreground",
                             navigationMenuTriggerStyle,
@@ -125,7 +125,7 @@ export default function Header({ header }: { header: HeaderType }) {
                               variant: "ghost",
                             })
                           )}
-                          href={item.url}
+                          href={item.url || ""}
                           target={item.target}
                         >
                           {item.icon && (
@@ -135,7 +135,7 @@ export default function Header({ header }: { header: HeaderType }) {
                             />
                           )}
                           {item.title}
-                        </a>
+                        </Link>
                       </NavigationMenuItem>
                     );
                   })}
@@ -223,12 +223,12 @@ export default function Header({ header }: { header: HeaderType }) {
                             </AccordionTrigger>
                             <AccordionContent className="mt-2">
                               {item.children.map((iitem, ii) => (
-                                <a
+                                <Link
                                   key={ii}
                                   className={cn(
                                     "flex select-none gap-4 rounded-md p-3 leading-none outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
                                   )}
-                                  href={iitem.url}
+                                  href={iitem.url || ""}
                                   target={iitem.target}
                                 >
                                   {iitem.icon && (
@@ -245,16 +245,16 @@ export default function Header({ header }: { header: HeaderType }) {
                                       {iitem.description}
                                     </p>
                                   </div>
-                                </a>
+                                </Link>
                               ))}
                             </AccordionContent>
                           </AccordionItem>
                         );
                       }
                       return (
-                        <a
+                        <Link
                           key={i}
-                          href={item.url}
+                          href={item.url || ""}
                           target={item.target}
                           className="font-semibold my-4 flex items-center gap-2"
                         >
@@ -265,7 +265,7 @@ export default function Header({ header }: { header: HeaderType }) {
                               className="size-4 shrink-0"
                             />
                           )}
-                        </a>
+                        </Link>
                       );
                     })}
                   </Accordion>

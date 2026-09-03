@@ -10,6 +10,7 @@ import { BlogItem } from "@/types/blocks/blog";
 import { Home } from "lucide-react";
 import { Post } from "@/types/post";
 import { useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 
 export default function Crumb({ post }: { post: Post }) {
   const t = useTranslations();
@@ -18,16 +19,16 @@ export default function Crumb({ post }: { post: Post }) {
     <Breadcrumb>
       <BreadcrumbList>
         <BreadcrumbItem>
-          <BreadcrumbLink href={post.locale === "en" ? "/" : `/${post.locale}`}>
-            <Home className="h-4 w-4" />
+          <BreadcrumbLink asChild>
+            <Link href="/">
+              <Home className="h-4 w-4" />
+            </Link>
           </BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator />
         <BreadcrumbItem>
-          <BreadcrumbLink
-            href={post.locale === "en" ? "/posts" : `/${post.locale}/posts`}
-          >
-            {t("blog.title")}
+          <BreadcrumbLink asChild>
+            <Link href="/posts">{t("blog.title")}</Link>
           </BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator />

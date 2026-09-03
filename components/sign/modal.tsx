@@ -20,9 +20,10 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "@/components/ui/drawer";
-import { SiGithub, SiGmail, SiGoogle } from "react-icons/si";
+import { SiGithub, SiGoogle } from "react-icons/si";
 
 import { Button } from "@/components/ui/button";
+import EmailSignForm from "@/components/sign/email-form";
 import { cn } from "@/lib/utils";
 import { signIn } from "next-auth/react";
 import { useAppContext } from "@/contexts/app";
@@ -77,19 +78,6 @@ function ProfileForm({ className }: React.ComponentProps<"form">) {
 
   return (
     <div className={cn("grid items-start gap-4", className)}>
-      {/* <div className="grid gap-2">
-        <Label htmlFor="email">{t("sign_modal.email_title")}</Label>
-        <Input type="email" id="email" placeholder="xxx@xxx.com" />
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor="password">{t("sign_modal.password_title")}</Label>
-        <Input id="password" type="password" />
-      </div>
-      <Button type="submit" className="w-full flex items-center gap-2">
-        <SiGmail className="w-4 h-4" />
-        {t("sign_modal.email_sign_in")}
-      </Button> */}
-
       {process.env.NEXT_PUBLIC_AUTH_GOOGLE_ENABLED === "true" && (
         <Button
           variant="outline"
@@ -115,6 +103,12 @@ function ProfileForm({ className }: React.ComponentProps<"form">) {
           {t("sign_modal.github_sign_in")}
         </Button>
       )}
+
+      {/* OAuth 均关闭时仍有邮箱登录/注册入口，避免弹框空白 */}
+      {process.env.NEXT_PUBLIC_AUTH_GOOGLE_ENABLED !== "true" &&
+        process.env.NEXT_PUBLIC_AUTH_GITHUB_ENABLED !== "true" && (
+          <EmailSignForm />
+        )}
     </div>
   );
 }

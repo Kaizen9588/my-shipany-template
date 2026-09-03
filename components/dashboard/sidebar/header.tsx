@@ -4,7 +4,7 @@ import { SidebarMenu, SidebarMenuItem } from "@/components/ui/sidebar";
 
 import { Brand as BrandType } from "@/types/blocks/base";
 import { DropdownMenu } from "@/components/ui/dropdown-menu";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 
 export default function ({ brand }: { brand: BrandType }) {
   return (

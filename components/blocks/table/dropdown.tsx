@@ -16,7 +16,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import Icon from "@/components/icon";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { MoreHorizontal } from "lucide-react";
 import { NavItem } from "@/types/blocks/base";
 

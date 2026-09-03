@@ -6,10 +6,11 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
-import { useParams, usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter } from "@/i18n/navigation";
 
 import { MdLanguage } from "react-icons/md";
 import { localeNames } from "@/i18n/locale";
+import { useParams } from "next/navigation";
 
 export default function ({ isIcon = false }: { isIcon?: boolean }) {
   const params = useParams();
@@ -19,11 +20,8 @@ export default function ({ isIcon = false }: { isIcon?: boolean }) {
 
   const handleSwitchLanguage = (value: string) => {
     if (value !== locale) {
-      let newPathName = pathname.replace(`/${locale}`, `/${value}`);
-      if (!newPathName.startsWith(`/${value}`)) {
-        newPathName = `/${value}${newPathName}`;
-      }
-      router.push(newPathName);
+      // next-intl usePathname 返回去掉语言前缀的路径，router.push 自动带上目标语言前缀
+      router.push(pathname, { locale: value });
     }
   };
 

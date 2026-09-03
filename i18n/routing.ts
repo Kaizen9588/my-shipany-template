@@ -3,19 +3,15 @@ import {
   localeDetection,
   localePrefix,
   locales,
-  pathnames,
 } from "./locale";
 
-import { createNavigation } from "next-intl/navigation";
 import { defineRouting } from "next-intl/routing";
 
+// 仅包含 routing 配置：middleware(edge bundle)也会引用本文件,
+// 不能把 createNavigation(带 React 客户端依赖)混进来,否则 edge 下导出解析异常。
 export const routing = defineRouting({
   locales,
   defaultLocale,
   localePrefix,
-  pathnames,
   localeDetection,
 });
-
-export const { Link, redirect, usePathname, useRouter } =
-  createNavigation(routing);

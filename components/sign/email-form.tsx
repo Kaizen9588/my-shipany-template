@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,25 @@ import { TelemetryEvents, track } from "@/lib/telemetry";
  * - 登录：邮箱 + 密码 → NextAuth Credentials Provider
  * - 注册：邮箱 → 发送验证码 → 验证码 + 密码 → /api/verify-code → 自动登录
  */
+
+/**
+ * 登录成功后的落点：
+ * - 会话带 must_change_password（默认管理员首次登录）→ 强制改密页
+ * - 其余 → 首页（callbackUrl 场景由 signin 服务端页处理）
+ */
+async function resolvePostSignInTarget(): Promise<string> {
+  try {
+    const resp = await fetch("/api/get-user-info", { method: "POST" });
+    const { code, data } = await resp.json();
+    if (code === 0 && data?.must_change_password) {
+      return "/change-password";
+    }
+  } catch {
+    // 查询失败不阻塞登录，落首页
+  }
+  return "/";
+}
+
 export default function EmailSignForm() {
   const router = useRouter();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -58,7 +77,11 @@ export default function EmailSignForm() {
       toast.error("code and password are required");
       return;
     }
-    if (password.length < 8 || !/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
+    if (
+      password.length < 8 ||
+      !/[a-zA-Z]/.test(password) ||
+      !/\d/.test(password)
+    ) {
       toast.error("password must be at least 8 chars with letters and numbers");
       return;
     }
@@ -79,7 +102,7 @@ export default function EmailSignForm() {
         name: TelemetryEvents.SignupCompleted,
         properties: { provider: "email" },
       });
-      router.push("/");
+      router.push(await resolvePostSignInTarget());
       router.refresh();
     } catch (e) {
       toast.error("verify failed");
@@ -104,7 +127,7 @@ export default function EmailSignForm() {
         toast.error("invalid email or password");
         return;
       }
-      router.push("/");
+      router.push(await resolvePostSignInTarget());
       router.refresh();
     } catch (e) {
       toast.error("sign in failed");

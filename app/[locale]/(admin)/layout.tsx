@@ -3,7 +3,8 @@ import Empty from "@/components/blocks/empty";
 import { ReactNode } from "react";
 import { Sidebar } from "@/types/blocks/sidebar";
 import { getAdminUser } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { redirect } from "@/i18n/navigation";
+import { getLocale } from "next-intl/server";
 
 export default async function AdminLayout({
   children,
@@ -12,13 +13,14 @@ export default async function AdminLayout({
 }) {
   // 6.10 RBAC：super_admin / admin / operator（ADMIN_EMAILS 白名单过渡保留）
   const admin = await getAdminUser();
+  const locale = await getLocale();
   if (!admin) {
-    redirect("/auth/signin");
+    redirect({ href: "/auth/signin", locale });
   }
 
   // 默认管理员首次登录/未改密时，先完成改密再进入后台
   if (admin.must_change_password) {
-    redirect("/change-password");
+    redirect({ href: "/change-password", locale });
   }
 
   const sidebar: Sidebar = {

@@ -1,4 +1,5 @@
-import { redirect } from "next/navigation";
+import { redirect } from "@/i18n/navigation";
+import { getLocale } from "next-intl/server";
 import { findUserByUuid } from "@/models/user";
 import { getCreditsByUserUuid } from "@/models/credit";
 import { getUserCredits } from "@/services/credit";
@@ -23,10 +24,11 @@ export default async function UserDetailPage({
 }) {
   const admin = await requireAdmin();
   const { uuid } = await params;
+  const locale = await getLocale();
 
   const user = await findUserByUuid(uuid);
   if (!user) {
-    redirect("/admin/users");
+    redirect({ href: "/admin/users", locale });
   }
   const currentUser = user;
 
@@ -53,7 +55,7 @@ export default async function UserDetailPage({
       target_uuid: uuid,
       payload: { user_uuid: uuid, role },
     });
-    redirect(`/admin/users/${uuid}`);
+    redirect({ href: `/admin/users/${uuid}`, locale });
   }
 
   async function toggleStatus(formData: FormData) {
@@ -73,7 +75,7 @@ export default async function UserDetailPage({
       target_uuid: uuid,
       payload: { user_uuid: uuid, status: next },
     });
-    redirect(`/admin/users/${uuid}`);
+    redirect({ href: `/admin/users/${uuid}`, locale });
   }
 
   async function adjustCredits(formData: FormData) {
@@ -96,7 +98,7 @@ export default async function UserDetailPage({
       target_uuid: uuid,
       payload: { user_uuid: uuid, credits: creditsNum },
     });
-    redirect(`/admin/users/${uuid}`);
+    redirect({ href: `/admin/users/${uuid}`, locale });
   }
 
   return (
@@ -106,13 +108,15 @@ export default async function UserDetailPage({
       </a>
 
       <div className="rounded-lg border p-4">
-        <h3 className="text-lg font-medium">{user.nickname || user.email}</h3>
-        <p className="text-sm text-muted-foreground">{user.email}</p>
+        <h3 className="text-lg font-medium">
+          {currentUser.nickname || currentUser.email}
+        </h3>
+        <p className="text-sm text-muted-foreground">{currentUser.email}</p>
         <div className="mt-2 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
-          <div>UUID: {user.uuid?.slice(0, 12)}...</div>
-          <div>角色：{user.role || "user"}</div>
-          <div>状态：{user.status === "banned" ? "已封禁" : "正常"}</div>
-          <div>注册：{moment(user.created_at).format("YYYY-MM-DD")}</div>
+          <div>UUID: {currentUser.uuid?.slice(0, 12)}...</div>
+          <div>角色：{currentUser.role || "user"}</div>
+          <div>状态：{currentUser.status === "banned" ? "已封禁" : "正常"}</div>
+          <div>注册：{moment(currentUser.created_at).format("YYYY-MM-DD")}</div>
         </div>
       </div>
 
@@ -158,7 +162,7 @@ export default async function UserDetailPage({
               <select
                 id="role"
                 name="role"
-                defaultValue={user.role || "user"}
+                defaultValue={currentUser.role || "user"}
                 className="rounded-md border px-3 py-1.5 text-sm"
               >
                 <option value="user">user</option>
@@ -197,7 +201,7 @@ export default async function UserDetailPage({
               />
             </div>
             <Button type="submit" variant="destructive" size="sm">
-              {user.status === "banned" ? "提交解封审批" : "提交封禁审批"}
+              {currentUser.status === "banned" ? "提交解封审批" : "提交封禁审批"}
             </Button>
           </form>
         </div>

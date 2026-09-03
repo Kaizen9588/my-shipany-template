@@ -1,5 +1,6 @@
 import { ArrowRight } from "lucide-react";
 import { Blog as BlogType } from "@/types/blocks/blog";
+import { Link } from "@/i18n/navigation";
 
 export default function Blog({ blog }: { blog: BlogType }) {
   if (blog.disabled) {
@@ -22,9 +23,9 @@ export default function Blog({ blog }: { blog: BlogType }) {
         </div>
         <div className="w-full flex flex-wrap items-start">
           {blog.items?.map((item, idx) => (
-            <a
+            <Link
               key={idx}
-              href={item.url || `/${item.locale}/posts/${item.slug}`}
+              href={item.url || `/posts/${item.slug}`}
               target={item.target || "_self"}
               className="w-full md:w-1/3 p-4"
             >
@@ -53,7 +54,7 @@ export default function Blog({ blog }: { blog: BlogType }) {
                   )}
                 </div>
               </div>
-            </a>
+            </Link>
           ))}
         </div>
       </div>

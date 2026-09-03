@@ -1,4 +1,5 @@
-import { redirect } from "next/navigation";
+import { redirect } from "@/i18n/navigation";
+import { getLocale } from "next-intl/server";
 import { getUserInfo } from "@/services/user";
 import ChangePasswordForm from "./change-password-form";
 
@@ -8,8 +9,9 @@ import ChangePasswordForm from "./change-password-form";
  */
 export default async function ChangePasswordPage() {
   const user = await getUserInfo();
+  const locale = await getLocale();
   if (!user) {
-    redirect("/auth/signin");
+    redirect({ href: "/auth/signin", locale });
   }
 
   return (

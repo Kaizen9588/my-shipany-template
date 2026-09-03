@@ -1,4 +1,5 @@
-import { redirect } from "next/navigation";
+import { redirect } from "@/i18n/navigation";
+import { getLocale } from "next-intl/server";
 import { requireAdmin } from "@/lib/auth";
 import { parseReason } from "@/lib/admin-reason";
 import { submitApproval } from "@/lib/admin-approval";
@@ -51,7 +52,8 @@ export default function AdjustCreditsPage() {
       payload: { user_uuid: targetUuid, credits: creditsNum },
     });
 
-    redirect("/admin/approvals");
+    const locale = await getLocale();
+    redirect({ href: "/admin/approvals", locale });
   }
 
   return (

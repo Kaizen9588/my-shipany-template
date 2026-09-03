@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { signOut } from "next-auth/react";
 
 export default function ChangePasswordForm({
   email,
@@ -36,7 +37,9 @@ export default function ChangePasswordForm({
         return;
       }
       toast.success("密码已修改，请使用新密码重新登录");
-      router.push("/");
+      // JWT 里的 mustChangePassword 不会立即失效，登出重新登录才拿到干净会话；
+      // 顺带让浏览器更新/丢弃已保存的旧密码，避免 Chrome 泄露提示反复弹出
+      await signOut({ redirectTo: "/" });
       router.refresh();
     } catch (e) {
       toast.error("修改失败，请稍后重试");

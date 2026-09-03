@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Section as SectionType } from "@/types/blocks/section";
+import { Link } from "@/i18n/navigation";
 
 export default function Showcase({ section }: { section: SectionType }) {
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
@@ -87,8 +88,8 @@ export default function Showcase({ section }: { section: SectionType }) {
                 key={i}
                 className="max-w-[320px] pl-[20px] lg:max-w-[360px]"
               >
-                <a
-                  href={item.url}
+                <Link
+                  href={item.url || ""}
                   target={item.target}
                   className="group flex flex-col justify-between rounded-xl border border-border bg-card p-6"
                 >
@@ -116,7 +117,7 @@ export default function Showcase({ section }: { section: SectionType }) {
                   <div className="mb-2 line-clamp-2 text-sm text-muted-foreground md:mb-2 md:text-base lg:mb-2">
                     {item.description}
                   </div>
-                </a>
+                </Link>
               </CarouselItem>
             ))}
           </CarouselContent>

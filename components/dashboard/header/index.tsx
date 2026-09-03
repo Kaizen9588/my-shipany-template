@@ -9,7 +9,7 @@ import { BreadcrumbItem } from "@/components/ui/breadcrumb";
 import { BreadcrumbLink } from "@/components/ui/breadcrumb";
 import { Crumb } from "@/types/blocks/base";
 import { Fragment } from "react";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 

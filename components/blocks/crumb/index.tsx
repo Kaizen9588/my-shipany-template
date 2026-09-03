@@ -1,5 +1,5 @@
 import { ChevronRight } from "lucide-react";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { NavItem } from "@/types/blocks/base";
 
 export default function Crumb({ items }: { items: NavItem[] }) {

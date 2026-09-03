@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Link } from "@/i18n/navigation";
 import moment from "moment";
 
 /**
@@ -61,7 +62,7 @@ export default function BlogSearchBox({ locale }: { locale: string }) {
             <p className="text-sm text-muted-foreground">No posts found</p>
           ) : (
             results.map((post) => (
-              <a
+              <Link
                 key={post.uuid}
                 href={`/posts/${post.slug}`}
                 className="block rounded-md p-2 hover:bg-muted"
@@ -70,7 +71,7 @@ export default function BlogSearchBox({ locale }: { locale: string }) {
                 <span className="ml-2 text-xs text-muted-foreground">
                   {moment(post.created_at).format("YYYY-MM-DD")}
                 </span>
-              </a>
+              </Link>
             ))
           )}
         </div>

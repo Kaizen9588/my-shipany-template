@@ -10,9 +10,9 @@ import TableBlock from "@/components/blocks/table";
 import { TableColumn } from "@/types/blocks/table";
 import { Table as TableSlotType } from "@/types/slots/table";
 import { findUserByUuid } from "@/models/user";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import moment from "moment";
-import { redirect } from "next/navigation";
+import { redirect } from "@/i18n/navigation";
 
 export default async function () {
   const t = await getTranslations();
@@ -20,14 +20,21 @@ export default async function () {
   const user_uuid = await getUserUuid();
   const user_email = await getUserEmail();
 
-  const callbackUrl = `${process.env.NEXT_PUBLIC_WEB_URL}/my-invites`;
+  const callbackUrl = "/my-invites";
+  const locale = await getLocale();
   if (!user_uuid) {
-    redirect(`/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+    redirect({
+      href: `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`,
+      locale,
+    });
   }
 
   const user = await findUserByUuid(user_uuid);
   if (!user) {
-    redirect(`/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+    redirect({
+      href: `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`,
+      locale,
+    });
   }
 
   let orders = await getOrdersByUserUuid(user_uuid);

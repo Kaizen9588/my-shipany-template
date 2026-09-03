@@ -1,5 +1,36 @@
 import { Footer as FooterType } from "@/types/blocks/footer";
 import Icon from "@/components/icon";
+import { Link } from "@/i18n/navigation";
+
+// legal 页挂在根路由 app/(legal)/，不参与 [locale] 路由，不能走 next-intl Link
+//（会被拼出 /zh/privacy-policy 这种 404 地址），内部站内地址才需要语言前缀。
+function FooterLink({
+  url,
+  target,
+  children,
+}: {
+  url?: string;
+  target?: string;
+  children: React.ReactNode;
+}) {
+  const isLocalizable =
+    !!url &&
+    url.startsWith("/") &&
+    !url.startsWith("/privacy-policy") &&
+    !url.startsWith("/terms-of-service");
+  if (!isLocalizable) {
+    return (
+      <a href={url || ""} target={target}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <Link href={url} target={target}>
+      {children}
+    </Link>
+  );
+}
 
 export default function Footer({ footer }: { footer: FooterType }) {
   if (footer.disabled) {
@@ -39,11 +70,11 @@ export default function Footer({ footer }: { footer: FooterType }) {
                 <ul className="flex items-center space-x-6 text-muted-foreground">
                   {footer.social.items?.map((item, i) => (
                     <li key={i} className="font-medium hover:text-primary">
-                      <a href={item.url} target={item.target}>
+                      <FooterLink url={item.url} target={item.target}>
                         {item.icon && (
                           <Icon name={item.icon} className="size-4" />
                         )}
-                      </a>
+                      </FooterLink>
                     </li>
                   ))}
                 </ul>
@@ -56,9 +87,9 @@ export default function Footer({ footer }: { footer: FooterType }) {
                   <ul className="space-y-4 text-sm text-muted-foreground">
                     {item.children?.map((iitem, ii) => (
                       <li key={ii} className="font-medium hover:text-primary">
-                        <a href={iitem.url} target={iitem.target}>
+                        <FooterLink url={iitem.url} target={iitem.target}>
                           {iitem.title}
-                        </a>
+                        </FooterLink>
                       </li>
                     ))}
                   </ul>
@@ -86,9 +117,9 @@ export default function Footer({ footer }: { footer: FooterType }) {
               <ul className="flex justify-center gap-4 lg:justify-start">
                 {footer.agreement.items?.map((item, i) => (
                   <li key={i} className="hover:text-primary">
-                    <a href={item.url} target={item.target}>
+                    <FooterLink url={item.url} target={item.target}>
                       {item.title}
-                    </a>
+                    </FooterLink>
                   </li>
                 ))}
               </ul>

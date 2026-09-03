@@ -26,7 +26,7 @@ import MarkdownEditor from "../editor/markdown";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { useForm } from "react-hook-form";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 
