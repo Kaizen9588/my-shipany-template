@@ -104,9 +104,11 @@ export async function loginViaApi(
   await apiLogin(page.context().request, email, password);
 }
 
-/** 关闭 cookie 同意横幅（首访必现；Accept All 写 localStorage 后同 context 不再出现） */
+/** 关闭 cookie 同意横幅（每测试全新 context 必现；CI 水合慢时横幅晚于页面就绪挂载，
+ * 必须等它出现再关，否则 no-op 后横幅稍后弹出会干扰后续 dialog 定位） */
 export async function dismissCookieBanner(page: Page): Promise<void> {
   const banner = page.getByRole("dialog", { name: "We value your privacy" });
+  await banner.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
   if (await banner.count()) {
     await banner.getByRole("button", { name: "Accept All" }).click();
     await expect(banner).toBeHidden();

@@ -121,7 +121,11 @@ test.describe("My Invites", () => {
     const editIcon = page.locator("svg.cursor-pointer.text-primary").first();
     await expect(editIcon).toBeAttached();
     await editIcon.click();
-    const dialog = page.getByRole("dialog").last();
+    // 按内容过滤：cookie 横幅也是 dialog（CI 上可能晚挂载），.last() 会误中
+    const dialog = page
+      .getByRole("dialog")
+      .filter({ has: page.getByRole("button", { name: "Save" }) })
+      .last();
     await expect(dialog.locator("input")).toBeVisible();
     await dialog.locator("input").fill(`e2e-inv-${Date.now() % 1000000}`);
     await dialog.getByRole("button", { name: "Save" }).click();
