@@ -157,7 +157,7 @@ export const config = {
 | `AUTH_GOOGLE_SECRET` | ❌ | Google OAuth Client Secret |
 | `NEXT_PUBLIC_AUTH_GOOGLE_ID` | ❌ | Google OAuth Client ID（前端用） |
 | `NEXT_PUBLIC_AUTH_GOOGLE_ENABLED` | ❌ | 启用 Google 登录：`true`/`false` |
-| `NEXT_PUBLIC_AUTH_GOOGLE_ONE_TAP_ENABLED` | ❌ | 启用 One-Tap：`true`/`false` |
+| `NEXT_PUBLIC_AUTH_GOOGLE_ONE_TAP_ENABLED` | ❌ | 启用 One-Tap：`true`/`false`（客户端实现见 `hooks/useOneTapLogin.tsx`，开通步骤见下） |
 | `AUTH_GITHUB_ID` | ❌ | GitHub OAuth Client ID |
 | `AUTH_GITHUB_SECRET` | ❌ | GitHub OAuth Client Secret |
 | `NEXT_PUBLIC_AUTH_GITHUB_ENABLED` | ❌ | 启用 GitHub 登录：`true`/`false` |
@@ -254,6 +254,27 @@ export const config = {
 > - `SENTRY_DSN` — 错误监控改由 PostHog 承担（见 [埋点方案](./11-telemetry-analytics.md)）
 > - `WAFFO_API_KEY` / `WAFFO_PUBLIC_KEY` — 2026-08-27 迁移至 Waffo Pancake 后废弃
 >   （凭据收敛为 MERCHANT_ID + PRIVATE_KEY[_BASE64]，见 [操作指南 §三](./payment/waffo-operations-guide.md)）
+
+### 5.3.1 Google One Tap 开通步骤
+
+One Tap 代码链路已就绪（`hooks/useOneTapLogin.tsx` 客户端提示 + `auth/config.ts`
+的 `google-one-tap` CredentialsProvider 服务端 verifyIdToken），但需要先有
+Google OAuth Client 才能启用：
+
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+   创建 OAuth 客户端（类型：Web 应用）。
+2. **已获授权的 JavaScript 来源** 填部署域名（本地开发加
+   `http://localhost:3000`；不要填 `http://127.0.0.1`，提示按域名校验）。
+3. 把 Client ID 同时填入 `NEXT_PUBLIC_AUTH_GOOGLE_ID` 与 `AUTH_GOOGLE_ID`
+   （One Tap 凭据校验读的是 `NEXT_PUBLIC_AUTH_GOOGLE_ID`，不依赖
+   `AUTH_GOOGLE_SECRET`；若同时要开 Google 按钮登录，则 Secret 也必填）。
+4. `.env.local` 设 `NEXT_PUBLIC_AUTH_GOOGLE_ONE_TAP_ENABLED = "true"` 并重启 dev server。
+5. 未登录访问站点应出现 One Tap 提示框。若不弹，看浏览器控制台的
+   `one tap prompt not displayed: <reason>` 日志：常见原因有同域 24h 冷却
+   （刚关过提示）、第三方 Cookie 被拦截、Client ID 与访问域名不匹配。
+
+注意：E2E/API 测试环境（`.env.e2e-test` / `.env.api-test`）不开启 One Tap，
+避免测试进程弹 Google 提示。
 
 ## 6. 环境变量配置检查清单
 

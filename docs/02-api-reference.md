@@ -134,7 +134,7 @@ NextAuth.js 自动处理的认证端点，不是自定义 API。
 | Provider | ID | 环境变量开关 |
 |----------|----|-------------|
 | Google | `google` | `NEXT_PUBLIC_AUTH_GOOGLE_ENABLED=true` |
-| Google One-Tap | `google-one-tap` | `NEXT_PUBLIC_AUTH_GOOGLE_ONE_TAP_ENABLED=true` |
+| Google One-Tap | `google-one-tap` | `NEXT_PUBLIC_AUTH_GOOGLE_ONE_TAP_ENABLED=true`（需 `NEXT_PUBLIC_AUTH_GOOGLE_ID`，凭据走 CredentialsProvider 服务端 verifyIdToken 校验，不依赖 `AUTH_GOOGLE_SECRET`） |
 | GitHub | `github` | `NEXT_PUBLIC_AUTH_GITHUB_ENABLED=true` |
 
 **登录页路径**：`/[locale]/auth/signin`
