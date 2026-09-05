@@ -9,6 +9,12 @@
 # testing
 /coverage
 
+# playwright e2e
+/test-results/
+/playwright-report/
+/blob-report/
+playwright/.cache/
+
 # next.js
 /.next/
 /out/
@@ -29,6 +35,8 @@ yarn-error.log*
 .env.local
 .env.development
 .env.production
+.env.api-test
+.env.e2e-test
 
 # local package manager caches (sandbox/offline dev)
 .npm-cache/
@@ -46,6 +54,10 @@ Makefile
 .wrangler
 wrangler.toml
 supabase
+# API 测试产物（报告/结果/artifacts）
+api-tests/output/
+# E2E 汇总报告产物（门户推送用）
+e2e-report-output/
 # local agent skills install (npx skills add ...) + Supabase CLI cache
 .agents/
 .supabase-home/

@@ -14,6 +14,14 @@ const eslintConfig = [
     ignores: [".next/**", "node_modules/**", "out/**", "build/**", "coverage/**"],
   },
   {
+    // Playwright fixtures 的 use 回调参数是框架契约（非 React Hook），
+    // rules-of-hooks 对 e2e/ 测试代码是误报
+    files: ["e2e/**/*.ts"],
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
+    },
+  },
+  {
     rules: {
       "react/display-name": "warn",
       "react-hooks/set-state-in-effect": "warn",

@@ -1,0 +1,14 @@
+services:
+  test-portal:
+    image: nginx:1.27-alpine
+    container_name: test-portal
+    restart: unless-stopped
+    ports:
+      - "8686:80"
+    volumes:
+      # 门户页面
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+      # 报告数据目录：{project}/report-summary.{json,md} + junit.xml
+      # 本地/CI 通过 scp/rsync 推送到宿主机 ~/reports/{current,history}/<project>/
+      - /home/wang/reports:/usr/share/nginx/html/reports:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro

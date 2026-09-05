@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自动化测试报告门户</title>
+<style>
+  :root {
+    --bg: #0f172a; --card: #1e293b; --border: #334155;
+    --text: #e2e8f0; --muted: #94a3b8;
+    --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --blue: #3b82f6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px; max-width: 1200px; margin: 0 auto;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; cursor: pointer; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  /* 面包屑 */
+  .crumbs { font-size: 13.5px; margin-bottom: 18px; color: var(--muted); }
+  .crumbs a { color: var(--blue); text-decoration: none; cursor: pointer; }
+  .crumbs a:hover { text-decoration: underline; }
+  .crumbs .sep { margin: 0 6px; }
+  /* 首页项目卡片 */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px; cursor: pointer; transition: border-color .15s;
+  }
+  .card:hover { border-color: var(--blue); }
+  .card-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  .proj { font-size: 17px; font-weight: 600; }
+  .badge { font-size: 12px; padding: 3px 10px; border-radius: 999px; font-weight: 600; }
+  .badge.pass { background: rgba(34,197,94,.15); color: var(--green); }
+  .badge.fail { background: rgba(239,68,68,.15); color: var(--red); }
+  .badge.warn { background: rgba(245,158,11,.15); color: var(--amber); }
+  .rate { font-size: 28px; font-weight: 700; margin: 6px 0 2px; }
+  .rate.pass { color: var(--green); } .rate.fail { color: var(--red); } .rate.part { color: var(--amber); }
+  .meta { color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+  .bar { height: 6px; background: var(--border); border-radius: 3px; margin-top: 12px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--green); }
+  .bar > div.fail { background: var(--red); } .bar > div.part { background: var(--amber); }
+  /* 卡片内类型入口行（API / E2E） */
+  .type-rows { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .type-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 8px 10px; margin: 4px -10px; border-radius: 8px; cursor: pointer;
+  }
+  .type-row:hover { background: rgba(59,130,246,.1); }
+  .type-row .meta { text-align: right; }
+  .latest-tag { font-size: 11px; color: var(--muted); margin-top: 10px; }
+  /* 项目页 Tab */
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+  .tab {
+    font-size: 14px; padding: 8px 18px; border-radius: 10px; cursor: pointer;
+    background: var(--card); border: 1px solid var(--border); color: var(--muted);
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-color: var(--blue); background: rgba(59,130,246,.12); }
+  .tab .badge { margin-left: 8px; }
+  /* 历史列表 */
+  table.hist { width: 100%; border-collapse: collapse; font-size: 13.5px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  table.hist th, table.hist td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  table.hist th { color: var(--muted); font-weight: 500; font-size: 12.5px; }
+  table.hist tr.run { cursor: pointer; }
+  table.hist tr.run:hover { background: rgba(59,130,246,.08); }
+  table.hist tr:last-child td { border-bottom: none; }
+  .more-wrap { text-align: center; margin-top: 14px; }
+  .btn-more {
+    font-size: 13px; color: var(--blue); background: rgba(59,130,246,.1);
+    border: 1px solid rgba(59,130,246,.3); border-radius: 8px; padding: 7px 18px; cursor: pointer;
+  }
+  .btn-more:hover { background: rgba(59,130,246,.2); }
+  /* 运行详情 */
+  .detail-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .detail-head .rate { font-size: 22px; }
+  table.cases { width: 100%; border-collapse: collapse; font-size: 13px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  table.cases th, table.cases td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  table.cases th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  table.cases tr:last-child td { border-bottom: none; }
+  td.ok { color: var(--green); } td.no { color: var(--red); }
+  .err { color: var(--red); font-family: ui-monospace, monospace; font-size: 12px; }
+  .actions { margin: 12px 0 16px; display: flex; gap: 10px; }
+  .btn {
+    font-size: 12.5px; color: var(--blue); background: rgba(59,130,246,.1);
+    border: 1px solid rgba(59,130,246,.3); border-radius: 8px;
+    padding: 5px 12px; text-decoration: none; cursor: pointer;
+  }
+  .btn:hover { background: rgba(59,130,246,.2); }
+  .empty { color: var(--muted); padding: 30px; text-align: center;
+    background: var(--card); border: 1px dashed var(--border); border-radius: 12px; }
+  #view:empty::after { content: "加载中…"; color: var(--muted); }
+</style>
+</head>
+<body>
+  <h1 onclick="location.hash = ''">自动化测试报告门户</h1>
+  <div class="sub">各项目 API/E2E 自动化测试结果汇总 · 数据由 CI/本地门禁自动推送 · 纯静态无后端</div>
+  <div id="crumbs"></div>
+  <div id="view"></div>
+<script>
+// ===================== 配置 =====================
+const PROJECTS = ["my-shipany-template"];
+// 每个项目的报告类型（key 与服务器目录名一致）
+const REPORT_TYPES = [
+  { key: "api", label: "API 接口自动化" },
+  { key: "e2e", label: "E2E 端到端" },
+];
+// 报告 JSON 契约版本：与生成方（api-tests/summary-reporter.ts 的 schemaVersion）对应。
+const SUPPORTED_SCHEMA_VERSION = 1;
+const PAGE_SIZE = 20; // 历史列表默认条数，「更多历史记录」翻页
+
+const fmtMs = m => m >= 1000 ? (m/1000).toFixed(1) + "s" : m + "ms";
+const fmtTime = t => t ? new Date(t).toLocaleString("zh-CN", { hour12: false }) : "";
+// 目录时间戳 20260904-131025 → 2026-09-04 13:10:25
+const fmtDir = d => {
+  const m = d.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : d;
+};
+const esc = s => String(s).replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+async function loadJSON(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) return null;
+  try { return await r.json(); } catch { return null; }
+}
+// nginx autoindex 目录清单（JSON 裸数组，见 nginx.conf）
+async function listDir(url) {
+  const d = await loadJSON(url);
+  if (!d) return [];
+  const items = Array.isArray(d) ? d : d.entries || [];
+  return items.filter(e => e.type === "directory").map(e => e.name).sort().reverse();
+}
+const usable = d => d && d.schemaVersion === SUPPORTED_SCHEMA_VERSION && typeof d.total === "number";
+const rateClass = (ok, total) => ok === total ? "pass" : ok === 0 ? "fail" : "part";
+
+// ===================== hash 路由 =====================
+// #/                        首页
+// #/<project>               项目页（默认第一个报告类型）
+// #/<project>/<type>        某类型报告：最新摘要 + 历史列表（20 条 + 更多）
+// #/<project>/<type>/<ts>   某次运行的用例明细
+function route() {
+  const parts = decodeURIComponent(location.hash.replace(/^#\/?/, "")).split("/").filter(Boolean);
+  const [proj, type, ts] = parts;
+  if (!proj) return renderHome();
+  if (!REPORT_TYPES.some(t => t.key === type)) return renderProject(proj);
+  return ts ? renderRun(proj, type, ts) : renderType(proj, type);
+}
+window.addEventListener("hashchange", route);
+
+function crumbs(items) {
+  document.getElementById("crumbs").innerHTML = items
+    .map((it, i) => it.hash
+      ? `<a href="#/${it.hash}">${esc(it.label)}</a>`
+      : `<span>${esc(it.label)}</span>`)
+    .join('<span class="sep">›</span>');
+}
+
+// ===================== 首页 =====================
+async function renderHome() {
+  crumbs([{ label: "全部项目" }]);
+  const view = document.getElementById("view");
+  view.innerHTML = `<div class="grid" id="grid"></div>`;
+  const grid = document.getElementById("grid");
+  for (const name of PROJECTS) {
+    // 拉两种类型最新报告，卡片内直接给 API / E2E 双入口
+    const [api, e2e] = await Promise.all([
+      loadJSON(`reports/current/${name}/api/report-summary.json`),
+      loadJSON(`reports/current/${name}/e2e/report-summary.json`),
+    ]);
+    grid.insertAdjacentHTML("beforeend", homeCard(name, api, e2e));
+  }
+}
+
+// 类型摘要行：状态徽章 + 成功率 + 时间，点击直达该类型页
+function typeRow(name, t, d) {
+  const inner = !d
+    ? `<span class="badge warn">暂无</span><span class="meta">${t.label}</span>`
+    : !usable(d)
+    ? `<span class="badge warn">版本待升级</span><span class="meta">${t.label}</span>`
+    : `<span class="badge ${d.status === "passed" ? "pass" : "fail"}">${d.status === "passed" ? "通过" : "失败"} ${(d.successRate * 100).toFixed(0)}%</span>
+       <span class="meta">${t.label} · ${d.passed}/${d.total} · ${fmtTime(d.generatedAt)}</span>`;
+  return `<div class="type-row" onclick="event.stopPropagation();location.hash='/${name}/${t.key}'">${inner}</div>`;
+}
+
+function homeCard(name, api, e2e) {
+  // 卡片头部大数字取 API 最新（无 API 时退 E2E）
+  const head = api && usable(api) ? api : e2e && usable(e2e) ? e2e : null;
+  const headCls = head ? rateClass(head.passed, head.total) : "";
+  const headBlock = !head
+    ? `<div class="meta">暂无报告数据</div>`
+    : `<div class="rate ${headCls}">${(head.successRate * 100).toFixed(1)}%</div>
+       <div class="meta">${head.passed}/${head.total} 用例 · 总耗时 ${fmtMs(head.wallClockMs)}</div>
+       <div class="bar"><div class="${headCls}" style="width:${head.successRate * 100}%"></div></div>`;
+  return `<div class="card" onclick="location.hash='/${name}'">
+    <div class="card-head"><span class="proj">${esc(name)}</span>
+      ${head ? `<span class="badge ${head.status === "passed" ? "pass" : "fail"}">${head.status === "passed" ? "通过" : "失败"}</span>` : ""}</div>
+    ${headBlock}
+    <div class="type-rows">
+      ${typeRow(name, REPORT_TYPES[0], api)}
+      ${typeRow(name, REPORT_TYPES[1], e2e)}
+    </div></div>`;
+}
+
+// ===================== 项目页（选报告类型） =====================
+async function renderProject(proj) {
+  crumbs([{ label: "全部项目", hash: "" }, { label: proj }]);
+  const view = document.getElementById("view");
+  // 各类型最新状态徽章
+  const badges = await Promise.all(REPORT_TYPES.map(async t => {
+    const d = await loadJSON(`reports/current/${proj}/${t.key}/report-summary.json`);
+    if (!usable(d)) return `<span class="badge warn">暂无</span>`;
+    return `<span class="badge ${d.status === "passed" ? "pass" : "fail"}">${d.status === "passed" ? "通过" : "失败"} ${(d.successRate*100).toFixed(0)}%</span>`;
+  }));
+  view.innerHTML = `<div class="tabs">${REPORT_TYPES.map((t, i) =>
+    `<div class="tab" onclick="location.hash='/${proj}/${t.key}'">${t.label}${badges[i]}</div>`
+  ).join("")}</div>`;
+}
+
+// ===================== 报告类型页（最新摘要 + 历史列表） =====================
+async function renderType(proj, type, showAll = false) {
+  const tLabel = REPORT_TYPES.find(t => t.key === type)?.label || type;
+  crumbs([{ label: "全部项目", hash: "" }, { label: proj, hash: proj }, { label: tLabel }]);
+
+  const [current, runs] = await Promise.all([
+    loadJSON(`reports/current/${proj}/${type}/report-summary.json`),
+    listDir(`reports/history/${proj}/${type}/`),
+  ]);
+  const shown = showAll ? runs : runs.slice(0, PAGE_SIZE);
+
+  let html = "";
+  // 最新一次摘要卡
+  if (usable(current)) {
+    const cls = rateClass(current.passed, current.total);
+    html += `<div class="card" style="max-width:520px;margin-bottom:18px" onclick="location.hash='/${proj}/${type}/${shown[0] ?? ""}'">
+      <div class="card-head"><span class="proj">最新一次</span>
+        <span class="badge ${current.status === "passed" ? "pass" : "fail"}">${current.status === "passed" ? "通过" : "失败"}</span></div>
+      <div class="rate ${cls}">${(current.successRate * 100).toFixed(1)}%</div>
+      <div class="meta">${current.passed}/${current.total} 用例 · 总耗时 ${fmtMs(current.wallClockMs)} · ${fmtTime(current.generatedAt)}</div>
+      <div class="bar"><div class="${cls}" style="width:${current.successRate * 100}%"></div></div>
+    </div>`;
+  } else {
+    html += `<div class="empty" style="margin-bottom:18px">${type === "e2e" ? "E2E 报告源暂未接入" : "暂无报告数据"}</div>`;
+  }
+  // 历史列表（最近日期在前）
+  if (shown.length) {
+    html += `<table class="hist"><tr><th>#</th><th>执行时间</th><th>目录</th></tr>` +
+      shown.map((d, i) =>
+        `<tr class="run" onclick="location.hash='/${proj}/${type}/${d}'"><td>${i + 1}</td><td>${fmtDir(d)}</td><td class="meta">${d}</td></tr>`
+      ).join("") + `</table>`;
+    if (!showAll && runs.length > PAGE_SIZE) {
+      html += `<div class="more-wrap"><button class="btn-more" onclick="renderType('${esc(proj)}','${type}', true)">
+        更多历史记录（还有 ${runs.length - PAGE_SIZE} 次）</button></div>`;
+    }
+  } else if (usable(current)) {
+    html += `<div class="empty">暂无历史记录（current 有数据但 history 为空）</div>`;
+  }
+  const view = document.getElementById("view");
+  view.innerHTML = html;
+}
+
+// ===================== 运行详情（某次执行的用例明细） =====================
+async function renderRun(proj, type, ts) {
+  const tLabel = REPORT_TYPES.find(t => t.key === type)?.label || type;
+  crumbs([
+    { label: "全部项目", hash: "" }, { label: proj, hash: proj },
+    { label: tLabel, hash: `${proj}/${type}` }, { label: fmtDir(ts) },
+  ]);
+  const view = document.getElementById("view");
+  const d = await loadJSON(`reports/history/${proj}/${type}/${ts}/report-summary.json`);
+  if (!usable(d)) {
+    view.innerHTML = `<div class="empty">该次运行无解析可用的报告（可能太早，schemaVersion 之前生成）</div>`;
+    return;
+  }
+  const cls = rateClass(d.passed, d.total);
+  let rows = "";
+  for (const e of d.entries) {
+    rows += `<tr><td>${esc(e.group)}</td><td>${esc(e.title)}</td>
+      <td class="${e.ok ? "ok" : "no"}">${e.ok ? "✅" : "❌"}</td>
+      <td>${fmtMs(e.durationMs)}</td>
+      <td class="err">${esc((e.error || "").slice(0, 160))}</td></tr>`;
+  }
+  view.innerHTML = `
+    <div class="detail-head">
+      <span class="badge ${d.status === "passed" ? "pass" : "fail"}">${d.status === "passed" ? "通过" : "失败"}</span>
+      <span class="rate ${cls}">${(d.successRate * 100).toFixed(1)}%</span>
+      <span class="meta">${d.passed}/${d.total} 用例 · 总耗时 ${fmtMs(d.wallClockMs)} · ${fmtTime(d.generatedAt)}</span>
+    </div>
+    <div class="actions">
+      <a class="btn" href="reports/history/${proj}/${type}/${ts}/report-summary.md">Markdown 原件</a>
+      <a class="btn" href="reports/history/${proj}/${type}/${ts}/junit.xml">JUnit XML</a>
+    </div>
+    <table class="cases">
+      <tr><th>分组</th><th>用例</th><th>结果</th><th>耗时</th><th>错误</th></tr>${rows}
+    </table>`;
+}
+
+route();
+</script>
+</body>
+</html>

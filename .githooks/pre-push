@@ -1,0 +1,5 @@
+#!/bin/zsh
+# git pre-push 钩子：push 前自动跑质量门禁（单测+tsc+lint+E2E 全链路）
+# 跳过方式（紧急情况）：git push --no-verify
+echo "pre-push: running quality gate (pnpm gate)…"
+exec zsh scripts/gate.sh

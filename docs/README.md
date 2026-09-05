@@ -20,6 +20,8 @@
 | 14 | [免费试用额度](./14-anonymous-trial.md) | 匿名演示限流（纯 IP 维度，指纹方案已废弃，换 IP 可绕过为已知边界） | ⚠️ No-Go（失败退还 + 无输入限制可单 IP 无限调用，P0-4） |
 | 15 | [专业模板完整度清单](./15-professional-checklist.md) | 工程化/Security/支付/AI/营销/控制台/后台/监控/部署 完整度评估（三态标记） | ⚠️ 多项 No-Go |
 | 16 | [可观测性与告警设计](./16-observability-alerting.md) | 日志采集（op_events）+ 支付渠道告警 + 飞书/企微通知 + Cron 安全 + 飞书多维表格大屏数据源（§八） | ⚠️ 部分待建（outbox + 对账 + 大屏待生产配置） |
+| 17 | [品牌替换清单](./17-rebranding-checklist.md) | 复制独立项目时清除 ShipAny 原作者品牌/外链/示例内容的逐项替换清单（页面 JSON、硬编码组件、定价、env、logo、验收） | ✅ 完成 |
+| 18 | [API 接口自动化测试](./18-api-testing.md) | 全量 40 路由 HTTP 接口测试 + E2E 端到端（本地库）：本地 Supabase 栈隔离环境（api 3100 / e2e 3101）、8 分组 suites、coverage 覆盖守卫、分组成功率报告、内网报告门户、gate.sh + CI 双闸口、多项目复用指南 | ✅ 完成（API 59/59 + E2E 8/8 绿） |
 | B | [项目边界规范](./boundary-spec.md) | 禁止提交/密钥安全/API 越权/代码工程/Git 工作流/No-Go 缺口清单 | ⚠️ 多项 No-Go |
 
 > **整体生产就绪结论**：模板骨架完整度高，但**资金与计费闭环不满足真实收费标准（No-Go）**。

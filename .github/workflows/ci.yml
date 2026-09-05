@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [master, main]
 
+# 同分支连推时取消旧运行，省配额
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test & Build
@@ -42,3 +47,61 @@ jobs:
           NEXT_PUBLIC_WEB_URL: http://localhost:3000
           NEXT_PUBLIC_PROJECT_NAME: my-shipany-template
           AUTH_SECRET: ci-test-secret
+
+  api-test:
+    name: API Tests (all routes)
+    runs-on: ubuntu-latest
+    needs: test # 先过单测/构建，再花时间跑接口全量
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Start local Supabase stack
+        run: |
+          # CI 用一次性的本地栈：迁移由 pnpm migrate 负责（项目唯一迁移口径），
+          # private schema 暴露给 PostgREST（资金 RPC 走 supabase-js .schema("private")）
+          npx supabase init --force
+          npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
+
+      - name: Run API tests (db reset + seed inside)
+        run: pnpm api-test
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-test-reports
+          path: |
+            api-tests/output/report-summary.md
+            api-tests/output/report-summary.json
+            api-tests/output/junit.xml
+          retention-days: 30
+
+      - name: Render summary to Job Summary
+        if: always()
+        run: |
+          if [ -f api-tests/output/report-summary.md ]; then
+            cat api-tests/output/report-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
