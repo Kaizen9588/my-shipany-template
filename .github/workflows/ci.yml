@@ -139,7 +139,7 @@ jobs:
             exit 1
           fi
           for i in 1 2 3; do
-            npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
+            npx --yes supabase@2.116.0 start --ignore-health-check -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
             npx supabase stop --no-backup 2>/dev/null || true
             sleep 90
@@ -153,6 +153,15 @@ jobs:
 
       - name: Run migrations (fresh stack — instrumentation fail-fasts on pending)
         run: pnpm migrate
+
+      - name: Restart postgrest (introspect private schema created by migrations)
+        run: |
+          docker restart supabase_rest_my-shipany-template
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:54321/rest/v1/) || true
+            [ "$code" = "200" ] && { echo "postgrest healthy"; break; }
+            sleep 2
+          done
 
       - name: Run API tests (db reset + seed inside)
         run: pnpm api-test
@@ -274,7 +283,7 @@ jobs:
             exit 1
           fi
           for i in 1 2 3; do
-            npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
+            npx --yes supabase@2.116.0 start --ignore-health-check -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
             npx supabase stop --no-backup 2>/dev/null || true
             sleep 90
@@ -289,6 +298,15 @@ jobs:
         # db-lifecycle（api-test:db-reset）种出；同时把管理员复位到临时密码
         # 未激活态，e2e fixtures 的激活回退分支才能接管（与本地 gate 同款交接）
         run: pnpm api-test:db-reset
+
+      - name: Restart postgrest (introspect private schema created by migrations)
+        run: |
+          docker restart supabase_rest_my-shipany-template
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:54321/rest/v1/) || true
+            [ "$code" = "200" ] && { echo "postgrest healthy"; break; }
+            sleep 2
+          done
 
       - name: Run E2E tests (3101 isolated server)
         run: pnpm e2e
