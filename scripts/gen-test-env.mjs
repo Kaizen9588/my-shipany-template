@@ -60,12 +60,13 @@ const apiTest = {
   NEXT_PUBLIC_LOCALE_DETECTION: "en",
   ADMIN_BOOTSTRAP_EMAIL: "api-admin@test.local",
   ADMIN_BOOTSTRAP_PASSWORD: "ApiTestAdmin123",
-  // webhook 验签本地测试值：测试自己签自己验
-  STRIPE_WEBHOOK_SECRET: `whsec_ci_${hex(16)}`,
-  STRIPE_PRIVATE_KEY: `sk_test_ci_${hex(16)}`,
-  CREEM_WEBHOOK_SECRET: `whsec_ci_${hex(16)}`,
-  METRICS_ACCESS_SECRET: `metrics_ci_${hex(16)}`,
-  CRON_SECRET: `cron_ci_${hex(16)}`,
+  // webhook/密钥测试夹具值：api-tests/suites 里预计算签名硬编码了这些常量，
+  // 必须与 .env.api-test 的本地 dummy 值一致（非真实凭据）
+  STRIPE_WEBHOOK_SECRET: "whsec_api_test_only",
+  STRIPE_PRIVATE_KEY: "sk_test_dummy_local_only",
+  CREEM_WEBHOOK_SECRET: "creem_api_test_secret",
+  METRICS_ACCESS_SECRET: "metrics_api_test_secret",
+  CRON_SECRET: "cron_api_test_secret",
   AUTH_SECRET: hex(32),
 };
 
@@ -74,8 +75,8 @@ const e2eTest = {
   NEXT_PUBLIC_WEB_URL: "http://localhost:3101",
   NEXT_PUBLIC_LOCALE_DETECTION: "false",
   AUTH_SECRET: hex(32),
-  CRON_SECRET: `cron_ci_${hex(16)}`,
-  METRICS_ACCESS_SECRET: `metrics_ci_${hex(16)}`,
+  CRON_SECRET: "cron_api_test_secret",
+  METRICS_ACCESS_SECRET: "metrics_api_test_secret",
   // bootstrap 管理员种子：e2e fixtures 默认值与 pnpm migrate 的
   // bootstrap-admin 建号共用（e2e 无 globalSetup，靠 migrate 建号）
   ADMIN_BOOTSTRAP_EMAIL: "api-admin@test.local",
