@@ -906,3 +906,73 @@ describe("联盟奖励发放闭环静态断言（迁移 0036 + 接线，方案 A
     expect(src).toContain("v_order.user_uuid, 'order_pay',");
   });
 });
+
+describe("用户画像字段静态断言（0037 采集 + 管理端展示）", () => {
+  it("0037 迁移包含四个画像列且不回收权限", () => {
+    const migration = readFileSync(
+      "data/migrations/0037_user_login_env.sql",
+      "utf8"
+    );
+    for (const col of [
+      "signup_device",
+      "last_login_device",
+      "last_login_at",
+      "country",
+    ]) {
+      expect(migration).toContain(`ADD COLUMN IF NOT EXISTS ${col}`);
+    }
+    // users 表权限边界沿用 0024（RLS deny-all + REVOKE），加列不得引入新授权
+    expect(migration).not.toMatch(/GRANT\s/i);
+  });
+
+  it("登录/注册时刻采集设备与国家（jwt account 分支），会话刷新不采集", () => {
+    const authConfig = readFileSync("auth/config.ts", "utf8");
+    // 采集只在 user && account 分支（真正登录）
+    expect(authConfig).toContain("getLoginEnv()");
+    expect(authConfig).toContain("signup_device: loginEnv.device");
+    expect(authConfig).toContain("last_login_at: getIsoTimestr()");
+    // account 分支之后才有采集；else-if（会话刷新）分支无 getLoginEnv
+    const refreshBranch = authConfig.slice(
+      authConfig.indexOf("每次会话校验时刷新关键属性")
+    );
+    expect(refreshBranch).not.toContain("getLoginEnv()");
+  });
+
+  it("saveUser 老用户分支刷新登录画像且失败不阻塞登录", () => {
+    const svc = readFileSync("services/user.ts", "utf8");
+    expect(svc).toContain("updateUserLoginEnv");
+    // 吞错：画像刷新失败只记日志
+    expect(svc).toContain("update user login env failed");
+    // toSafeUser 出口不含画像字段（仅管理员可见）
+    expect(svc).toContain('"signup_device"');
+    expect(svc).toContain('"country"');
+  });
+
+  it("credentials 注册路由（verify-code）直接建号，同步采集注册画像", () => {
+    const route = readFileSync("app/api/verify-code/route.ts", "utf8");
+    expect(route).toContain("getLoginEnv()");
+    expect(route).toContain("signup_device: loginEnv.device");
+    expect(route).toContain("last_login_at: getIsoTimestr()");
+  });
+
+  it("管理端三处展示：用户列表/付费订单/详情页", () => {
+    const usersPage = readFileSync(
+      "app/[locale]/(admin)/admin/users/page.tsx",
+      "utf8"
+    );
+    expect(usersPage).toContain("getLatestPaidOrdersByUserUuids");
+    expect(usersPage).toContain("最近登录设备");
+    const paidOrdersPage = readFileSync(
+      "app/[locale]/(admin)/admin/paid-orders/page.tsx",
+      "utf8"
+    );
+    expect(paidOrdersPage).toContain("支付成功时间");
+    expect(paidOrdersPage).toContain("用户注册时间");
+    expect(paidOrdersPage).toContain("getUsersByUuids");
+    const detailPage = readFileSync(
+      "app/[locale]/(admin)/admin/users/[uuid]/page.tsx",
+      "utf8"
+    );
+    expect(detailPage).toContain("最近登录设备");
+  });
+});

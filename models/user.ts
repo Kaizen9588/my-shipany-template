@@ -200,3 +200,30 @@ export async function updateUserByAdmin(
     throw error;
   }
 }
+
+/** 0037：登录时刻刷新最近登录设备/时间与国家（注册字段不覆盖；调用方吞错） */
+export async function updateUserLoginEnv(
+  user_uuid: string,
+  fields: {
+    last_login_device?: string;
+    last_login_at?: string;
+    country?: string;
+  }
+): Promise<void> {
+  const payload = Object.fromEntries(
+    Object.entries({ ...fields, updated_at: getIsoTimestr() }).filter(
+      ([, v]) => v !== undefined
+    )
+  );
+  if (Object.keys(payload).length <= 1) {
+    return;
+  }
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from("users")
+    .update(payload)
+    .eq("uuid", user_uuid);
+  if (error) {
+    throw error;
+  }
+}

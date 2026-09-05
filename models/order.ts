@@ -259,3 +259,34 @@ export async function countOrders(status?: string): Promise<number> {
   }
   return count || 0;
 }
+
+/** 0037：后台用户列表「最近支付」列——一批用户各自最近一笔已支付订单 */
+export async function getLatestPaidOrdersByUserUuids(
+  user_uuids: string[]
+): Promise<Order[]> {
+  if (!user_uuids.length) {
+    return [];
+  }
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .select("order_no,user_uuid,amount,product_name,paid_at,created_at")
+    .eq("status", "paid")
+    .in("user_uuid", user_uuids)
+    .order("paid_at", { ascending: false, nullsFirst: false })
+    .limit(user_uuids.length * 20);
+
+  if (error) {
+    return [];
+  }
+  // 已按 paid_at 倒序，每用户取第一笔
+  const seen = new Set<string>();
+  const latest: Order[] = [];
+  for (const row of data as Order[]) {
+    if (row.user_uuid && !seen.has(row.user_uuid)) {
+      seen.add(row.user_uuid);
+      latest.push(row);
+    }
+  }
+  return latest;
+}

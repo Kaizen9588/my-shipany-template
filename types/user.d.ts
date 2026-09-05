@@ -19,6 +19,14 @@ export interface User {
   status?: string;
   /** 默认管理员首次登录强制改密（0012_default_admin.sql） */
   must_change_password?: boolean;
+  /** 0037 用户画像：注册时设备（解析后「类型 · OS」，不存原始 UA） */
+  signup_device?: string;
+  /** 0037 用户画像：最近登录设备（登录时刻刷新） */
+  last_login_device?: string;
+  /** 0037 用户画像：最近登录时间（登录时刻刷新） */
+  last_login_at?: string;
+  /** 0037 用户画像：国家地区（ISO 3166-1 alpha-2，仅信任平台覆写头） */
+  country?: string;
   credits?: UserCredits;
   invite_code?: string;
   invited_by?: string;

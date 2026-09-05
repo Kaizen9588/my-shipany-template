@@ -11,6 +11,7 @@ import { getUuid } from "@/lib/hash";
 import { hashPassword, validatePasswordStrength } from "@/lib/password";
 import { getSupabaseClient } from "@/models/db";
 import { getClientIp } from "@/lib/ip";
+import { getLoginEnv } from "@/lib/user-env";
 import { rateLimit, rateLimitByIp } from "@/lib/ratelimit";
 
 import { User } from "@/types/user";
@@ -93,6 +94,9 @@ export async function POST(req: Request) {
       }
 
       // 新用户：写入 users + 赠新手积分（验证后才赠送，docs/14 §3.1）
+      // 0037 用户画像：注册路由直接建号（不经 jwt 回调 insert 分支），
+      // 这里同步采集注册设备与国家；credentials 登录时会经 saveUser 刷新登录字段
+      const loginEnv = await getLoginEnv();
       const user: User = {
         uuid: getUuid(),
         email: emailLower,
@@ -103,6 +107,10 @@ export async function POST(req: Request) {
         created_at: getIsoTimestr(),
         password_hash: passwordHash,
         password_updated_at: getIsoTimestr(),
+        signup_device: loginEnv.device,
+        country: loginEnv.country,
+        last_login_device: loginEnv.device,
+        last_login_at: getIsoTimestr(),
       };
       await insertUser(user);
 

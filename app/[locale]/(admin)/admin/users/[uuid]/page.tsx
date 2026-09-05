@@ -118,6 +118,29 @@ export default async function UserDetailPage({
           <div>状态：{currentUser.status === "banned" ? "已封禁" : "正常"}</div>
           <div>注册：{moment(currentUser.created_at).format("YYYY-MM-DD")}</div>
         </div>
+        {/* 0037 用户画像：设备与国家在登录/注册时刻采集（解析后短语，不存原始 UA） */}
+        <div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 text-sm text-muted-foreground md:grid-cols-4">
+          <div>
+            国家地区：
+            {currentUser.country
+              ? `${currentUser.country} · ${
+                  new Intl.DisplayNames(["zh"], { type: "region" }).of(
+                    currentUser.country
+                  ) || currentUser.country
+                }`
+              : "未知"}
+          </div>
+          <div>注册设备：{currentUser.signup_device || "未知"}</div>
+          <div>最近登录设备：{currentUser.last_login_device || "未知"}</div>
+          <div>
+            最近登录：
+            {currentUser.last_login_at
+              ? moment(currentUser.last_login_at).format("YYYY-MM-DD HH:mm")
+              : "—"}
+          </div>
+          <div>注册 IP：{currentUser.signin_ip || "未知"}</div>
+          <div>登录方式：{currentUser.signin_provider || "未知"}</div>
+        </div>
       </div>
 
       <div className="rounded-lg border p-4">
@@ -208,11 +231,11 @@ export default async function UserDetailPage({
       </div>
 
       <div className="rounded-lg border p-4">
-        <h4 className="mb-3 font-medium">Recent Credit Transactions</h4>
+        <h4 className="mb-3 font-medium">近期积分流水</h4>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b text-left text-muted-foreground">
-              <th className="py-2">Trans No</th>
+              <th className="py-2">流水号</th>
               <th>Type</th>
               <th>Credits</th>
               <th>Time</th>

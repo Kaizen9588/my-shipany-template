@@ -17,6 +17,7 @@ import {
 } from "@/lib/login-guard";
 import { verifyPassword } from "@/lib/password";
 import { logger } from "@/lib/logger";
+import { getLoginEnv } from "@/lib/user-env";
 
 /** 日志脱敏：只保留首字符，避免明文邮箱进日志（复审 2） */
 function maskEmail(email: string): string {
@@ -245,6 +246,9 @@ export const authOptions: NextAuthConfig = {
       // Persist the OAuth access_token and or the user id to the token right after signin
       try {
         if (user && user.email && account) {
+          // 0037 用户画像：登录/注册时刻采集设备与国家（account 仅在真正登录时存在，
+          // 会话刷新不进此分支；注册字段随首次 insert 落库，老用户由 saveUser 刷新登录字段）
+          const loginEnv = await getLoginEnv();
           const dbUser: User = {
             uuid: getUuid(),
             email: user.email,
@@ -255,6 +259,10 @@ export const authOptions: NextAuthConfig = {
             signin_openid: account.providerAccountId,
             created_at: getIsoTimestr(),
             signin_ip: await getClientIp(),
+            signup_device: loginEnv.device,
+            country: loginEnv.country,
+            last_login_device: loginEnv.device,
+            last_login_at: getIsoTimestr(),
           };
 
           try {

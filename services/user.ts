@@ -1,5 +1,10 @@
 import { CreditsAmount, CreditsTransType } from "./credit";
-import { findUserByEmail, findUserByUuid, insertUser } from "@/models/user";
+import {
+  findUserByEmail,
+  findUserByUuid,
+  insertUser,
+  updateUserLoginEnv,
+} from "@/models/user";
 
 import { User } from "@/types/user";
 import { auth } from "@/auth";
@@ -80,6 +85,17 @@ export async function saveUser(user: User) {
       user.id = existUser.id;
       user.uuid = existUser.uuid;
       user.created_at = existUser.created_at;
+      // 0037：每次登录刷新最近登录设备/时间与国家（saveUser 仅在 jwt 登录分支被调，
+      // 会话刷新不走这里；画像字段失败不阻塞登录）
+      try {
+        await updateUserLoginEnv(user.uuid || "", {
+          last_login_device: user.last_login_device,
+          last_login_at: user.last_login_at,
+          country: user.country,
+        });
+      } catch (envE) {
+        console.log("update user login env failed: ", envE);
+      }
     }
 
     return user;
@@ -170,7 +186,15 @@ export async function getUserInfo() {
  */
 export function toSafeUser(user: User): Omit<
   User,
-  "password_hash" | "password_updated_at" | "signin_ip" | "signin_openid" | "status"
+  | "password_hash"
+  | "password_updated_at"
+  | "signin_ip"
+  | "signin_openid"
+  | "status"
+  | "signup_device"
+  | "last_login_device"
+  | "last_login_at"
+  | "country"
 > {
   const {
     password_hash: _ph,
@@ -178,6 +202,10 @@ export function toSafeUser(user: User): Omit<
     signin_ip: _si,
     signin_openid: _so,
     status: _st,
+    signup_device: _sd,
+    last_login_device: _ld,
+    last_login_at: _ll,
+    country: _co,
     ...safe
   } = user;
   return safe;
