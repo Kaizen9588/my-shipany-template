@@ -4,6 +4,14 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# 门禁全链路只访问本地资源（本地 Supabase 栈 / 3100·3101 dev server / 内网门户）。
+# pre-push 钩子继承 git push 的代理环境变量时，dev server 首次编译的外呼
+# （next/font 等）可能被代理拖住导致 webServer URL 探测超时（Ready 但探测不通）。
+# 这里显式清掉代理变量并对 localhost 声明直连，保证门禁与代理环境解耦。
+unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY 2>/dev/null
+export NO_PROXY="localhost,127.0.0.1"
+export no_proxy="localhost,127.0.0.1"
+
 FAIL=0
 
 step() { echo "\n━━━ $1 ━━━"; }
