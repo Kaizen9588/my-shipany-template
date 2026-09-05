@@ -78,6 +78,12 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      - name: Cache supabase images
+        uses: actions/cache@v4
+        with:
+          path: /tmp/supabase-images
+          key: supabase-images-2.116.0-v1
+
       - name: Start local Supabase stack
         run: |
           # CI 用一次性的本地栈：迁移由 pnpm migrate 负责（项目唯一迁移口径），
@@ -90,24 +96,24 @@ jobs:
           # 退回 ECR，本地 retag 成 CLI 期望的 ECR 名（compose pull policy=missing
           # 发现本地已有镜像即跳过拉取）
           IMAGES="gotrue:v2.196.0 kong:2.8.1 postgrest:v16.1 postgres:17.6.1.165 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 realtime:v2.129.3"
+          mkdir -p /tmp/supabase-images
           for img in $IMAGES; do
             ecr="public.ecr.aws/supabase/$img"
             docker image inspect "$ecr" > /dev/null 2>&1 && continue
-            pulled=false
-            for src in "docker.io/supabase/$img" "$ecr"; do
-              for try in 1 2 3; do
-                if docker pull "$src"; then
-                  [ "$src" != "$ecr" ] && docker tag "$src" "$ecr"
-                  pulled=true
-                  break 2
-                fi
-                sleep 10
-              done
+            # actions/cache 里的 tar 优先
+            tar="/tmp/supabase-images/$(basename "$img" | tr ':.' '__').tar"
+            if [ -f "$tar" ]; then docker load -i "$tar" && continue; fi
+            ok=false
+            for backoff in 10 30 60 120 180; do
+              if docker pull "$ecr"; then ok=true; break; fi
+              echo "pull $ecr throttled, backoff ${backoff}s"
+              sleep $backoff
             done
-            [ "$pulled" = true ] || { echo "all registries failed for $img"; exit 1; }
+            [ "$ok" = true ] || { echo "all pull attempts failed for $img"; exit 1; }
+            docker save "$ecr" -o "$tar"
           done
           for i in 1 2 3; do
-            npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
+            npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
             npx supabase stop --no-backup 2>/dev/null || true
             sleep 90
@@ -174,6 +180,12 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      - name: Cache supabase images
+        uses: actions/cache@v4
+        with:
+          path: /tmp/supabase-images
+          key: supabase-images-2.116.0-v1
+
       - name: Start local Supabase stack
         # 与 api-test 同款一次性本地栈；迁移 0037 等由 pnpm e2e 的 webServer
         # 启动路径（lib/migrate）按 schema_migrations 增量应用
@@ -186,24 +198,24 @@ jobs:
           # 退回 ECR，本地 retag 成 CLI 期望的 ECR 名（compose pull policy=missing
           # 发现本地已有镜像即跳过拉取）
           IMAGES="gotrue:v2.196.0 kong:2.8.1 postgrest:v16.1 postgres:17.6.1.165 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 realtime:v2.129.3"
+          mkdir -p /tmp/supabase-images
           for img in $IMAGES; do
             ecr="public.ecr.aws/supabase/$img"
             docker image inspect "$ecr" > /dev/null 2>&1 && continue
-            pulled=false
-            for src in "docker.io/supabase/$img" "$ecr"; do
-              for try in 1 2 3; do
-                if docker pull "$src"; then
-                  [ "$src" != "$ecr" ] && docker tag "$src" "$ecr"
-                  pulled=true
-                  break 2
-                fi
-                sleep 10
-              done
+            # actions/cache 里的 tar 优先
+            tar="/tmp/supabase-images/$(basename "$img" | tr ':.' '__').tar"
+            if [ -f "$tar" ]; then docker load -i "$tar" && continue; fi
+            ok=false
+            for backoff in 10 30 60 120 180; do
+              if docker pull "$ecr"; then ok=true; break; fi
+              echo "pull $ecr throttled, backoff ${backoff}s"
+              sleep $backoff
             done
-            [ "$pulled" = true ] || { echo "all registries failed for $img"; exit 1; }
+            [ "$ok" = true ] || { echo "all pull attempts failed for $img"; exit 1; }
+            docker save "$ecr" -o "$tar"
           done
           for i in 1 2 3; do
-            npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
+            npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
             npx supabase stop --no-backup 2>/dev/null || true
             sleep 90

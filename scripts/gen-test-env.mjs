@@ -16,7 +16,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 const target = process.argv[2] || "all";
 
 function statusMap() {
-  const out = execSync("npx supabase status -o env", {
+  const out = execSync("npx --yes supabase@2.116.0 status -o env", {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
