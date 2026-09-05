@@ -76,6 +76,10 @@ const e2eTest = {
   AUTH_SECRET: hex(32),
   CRON_SECRET: `cron_ci_${hex(16)}`,
   METRICS_ACCESS_SECRET: `metrics_ci_${hex(16)}`,
+  // bootstrap 管理员种子：e2e fixtures 默认值与 pnpm migrate 的
+  // bootstrap-admin 建号共用（e2e 无 globalSetup，靠 migrate 建号）
+  ADMIN_BOOTSTRAP_EMAIL: "api-admin@test.local",
+  ADMIN_BOOTSTRAP_PASSWORD: "ApiTestAdmin123",
 };
 
 function render(vars) {

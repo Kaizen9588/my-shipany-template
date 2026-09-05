@@ -113,10 +113,11 @@ test.describe("My Invites", () => {
   test("邀请码卡片渲染，设置邀请码弹窗可开关", async ({ signedInPage: page }) => {
     await page.goto("/my-invites");
     await dismissCookieBanner(page);
-    await expect(page.getByText(/Copy Invite Link/i).first()).toBeVisible();
 
     // 铅笔图标（RiEditLine，text-primary cursor-pointer svg）打开设置弹窗：
-    // Input 预填当前邀请码 → Save → 成功 toast + 弹窗关闭
+    // Input 预填当前邀请码 → Save → 成功 toast + 弹窗关闭。
+    // 先设码再断言卡片：空库首跑（invite_code 尚未设置）时 Copy Invite Link
+    // 不渲染，顺序依赖历史数据会在 db-reset 后挂掉
     const editIcon = page.locator("svg.cursor-pointer.text-primary").first();
     await expect(editIcon).toBeAttached();
     await editIcon.click();
@@ -126,6 +127,9 @@ test.describe("My Invites", () => {
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(page.getByText("set invite code success")).toBeVisible({ timeout: 10_000 });
     await expect(dialog).toBeHidden({ timeout: 10_000 });
+
+    await page.reload();
+    await expect(page.getByText(/Copy Invite Link/i).first()).toBeVisible();
   });
 });
 
@@ -177,7 +181,10 @@ test.describe("只读页", () => {
   test("My Orders 渲染标题与外链按钮", async ({ signedInPage: page }) => {
     await page.goto("/my-orders");
     await expect(page.getByRole("heading", { name: "My Orders" })).toBeVisible();
-    await expect(page.getByText("No orders found").or(page.locator("table"))).toBeVisible();
+    // 空库时 table 内嵌 "No orders found" 与空态段落并存 → .first() 防双匹配
+    await expect(
+      page.getByText("No orders found").or(page.locator("table")).first()
+    ).toBeVisible();
   });
 
   test("Subscription 空态文案", async ({ signedInPage: page }) => {

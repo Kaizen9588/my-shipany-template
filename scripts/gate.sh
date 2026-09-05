@@ -36,6 +36,17 @@ else
   echo "  完整门禁请先: supabase start -x studio"
 fi
 
+# 4.5 管理员状态复位（api-test → e2e 交接）：
+#     api-test 的 activatedAdmin 会把管理员密码激活为 ApiAdminNew123456，
+#     而 e2e fixtures 只认自己激活的 ApiTestAdmin123New / 临时密码两段——
+#     中间跑一次 db-reset（truncate + seed + migrate → 管理员回到临时密码 +
+#     未激活态），e2e 的激活回退分支才能确定性接管，否则 13 条 admin 用例
+#     因双密码不中 + 登录失败锁连锁挂掉
+if [ $API_TESTS_RAN -eq 1 ]; then
+  step "admin state reset (api-test → e2e handoff)"
+  pnpm api-test:db-reset || FAIL=1
+fi
+
 # 5. E2E（独立 3101 server + .env.e2e-test 本地 Supabase 栈，与 dev/云端隔离）
 step "e2e (playwright, local db)"
 npx playwright test || FAIL=1

@@ -117,7 +117,9 @@ export async function seed(): Promise<void> {
         [
           "seed-user-0000-4000-8000-0000000000aa",
           SEED_USERS.user.email,
-          "seed-user",
+          // 昵称前缀 seed-nick 是 e2e 头像断言（img[alt^="seed-nick"]）的不变量：
+          // 空库首跑（db-reset 后）也必须成立，settings 用例只会在此基础上再改
+          "seed-nick-e2e",
           "$2b$12$BI7ziEJE2LAhOSXm/ERW0eiBNxVhATXXRWAaL/8qAPg6Vy/sh0c6.", // SeedUser123456
           SEED_USERS.user.role,
         ]
