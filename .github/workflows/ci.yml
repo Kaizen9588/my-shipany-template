@@ -83,6 +83,10 @@ jobs:
           # CI 用一次性的本地栈：迁移由 pnpm migrate 负责（项目唯一迁移口径），
           # private schema 暴露给 PostgREST（资金 RPC 走 supabase-js .schema("private")）
           npx supabase init --force
+          # PostgREST 暴露 private schema（资金/审批 RPC 走 supabase-js .schema("private")，
+          # 等价于本地 config.toml 的 schemas 配置 / 云端 Dashboard 的 Exposed schemas 手动步骤）
+          sed -i 's/schemas = \["public", "graphql_public"\]/schemas = ["public", "private", "graphql_public"]/' supabase/config.toml
+          grep -q '"public", "private"' supabase/config.toml || { echo "private schema patch failed"; exit 1; }
           npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
 
       - name: Generate test env files
@@ -149,6 +153,10 @@ jobs:
         # 启动路径（lib/migrate）按 schema_migrations 增量应用
         run: |
           npx supabase init --force
+          # PostgREST 暴露 private schema（资金/审批 RPC 走 supabase-js .schema("private")，
+          # 等价于本地 config.toml 的 schemas 配置 / 云端 Dashboard 的 Exposed schemas 手动步骤）
+          sed -i 's/schemas = \["public", "graphql_public"\]/schemas = ["public", "private", "graphql_public"]/' supabase/config.toml
+          grep -q '"public", "private"' supabase/config.toml || { echo "private schema patch failed"; exit 1; }
           npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
 
       - name: Generate test env files (both — db-reset needs .env.api-test)
