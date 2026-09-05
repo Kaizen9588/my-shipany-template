@@ -65,11 +65,22 @@ api-tests/
 ## 三、流水线卡点
 
 - **本地（pre-push，`.githooks/` → `scripts/gate.sh`）**：tsc → 单测 → lint →
-  API 全量 → E2E。supabase 栈未起时 API 组自动跳过并提示（不会卡死 push）。
-- **CI（`.github/workflows/ci.yml`）**：`api-test` job 在 `test`（tsc/单测/lint/build）
-  之后跑——起一次性 Supabase 栈 → `pnpm api-test` → 上传报告 artifact（30 天）→
-  渲染 Job Summary。**在 GitHub 仓库设置里把 `API Tests (all routes)` 设为
-  required check，即实现「100% 通过才能 merge」**。
+  API 全量 → **db-reset（管理员状态复位，见下）** → E2E。supabase 栈未起时
+  API 组自动跳过并提示（不会卡死 push）。门禁只访问本地资源，入口处显式
+  清代理变量（钩子继承 `git push` 的代理时 dev server 编译外呼可能拖死
+  webServer 探测，2026-09-05 实测两连挂后修复）。
+  - **db-reset 交接的原因**：api-tests 的 `activatedAdmin` 把管理员密码激活为
+    `ApiAdminNew123456`，e2e fixtures 只认自己激活的 `ApiTestAdmin123New`/临时
+    密码两段——不复位则 e2e admin 组 13 条用例双密码不中 + 登录失败锁连锁挂。
+    中间跑 `pnpm api-test:db-reset` 让管理员回到临时密码 + 未激活态。
+- **CI（`.github/workflows/ci.yml`）**：`api-test` 与 `e2e-test` 两个 job 在
+  `test`（tsc/单测/lint/build）之后跑——起一次性 Supabase 栈 →
+  `scripts/gen-test-env.mjs` 运行时生成测试 env（env 文件不入库；supabase
+  本地栈公开固定 key 从 `supabase status -o env` 取回映射，其余凭据按次随机）
+  → api 组跑测试；e2e 组先 `pnpm migrate`（无 globalSetup，webServer 起来前
+  必须建表 + bootstrap 管理员）→ `pnpm e2e` → 上传报告 artifact（30 天）→
+  渲染 Job Summary。**在 GitHub 仓库设置里把两个测试 job 设为 required
+  check，即实现「100% 通过才能 merge」**。
 
 ## 四、本地栈与云端 Supabase 的已知差异
 
@@ -162,7 +173,7 @@ pnpm e2e:server   # 单独起 E2E 专用 dev server（不跑用例）
   （生产不可用，E2E 只在 dev/测试环境跑）。
 - gate.sh 在 E2E 跑过后自动以 `TEST_REPORT_TYPE=e2e` 推报告到内网门户。
 
-### 7.1 用例覆盖（2026-09-04 全量扩容后：60 用例 / 6 组）
+### 7.1 用例覆盖（2026-09-05 空库冷启动全绿：61 用例 / 6 组，无跳过）
 
 | 组（文件） | 数量 | 覆盖点 |
 |---|---|---|
