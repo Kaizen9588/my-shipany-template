@@ -612,6 +612,33 @@ boundary-spec（N-1/N-3/N-15 三行自相矛盾 + N-8 过时口径）、docs/15�
 
 **验证**：`tsc --noEmit` 通过；全量 Vitest 61 文件 397 用例通过；ESLint 0 errors。
 
+### 1.38 第三十批：CI 三 job 首次全绿（api + e2e 进 CI，2026-09-05）
+
+CI 在全新 GitHub runner 上跑通 api-test + e2e-test 两个 job，逐层排掉六类问题：
+
+1. **pending 迁移 fail-fast**：webServer 先于 globalSetup 启动，instrumentation
+   对 pending 迁移直接崩 → 两个 job 都显式 `pnpm migrate`（e2e 用
+   `pnpm api-test:db-reset` 一并种 seed-user/bootstrap 管理员）。
+2. **private schema 未暴露**：`.gitignore` 裸写 `supabase` 把 config.toml 挡在
+   仓库外，CI 无此文件 → CLI 用默认配置（不暴露 private）→ 资金/审批 RPC 全部
+   Invalid schema。config.toml（无真实密钥）按官方约定入库。
+3. **ECR Public 突发节流**：supabase 镜像已全面迁 ECR（docker.io 同名 tag 大多
+   404/denied），13 路并行拉取持续 `toomanyrequests: Rate exceeded` → 分源预拉
+   （大镜像 docker.io 有同名 tag；postgrest/kong/mailpit 三个小镜像走 ECR 带退避）
+   + docker save 进 actions/cache（滚动 run_id key + if:always() 保存，部分进度
+   跨 run 攒齐）。
+4. **PostgREST 503**：config 的 private schema 在 CI 首启时不存在 → 启动内省失败
+   → `--ignore-health-check` 起栈，迁移建出 private 后 docker restart rest 容器
+   重新内省，探活 200 再跑测试。
+5. **测试夹具密钥**：api-tests 预计算签名硬编码 dummy 常量（whsec_api_test_only
+   等）→ gen-test-env 从随机生成改为同名固定值（测试夹具非真实凭据）。
+6. **supabase CLI 钉版本**：2.116.0（镜像 tag 与 CLI 绑定），本地 2.114 行为差异
+   （容器改名 mailpit/logflare/supavisor）一并消除。
+
+另：pre-push 钩子继承 git push 的代理环境变量导致 webServer 探测超时（Ready 但
+180s 不通）——gate.sh 入口显式清代理 + NO_PROXY=localhost（2026-09-05 实测两连挂
+后修复）。最终：GitHub Actions 三 job 全绿（Test & Build / API Tests / E2E Tests）。
+
 ---
 
 ## 2. 已具备的模块能力（已有实现，不等于生产就绪）
