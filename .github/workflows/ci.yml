@@ -90,6 +90,9 @@ jobs:
         # 固定 key 并映射，其余凭据按次随机生成（测试自签自验）
         run: node scripts/gen-test-env.mjs api
 
+      - name: Run migrations (fresh stack: webServer instrumentation fail-fasts on pending)
+        run: pnpm migrate
+
       - name: Run API tests (db reset + seed inside)
         run: pnpm api-test
 
@@ -148,13 +151,14 @@ jobs:
           npx supabase init --force
           npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
 
-      - name: Generate test env files
-        run: node scripts/gen-test-env.mjs e2e
+      - name: Generate test env files (both: db-reset seeds need .env.api-test)
+        run: node scripts/gen-test-env.mjs all
 
-      - name: Run migrations (fresh stack needs tables before webServer starts)
-        # e2e 无 globalSetup（api-test 的迁移在 db-lifecycle 里跑，e2e 没有对应物）；
-        # instrumentation 只做 verifyMigrations fail-fast，不执行 DDL
-        run: pnpm migrate
+      - name: Reset db (migrate + seed seed-user/bootstrap admin + admin state reset)
+        # e2e 无 globalSetup——全新栈上 seed-user / bootstrap 管理员只能由
+        # db-lifecycle（api-test:db-reset）种出；同时把管理员复位到临时密码
+        # 未激活态，e2e fixtures 的激活回退分支才能接管（与本地 gate 同款交接）
+        run: pnpm api-test:db-reset
 
       - name: Run E2E tests (3101 isolated server)
         run: pnpm e2e
