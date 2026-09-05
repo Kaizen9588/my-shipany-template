@@ -82,11 +82,9 @@ jobs:
         run: |
           # CI 用一次性的本地栈：迁移由 pnpm migrate 负责（项目唯一迁移口径），
           # private schema 暴露给 PostgREST（资金 RPC 走 supabase-js .schema("private")）
-          npx supabase init --force
-          # PostgREST 暴露 private schema（资金/审批 RPC 走 supabase-js .schema("private")，
-          # 等价于本地 config.toml 的 schemas 配置 / 云端 Dashboard 的 Exposed schemas 手动步骤）
-          sed -i 's/schemas = \["public", "graphql_public"\]/schemas = ["public", "private", "graphql_public"]/' supabase/config.toml
-          grep -q '"public", "private"' supabase/config.toml || { echo "private schema patch failed"; exit 1; }
+          # 不跑 supabase init：仓库已提交 supabase/config.toml（含 private schema
+          # 暴露——资金/审批 RPC 走 .schema("private")），init --force 会用默认
+          # 配置覆盖掉它（前几轮 CI 红的根因）
           npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
 
       - name: Generate test env files
@@ -152,11 +150,9 @@ jobs:
         # 与 api-test 同款一次性本地栈；迁移 0037 等由 pnpm e2e 的 webServer
         # 启动路径（lib/migrate）按 schema_migrations 增量应用
         run: |
-          npx supabase init --force
-          # PostgREST 暴露 private schema（资金/审批 RPC 走 supabase-js .schema("private")，
-          # 等价于本地 config.toml 的 schemas 配置 / 云端 Dashboard 的 Exposed schemas 手动步骤）
-          sed -i 's/schemas = \["public", "graphql_public"\]/schemas = ["public", "private", "graphql_public"]/' supabase/config.toml
-          grep -q '"public", "private"' supabase/config.toml || { echo "private schema patch failed"; exit 1; }
+          # 不跑 supabase init：仓库已提交 supabase/config.toml（含 private schema
+          # 暴露——资金/审批 RPC 走 .schema("private")），init --force 会用默认
+          # 配置覆盖掉它（前几轮 CI 红的根因）
           npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
 
       - name: Generate test env files (both — db-reset needs .env.api-test)
