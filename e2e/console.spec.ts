@@ -129,7 +129,8 @@ test.describe("My Invites", () => {
     await expect(dialog).toBeHidden({ timeout: 10_000 });
 
     await page.reload();
-    await expect(page.getByText(/Copy Invite Link/i).first()).toBeVisible();
+    // CI 冷编译 + 数据往返可能超过默认 10s
+    await expect(page.getByText(/Copy Invite Link/i).first()).toBeVisible({ timeout: 30_000 });
   });
 });
 
