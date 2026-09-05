@@ -85,7 +85,14 @@ jobs:
           # 不跑 supabase init：仓库已提交 supabase/config.toml（含 private schema
           # 暴露——资金/审批 RPC 走 .schema("private")），init --force 会用默认
           # 配置覆盖掉它（前几轮 CI 红的根因）
-          npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
+          # Docker Hub 匿名拉取限流（toomanyrequests）：重试换 runner IP + 退避
+          for i in 1 2 3; do
+            npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
+            echo "supabase start attempt $i failed, retrying in 60s…"
+            npx supabase stop --no-backup 2>/dev/null || true
+            sleep 60
+            [ $i -eq 3 ] && exit 1
+          done
 
       - name: Generate test env files
         # 测试 env 文件不入库（gitignore）；CI 从 supabase status 取回本地栈公开
@@ -119,7 +126,8 @@ jobs:
   e2e-test:
     name: E2E Tests (all suites)
     runs-on: ubuntu-latest
-    needs: test # 先过单测/构建，再花时间跑端到端全量
+    # 串行于 api-test：两个 job 并发起栈时 Docker Hub 拉镜像容易撞限流
+    needs: [test, api-test]
     steps:
       - uses: actions/checkout@v4
 
@@ -153,7 +161,14 @@ jobs:
           # 不跑 supabase init：仓库已提交 supabase/config.toml（含 private schema
           # 暴露——资金/审批 RPC 走 .schema("private")），init --force 会用默认
           # 配置覆盖掉它（前几轮 CI 红的根因）
-          npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
+          # Docker Hub 匿名拉取限流（toomanyrequests）：重试换 runner IP + 退避
+          for i in 1 2 3; do
+            npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
+            echo "supabase start attempt $i failed, retrying in 60s…"
+            npx supabase stop --no-backup 2>/dev/null || true
+            sleep 60
+            [ $i -eq 3 ] && exit 1
+          done
 
       - name: Generate test env files (both — db-reset needs .env.api-test)
         run: node scripts/gen-test-env.mjs all
