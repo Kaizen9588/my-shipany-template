@@ -90,7 +90,7 @@ jobs:
         # 固定 key 并映射，其余凭据按次随机生成（测试自签自验）
         run: node scripts/gen-test-env.mjs api
 
-      - name: Run migrations (fresh stack: webServer instrumentation fail-fasts on pending)
+      - name: Run migrations (fresh stack — instrumentation fail-fasts on pending)
         run: pnpm migrate
 
       - name: Run API tests (db reset + seed inside)
@@ -151,7 +151,7 @@ jobs:
           npx supabase init --force
           npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
 
-      - name: Generate test env files (both: db-reset seeds need .env.api-test)
+      - name: Generate test env files (both — db-reset needs .env.api-test)
         run: node scripts/gen-test-env.mjs all
 
       - name: Reset db (migrate + seed seed-user/bootstrap admin + admin state reset)
