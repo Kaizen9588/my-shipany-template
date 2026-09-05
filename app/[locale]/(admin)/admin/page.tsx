@@ -5,17 +5,19 @@ import {
   SimpleLineChart,
   StatCard,
 } from "@/components/dashboard/stats/charts";
+import { getTranslations } from "next-intl/server";
 
 /**
  * 后台数据看板（6.6）
  * 指标 + 30 天趋势图（用户增长 / 收入 / 积分消耗）
  */
 export default async function AdminDashboard() {
+  const t = await getTranslations("console");
   const stats = await getAdminStats();
 
   return (
     <div className="space-y-6">
-      <h3 className="text-lg font-medium">Dashboard</h3>
+      <h3 className="text-lg font-medium">{t("dashboard")}</h3>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
         <StatCard title="总用户数" value={stats.total_users} />

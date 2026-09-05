@@ -14,7 +14,8 @@ export default async function DashboardLayout({
   return (
     <SidebarProvider>
       {sidebar && <Sidebar sidebar={sidebar} />}
-      <SidebarInset>{children}</SidebarInset>
+      {/* p-6：内容区与侧栏/边缘留出间隔，避免正文紧贴菜单栏 */}
+      <SidebarInset className="p-6">{children}</SidebarInset>
     </SidebarProvider>
   );
 }

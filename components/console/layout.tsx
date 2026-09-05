@@ -14,7 +14,7 @@ export default async function ConsoleLayout({
       <div className="w-full space-y-6 p-4 pb-16 block">
         <div className="flex flex-col space-y-8 lg:flex-row lg:space-x-12 lg:space-y-0">
           {sidebar?.nav?.items && (
-            <aside className="-mx-4 lg:w-1/5">
+            <aside className="lg:w-1/5">
               <SidebarNav items={sidebar.nav?.items} />
             </aside>
           )}

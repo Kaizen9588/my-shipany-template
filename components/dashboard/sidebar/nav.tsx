@@ -21,6 +21,7 @@ import { ChevronRight } from "lucide-react";
 import Icon from "@/components/icon";
 import { Link } from "@/i18n/navigation";
 import { usePathname } from "next/navigation";
+import PendingBar from "@/components/blocks/pending-bar";
 
 export default function ({ nav }: { nav: NavType }) {
   const pathname = usePathname();
@@ -63,6 +64,8 @@ export default function ({ nav }: { nav: NavType }) {
                               <Icon name={subItem.icon} className="text-xl" />
                             )}
                             <span>{subItem.title}</span>
+                            {/* 点击瞬间的加载反馈（useLinkStatus，见组件注释） */}
+                            <PendingBar />
                           </Link>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
@@ -81,6 +84,8 @@ export default function ({ nav }: { nav: NavType }) {
                 <Link href={item.url || ""} className="flex items-center gap-1">
                   {item.icon && <Icon name={item.icon} className="text-xl" />}
                   <span>{item.title}</span>
+                  {/* 点击瞬间的加载反馈（useLinkStatus，见组件注释） */}
+                  <PendingBar />
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

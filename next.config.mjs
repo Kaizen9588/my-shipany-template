@@ -44,6 +44,8 @@ const nextConfig = {
   output:
     process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   reactStrictMode: true,
+  // 隐藏开发模式左下角的 Next.js 指示器（N 圆圈），编译/运行错误仍会正常显示
+  devIndicators: false,
   pageExtensions: ["ts", "tsx", "js", "jsx", "md", "mdx"],
   images: {
     remotePatterns: buildImageRemotePatterns(),

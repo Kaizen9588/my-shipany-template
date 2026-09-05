@@ -6,6 +6,7 @@ import { NavItem } from "@/types/blocks/base";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
+import PendingBar from "@/components/blocks/pending-bar";
 
 export default function ({
   className,
@@ -39,6 +40,8 @@ export default function ({
         >
           {item.icon && <Icon name={item.icon} className="w-4 h-4" />}
           {item.title}
+          {/* 点击瞬间的加载反馈（useLinkStatus，见组件注释） */}
+          <PendingBar />
         </Link>
       ))}
     </nav>

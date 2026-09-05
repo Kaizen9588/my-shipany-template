@@ -1,4 +1,5 @@
 import Empty from "@/components/blocks/empty";
+import { getTranslations } from "next-intl/server";
 import { getUserInfo } from "@/services/user";
 import SettingsForm from "./settings-form";
 import DeleteAccount from "./delete-account";
@@ -7,6 +8,7 @@ import DeleteAccount from "./delete-account";
  * 个人资料设置（6.11）+ 删除账号（6.17 GDPR）
  */
 export default async function SettingsPage() {
+  const t = await getTranslations("console.settings_page");
   const user = await getUserInfo();
   if (!user) {
     return <Empty message="no auth" />;
@@ -14,7 +16,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <h3 className="text-lg font-medium">Settings</h3>
+      <h3 className="text-lg font-medium">{t("title")}</h3>
       <SettingsForm
         initial={{
           nickname: user.nickname,

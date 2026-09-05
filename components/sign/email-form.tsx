@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { signIn } from "next-auth/react";
 import { TelemetryEvents, track } from "@/lib/telemetry";
+import { useAppContext } from "@/contexts/app";
 
 /**
  * 邮箱密码登录 / 注册表单（6.4）
@@ -35,6 +36,7 @@ async function resolvePostSignInTarget(): Promise<string> {
 
 export default function EmailSignForm() {
   const router = useRouter();
+  const { setShowSignModal } = useAppContext();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -102,6 +104,7 @@ export default function EmailSignForm() {
         name: TelemetryEvents.SignupCompleted,
         properties: { provider: "email" },
       });
+      setShowSignModal(false);
       router.push(await resolvePostSignInTarget());
       router.refresh();
     } catch (e) {
@@ -127,6 +130,7 @@ export default function EmailSignForm() {
         toast.error("invalid email or password");
         return;
       }
+      setShowSignModal(false);
       router.push(await resolvePostSignInTarget());
       router.refresh();
     } catch (e) {

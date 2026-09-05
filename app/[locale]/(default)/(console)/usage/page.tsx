@@ -2,12 +2,14 @@ import { getSupabaseClient } from "@/models/db";
 import { getUserCredits } from "@/services/credit";
 import { getUserUuid } from "@/services/user";
 import Empty from "@/components/blocks/empty";
+import { getTranslations } from "next-intl/server";
 import moment from "moment";
 
 /**
  * 用量统计（6.13）：积分使用历史 + API 调用记录，按日/周/月聚合
  */
 export default async function UsagePage() {
+  const t = await getTranslations("console.usage_page");
   const user_uuid = await getUserUuid();
   if (!user_uuid) {
     return <Empty message="no auth" />;
@@ -55,16 +57,16 @@ export default async function UsagePage() {
 
   return (
     <div className="space-y-6">
-      <h3 className="text-lg font-medium">Usage</h3>
+      <h3 className="text-lg font-medium">{t("title")}</h3>
 
       <div className="rounded-lg border p-4">
-        <p className="text-sm text-muted-foreground">Current balance</p>
-        <p className="text-3xl font-semibold">{credits.left_credits} credits</p>
+        <p className="text-sm text-muted-foreground">{t("current_balance")}</p>
+        <p className="text-3xl font-semibold">{credits.left_credits} {t("credits_unit")}</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <div className="rounded-lg border p-4">
-          <h4 className="mb-2 text-sm font-medium">Daily (last 30d)</h4>
+          <h4 className="mb-2 text-sm font-medium">{t("daily")}</h4>
           <ul className="max-h-64 space-y-1 overflow-y-auto text-sm">
             {[...daily.entries()]
               .slice(-30)
@@ -78,7 +80,7 @@ export default async function UsagePage() {
           </ul>
         </div>
         <div className="rounded-lg border p-4">
-          <h4 className="mb-2 text-sm font-medium">Weekly (last 12w)</h4>
+          <h4 className="mb-2 text-sm font-medium">{t("weekly")}</h4>
           <ul className="max-h-64 space-y-1 overflow-y-auto text-sm">
             {[...weekly.entries()]
               .slice(-12)
@@ -92,7 +94,7 @@ export default async function UsagePage() {
           </ul>
         </div>
         <div className="rounded-lg border p-4">
-          <h4 className="mb-2 text-sm font-medium">Monthly (last 12m)</h4>
+          <h4 className="mb-2 text-sm font-medium">{t("monthly")}</h4>
           <ul className="max-h-64 space-y-1 overflow-y-auto text-sm">
             {[...monthly.entries()]
               .slice(-12)
@@ -108,17 +110,17 @@ export default async function UsagePage() {
       </div>
 
       <div className="rounded-lg border p-4">
-        <h4 className="mb-3 text-sm font-medium">Recent API Calls</h4>
+        <h4 className="mb-3 text-sm font-medium">{t("recent_api_calls")}</h4>
         {apiCalls.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No API calls yet</p>
+          <p className="text-sm text-muted-foreground">{t("no_api_calls")}</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left text-muted-foreground">
-                <th className="py-2">Time</th>
-                <th>Type</th>
-                <th>Credits</th>
-                <th>Trans No</th>
+                <th className="py-2">{t("time")}</th>
+                <th>{t("type")}</th>
+                <th>{t("credits")}</th>
+                <th>{t("trans_no")}</th>
               </tr>
             </thead>
             <tbody>

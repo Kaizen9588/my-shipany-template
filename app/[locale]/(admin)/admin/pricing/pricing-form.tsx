@@ -19,6 +19,15 @@ interface ProductRow {
   waffo_product_id?: string | null;
 }
 
+// product_id 是数据库键不可改；展示层给已知商品加中文名（小字保留原 ID 便于对账）
+const PRODUCT_NAME_ZH: Record<string, string> = {
+  standard: "标准版",
+  premium: "高级版",
+  starter: "入门版",
+  professional: "专业版",
+  enterprise: "企业版",
+};
+
 export default function PricingForm({ products }: { products: ProductRow[] }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -99,7 +108,18 @@ export default function PricingForm({ products }: { products: ProductRow[] }) {
       </div>
       {rows.map((p) => (
         <div key={p.product_id} className="rounded-lg border p-4">
-          <div className="mb-2 font-medium">{p.product_id}</div>
+          <div className="mb-2 font-medium">
+            {PRODUCT_NAME_ZH[p.product_id] ? (
+              <>
+                {PRODUCT_NAME_ZH[p.product_id]}
+                <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">
+                  {p.product_id}
+                </span>
+              </>
+            ) : (
+              p.product_id
+            )}
+          </div>
           <div className="grid gap-3 md:grid-cols-6">
             <div className="space-y-1">
               <Label>金额(分)</Label>

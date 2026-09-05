@@ -129,5 +129,42 @@
     "analytics_desc": "帮助我们了解网站的使用情况（Google Analytics / PostHog）。",
     "recording_title": "会话回放",
     "recording_desc": "匿名化的会话回放，用于排查问题、改进产品。"
+  },
+  "console": {
+    "notifications": "通知",
+    "usage": "用量统计",
+    "settings": "设置",
+    "subscription": "订阅",
+    "usage_page": {
+      "title": "用量统计",
+      "current_balance": "当前余额",
+      "credits_unit": "积分",
+      "daily": "按日（近 30 天）",
+      "weekly": "按周（近 12 周）",
+      "monthly": "按月（近 12 个月）",
+      "recent_api_calls": "近期 API 调用",
+      "no_api_calls": "暂无 API 调用记录",
+      "time": "时间",
+      "type": "类型",
+      "credits": "积分",
+      "trans_no": "流水号"
+    },
+    "settings_page": {
+      "title": "设置"
+    },
+    "notifications_page": {
+      "title": "通知",
+      "unread": "条未读",
+      "mark_all_read": "全部已读",
+      "no_notifications": "暂无通知"
+    },
+    "dashboard": "控制台",
+    "subscription_page": {
+      "title": "订阅",
+      "no_active": "暂无有效订阅"
+    },
+    "danger_zone": "危险操作",
+    "no_notifications": "暂无通知",
+    "create_api_key": "创建 API 密钥"
   }
 }

@@ -54,19 +54,19 @@ export default async function ({ children }: { children: ReactNode }) {
           is_active: false,
         },
         {
-          title: "Notifications",
+          title: t("console.notifications"),
           url: "/notifications",
           icon: "RiNotification3Line",
           is_active: false,
         },
         {
-          title: "Usage",
+          title: t("console.usage"),
           url: "/usage",
           icon: "RiLineChartLine",
           is_active: false,
         },
         {
-          title: "Settings",
+          title: t("console.settings"),
           url: "/settings",
           icon: "RiSettingsLine",
           is_active: false,

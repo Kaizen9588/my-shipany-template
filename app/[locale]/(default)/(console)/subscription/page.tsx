@@ -1,3 +1,4 @@
+import { getTranslations } from "next-intl/server";
 import { getSupabaseClient } from "@/models/db";
 import { getUserUuid } from "@/services/user";
 import Empty from "@/components/blocks/empty";
@@ -10,6 +11,7 @@ import moment from "moment";
  * cancelSubscription()/createPortal()，不硬编码渠道端点。
  */
 export default async function SubscriptionPage() {
+  const t = await getTranslations("console.subscription_page");
   const user_uuid = await getUserUuid();
   if (!user_uuid) {
     return <Empty message="no auth" />;
@@ -27,11 +29,11 @@ export default async function SubscriptionPage() {
 
   return (
     <div className="space-y-6">
-      <h3 className="text-lg font-medium">Subscription</h3>
+      <h3 className="text-lg font-medium">{t("title")}</h3>
 
       {!subscriptions || subscriptions.length === 0 ? (
         <div className="rounded-lg border p-6 text-center">
-          <p className="text-muted-foreground">No active subscription</p>
+          <p className="text-muted-foreground">{t("no_active")}</p>
           <p className="mt-2 text-sm text-muted-foreground">
             当前为一次性积分包模式（v1 不启用订阅）。如需订阅功能，请在
             DEVELOPMENT_PLAN 5.3 说明中启用。

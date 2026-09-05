@@ -129,5 +129,42 @@
     "analytics_desc": "Helps us understand how the site is used (Google Analytics / PostHog).",
     "recording_title": "Session Recording",
     "recording_desc": "Replays of anonymised sessions to diagnose issues and improve the product."
+  },
+  "console": {
+    "notifications": "Notifications",
+    "usage": "Usage",
+    "settings": "Settings",
+    "subscription": "Subscription",
+    "usage_page": {
+      "title": "Usage",
+      "current_balance": "Current balance",
+      "credits_unit": "credits",
+      "daily": "Daily (last 30d)",
+      "weekly": "Weekly (last 12w)",
+      "monthly": "Monthly (last 12m)",
+      "recent_api_calls": "Recent API Calls",
+      "no_api_calls": "No API calls yet",
+      "time": "Time",
+      "type": "Type",
+      "credits": "Credits",
+      "trans_no": "Trans No"
+    },
+    "settings_page": {
+      "title": "Settings"
+    },
+    "notifications_page": {
+      "title": "Notifications",
+      "unread": "unread",
+      "mark_all_read": "Mark all read",
+      "no_notifications": "No notifications"
+    },
+    "dashboard": "Dashboard",
+    "subscription_page": {
+      "title": "Subscription",
+      "no_active": "No active subscription"
+    },
+    "danger_zone": "Danger Zone",
+    "no_notifications": "No notifications",
+    "create_api_key": "Create API Key"
   }
 }

@@ -13,12 +13,26 @@ import { toast } from "sonner";
 import { useAppContext } from "@/contexts/app";
 import { TelemetryEvents, track } from "@/lib/telemetry";
 
-export default function Pricing({ pricing }: { pricing: PricingType }) {
+export default function Pricing({
+  pricing,
+  compact = false,
+}: {
+  pricing: PricingType;
+  /** 弹框内嵌模式：去掉区块级大间距（py-16/mb-12），卡片纵向排列填满弹框 */
+  compact?: boolean;
+}) {
   const { user, setShowSignModal } = useAppContext();
 
   const [group, setGroup] = useState(pricing.groups?.[0]?.name);
   const [isLoading, setIsLoading] = useState(false);
   const [productId, setProductId] = useState<string | null>(null);
+  // 当前选中的套餐卡片：点击卡片切换高亮；
+  // 默认选中 is_featured 的推荐套餐（无则第一个），与原有突出效果衔接
+  const [selectedId, setSelectedId] = useState<string | null>(
+    pricing.items?.find((item) => item.is_featured)?.product_id ??
+      pricing.items?.[0]?.product_id ??
+      null
+  );
 
   useEffect(() => {
     if (pricing.items) {
@@ -108,10 +122,19 @@ export default function Pricing({ pricing }: { pricing: PricingType }) {
   };
 
   return (
-    <section id={pricing.name} className="py-16">
-      <div className="container">
-        <div className="mx-auto mb-12 text-center">
-          <h2 className="mb-4 text-4xl font-semibold lg:text-5xl">
+    <section
+      id={pricing.name}
+      className={compact ? "py-0" : "py-16"}
+    >
+      <div className={compact ? "" : "container"}>
+        <div
+          className={
+            compact
+              ? "mb-6 text-center"
+              : "mx-auto mb-12 text-center"
+          }
+        >
+          <h2 className={compact ? "mb-2 text-2xl font-semibold" : "mb-4 text-4xl font-semibold lg:text-5xl"}>
             {pricing.title}
           </h2>
           <p className="text-muted-foreground lg:text-lg">
@@ -120,7 +143,7 @@ export default function Pricing({ pricing }: { pricing: PricingType }) {
         </div>
         <div className="flex flex-col items-center gap-2">
           {pricing.groups && pricing.groups.length > 0 && (
-            <div className="flex h-12 mb-12 items-center rounded-md bg-muted p-1 text-lg">
+            <div className={`flex items-center rounded-md bg-muted p-1 text-lg ${compact ? "h-10 mb-4" : "h-12 mb-12"}`}>
               <RadioGroup
                 value={group}
                 className={`h-full grid-cols-${pricing.groups.length}`}
@@ -160,10 +183,16 @@ export default function Pricing({ pricing }: { pricing: PricingType }) {
             </div>
           )}
           <div
-            className={`md:min-w-96 mt-0 grid gap-6 md:grid-cols-${
-              pricing.items?.filter(
-                (item) => !item.group || item.group === group
-              )?.length
+            className={`${
+              compact ? "w-full" : "md:min-w-96"
+            } mt-0 grid gap-4 md:gap-6 ${
+              compact
+                ? "md:grid-cols-3"
+                : `md:grid-cols-${
+                    pricing.items?.filter(
+                      (item) => !item.group || item.group === group
+                    )?.length
+                  }`
             }`}
           >
             {pricing.items?.map((item, index) => {
@@ -171,13 +200,16 @@ export default function Pricing({ pricing }: { pricing: PricingType }) {
                 return null;
               }
 
+              const isSelected = item.product_id === selectedId;
+
               return (
                 <div
                   key={index}
-                  className={`rounded-lg p-6 ${
-                    item.is_featured
-                      ? "border-primary border-2 bg-card text-card-foreground"
-                      : "border-muted border"
+                  onClick={() => setSelectedId(item.product_id)}
+                  className={`rounded-lg ${compact ? "p-4" : "p-6"} cursor-pointer transition-all ${
+                    isSelected
+                      ? "border-primary border-2 bg-card text-card-foreground shadow-md"
+                      : "border-muted border hover:border-muted-foreground/40"
                   }`}
                 >
                   <div className="flex h-full flex-col justify-between gap-5">

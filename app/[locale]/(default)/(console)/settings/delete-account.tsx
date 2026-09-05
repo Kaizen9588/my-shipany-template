@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { Button } from "@/components/ui/button";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { signOut } from "next-auth/react";
 
@@ -10,6 +11,7 @@ import { signOut } from "next-auth/react";
  * 删除账号（6.17 GDPR）：软删除 + 保留订单/财务数据
  */
 export default function DeleteAccount() {
+  const t = useTranslations("console");
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
@@ -44,7 +46,7 @@ export default function DeleteAccount() {
 
   return (
     <div className="rounded-lg border border-destructive/50 p-4">
-      <h4 className="text-sm font-medium text-destructive">Danger Zone</h4>
+      <h4 className="text-sm font-medium text-destructive">{t("danger_zone")}</h4>
       <p className="mt-1 text-sm text-muted-foreground">
         删除账号后无法恢复。订单与积分流水按税务合规保留 7 年。
       </p>

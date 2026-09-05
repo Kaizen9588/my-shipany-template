@@ -59,7 +59,11 @@ export default function () {
                 >
                   <Avatar className="h-8 w-8 rounded-lg">
                     <AvatarImage src={user?.avatar_url} alt={user?.nickname} />
-                    <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                    {/* 无自定义头像时显示默认头像图，不显示文字缩写 */}
+                    <AvatarFallback className="rounded-lg">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src="/logo.png" alt={user?.nickname ?? "avatar"} className="h-full w-full object-cover" />
+                    </AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-semibold">
@@ -83,7 +87,10 @@ export default function () {
                         src={user?.avatar_url}
                         alt={user?.nickname}
                       />
-                      <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                      <AvatarFallback className="rounded-lg">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src="/logo.png" alt={user?.nickname ?? "avatar"} className="h-full w-full object-cover" />
+                      </AvatarFallback>
                     </Avatar>
                     <div className="grid flex-1 text-left text-sm leading-tight">
                       <span className="truncate font-semibold">

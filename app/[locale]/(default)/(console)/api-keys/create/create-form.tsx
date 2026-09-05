@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -9,6 +10,7 @@ import { Check, Copy } from "lucide-react";
 import { createApiKeyAction } from "../actions";
 
 export default function CreateApiKeyForm() {
+  const t = useTranslations("console");
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [plainKey, setPlainKey] = useState("");
@@ -48,7 +50,7 @@ export default function CreateApiKeyForm() {
   return (
     <div className="space-y-6 max-w-md">
       <div>
-        <h3 className="text-lg font-medium">Create API Key</h3>
+        <h3 className="text-lg font-medium">{t("create_api_key")}</h3>
         <p className="text-sm text-muted-foreground">
           The full key is shown only once. Store it safely.
         </p>

@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useTranslations } from "next-intl";
 import moment from "moment";
 
 /**
  * 通知中心（6.14，v1 轮询 30s；SSE 为 v2 优化）
  */
 export default function NotificationsList() {
+  const t = useTranslations("console.notifications_page");
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -54,16 +56,16 @@ export default function NotificationsList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-medium">
-          Notifications
+          {t("title")}
           {unread > 0 && (
             <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
-              {unread} unread
+              {unread} {t("unread")}
             </span>
           )}
         </h3>
         {unread > 0 && (
           <Button variant="outline" size="sm" onClick={markAllRead}>
-            Mark all read
+            {t("mark_all_read")}
           </Button>
         )}
       </div>
@@ -71,7 +73,7 @@ export default function NotificationsList() {
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading...</p>
       ) : notifications.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No notifications</p>
+        <p className="text-sm text-muted-foreground">{t("no_notifications")}</p>
       ) : (
         <div className="space-y-2">
           {notifications.map((n) => (

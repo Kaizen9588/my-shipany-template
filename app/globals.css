@@ -37,3 +37,20 @@ html {
     --sidebar-ring: var(--ring);
   }
 }
+
+/* 导航点击瞬间的顶部进度条（components/blocks/pending-bar.tsx）：
+   100ms 延迟淡入——快速导航不闪条，慢导航才出现 */
+@keyframes navigation-progress {
+  0% {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.navigation-progress-pulse {
+  animation: navigation-progress 200ms ease-out 100ms forwards;
+}
