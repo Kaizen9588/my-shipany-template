@@ -78,11 +78,14 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Cache supabase images
-        uses: actions/cache@v4
+      - name: Restore supabase images cache
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/supabase-images
-          key: supabase-images-2.116.0-v1
+          # 滚动 key：每次 run 存自己的快照（key 不可变，固定 key 会把
+          # 「部分拉取」的残缺缓存永久锁死）；restore-keys 取最近一份
+          key: supabase-images-2.116.0-${{ github.run_id }}
+          restore-keys: supabase-images-2.116.0-
 
       - name: Start local Supabase stack
         run: |
@@ -95,7 +98,7 @@ jobs:
           # 13 个镜像会撞限流。改为逐个预拉——优先 docker.io（限额宽松），失败再
           # 退回 ECR，本地 retag 成 CLI 期望的 ECR 名（compose pull policy=missing
           # 发现本地已有镜像即跳过拉取）
-          IMAGES="gotrue:v2.196.0 kong:2.8.1 postgrest:v16.1 postgres:17.6.1.165 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 realtime:v2.129.3"
+          IMAGES="kong:2.8.1 postgrest:v16.1 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 gotrue:v2.196.0 realtime:v2.129.3 postgres:17.6.1.165"
           mkdir -p /tmp/supabase-images
           for img in $IMAGES; do
             ecr="public.ecr.aws/supabase/$img"
@@ -109,9 +112,16 @@ jobs:
               echo "pull $ecr throttled, backoff ${backoff}s"
               sleep $backoff
             done
-            [ "$ok" = true ] || { echo "all pull attempts failed for $img"; exit 1; }
+            if [ "$ok" != true ]; then
+              echo "all pull attempts failed for $img (will bank progress and retry next run)"
+              FAIL_PULL=true
+              break
+            fi
             docker save "$ecr" -o "$tar"
           done
+          if [ "${FAIL_PULL:-false}" = true ]; then
+            exit 1
+          fi
           for i in 1 2 3; do
             npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
@@ -141,6 +151,13 @@ jobs:
             api-tests/output/report-summary.json
             api-tests/output/junit.xml
           retention-days: 30
+
+      - name: Save supabase images cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/supabase-images
+          key: supabase-images-2.116.0-${{ github.run_id }}
 
       - name: Render summary to Job Summary
         if: always()
@@ -180,11 +197,14 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Cache supabase images
-        uses: actions/cache@v4
+      - name: Restore supabase images cache
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/supabase-images
-          key: supabase-images-2.116.0-v1
+          # 滚动 key：每次 run 存自己的快照（key 不可变，固定 key 会把
+          # 「部分拉取」的残缺缓存永久锁死）；restore-keys 取最近一份
+          key: supabase-images-2.116.0-${{ github.run_id }}
+          restore-keys: supabase-images-2.116.0-
 
       - name: Start local Supabase stack
         # 与 api-test 同款一次性本地栈；迁移 0037 等由 pnpm e2e 的 webServer
@@ -197,7 +217,7 @@ jobs:
           # 13 个镜像会撞限流。改为逐个预拉——优先 docker.io（限额宽松），失败再
           # 退回 ECR，本地 retag 成 CLI 期望的 ECR 名（compose pull policy=missing
           # 发现本地已有镜像即跳过拉取）
-          IMAGES="gotrue:v2.196.0 kong:2.8.1 postgrest:v16.1 postgres:17.6.1.165 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 realtime:v2.129.3"
+          IMAGES="kong:2.8.1 postgrest:v16.1 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 gotrue:v2.196.0 realtime:v2.129.3 postgres:17.6.1.165"
           mkdir -p /tmp/supabase-images
           for img in $IMAGES; do
             ecr="public.ecr.aws/supabase/$img"
@@ -211,9 +231,16 @@ jobs:
               echo "pull $ecr throttled, backoff ${backoff}s"
               sleep $backoff
             done
-            [ "$ok" = true ] || { echo "all pull attempts failed for $img"; exit 1; }
+            if [ "$ok" != true ]; then
+              echo "all pull attempts failed for $img (will bank progress and retry next run)"
+              FAIL_PULL=true
+              break
+            fi
             docker save "$ecr" -o "$tar"
           done
+          if [ "${FAIL_PULL:-false}" = true ]; then
+            exit 1
+          fi
           for i in 1 2 3; do
             npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
@@ -244,6 +271,13 @@ jobs:
             e2e-report-output/report-summary.json
             e2e-report-output/junit.xml
           retention-days: 30
+
+      - name: Save supabase images cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/supabase-images
+          key: supabase-images-2.116.0-${{ github.run_id }}
 
       - name: Render summary to Job Summary
         if: always()
