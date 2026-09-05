@@ -80,6 +80,30 @@ const nextConfig = {
             key: "Cross-Origin-Opener-Policy",
             value: "same-origin-allow-popups",
           },
+          // 2.18 / boundary-spec §三：CSP 基线（此前 HSTS 已有、CSP 待办）。
+          // 取舍说明：
+          // - script-src 保留 'unsafe-inline'/'unsafe-eval'（Next.js 注水与 dev HMR 必需；
+          //   收紧到 nonce 需改 layout 渲染链，留给具体项目按需加固）
+          // - connect-src 放行 https/wss（分析/客服/AI 供应商由环境变量决定，模板无法
+          //   枚举；ws://localhost 仅 dev HMR 用）；真正的第三方脚本面由 script-src 收口
+          // - object-src 'none' + base-uri/form-action 'self' + frame-ancestors 'none'
+          //   是无副作用的强约束（与 X-Frame-Options: DENY 对齐）
+          {
+            key: "Content-Security-Policy",
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://www.googletagmanager.com https://*.posthog.com https://client.crisp.chat https://openpanel.dev https://js.stripe.com",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob: https:",
+              "font-src 'self' data:",
+              "connect-src 'self' https: wss: ws://localhost:* ws://127.0.0.1:*",
+              "frame-src https://accounts.google.com https://*.google.com https://js.stripe.com",
+              "object-src 'none'",
+              "base-uri 'self'",
+              "form-action 'self'",
+              "frame-ancestors 'none'",
+            ].join("; "),
+          },
           { key: "X-DNS-Prefetch-Control", value: "on" },
         ],
       },

@@ -85,6 +85,11 @@ jobs:
           npx supabase init --force
           npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
 
+      - name: Generate test env files
+        # 测试 env 文件不入库（gitignore）；CI 从 supabase status 取回本地栈公开
+        # 固定 key 并映射，其余凭据按次随机生成（测试自签自验）
+        run: node scripts/gen-test-env.mjs api
+
       - name: Run API tests (db reset + seed inside)
         run: pnpm api-test
 
@@ -104,4 +109,70 @@ jobs:
         run: |
           if [ -f api-tests/output/report-summary.md ]; then
             cat api-tests/output/report-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  e2e-test:
+    name: E2E Tests (all suites)
+    runs-on: ubuntu-latest
+    needs: test # 先过单测/构建，再花时间跑端到端全量
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Start local Supabase stack
+        # 与 api-test 同款一次性本地栈；迁移 0037 等由 pnpm e2e 的 webServer
+        # 启动路径（lib/migrate）按 schema_migrations 增量应用
+        run: |
+          npx supabase init --force
+          npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler
+
+      - name: Generate test env files
+        run: node scripts/gen-test-env.mjs e2e
+
+      - name: Run migrations (fresh stack needs tables before webServer starts)
+        # e2e 无 globalSetup（api-test 的迁移在 db-lifecycle 里跑，e2e 没有对应物）；
+        # instrumentation 只做 verifyMigrations fail-fast，不执行 DDL
+        run: pnpm migrate
+
+      - name: Run E2E tests (3101 isolated server)
+        run: pnpm e2e
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-reports
+          path: |
+            e2e-report-output/report-summary.md
+            e2e-report-output/report-summary.json
+            e2e-report-output/junit.xml
+          retention-days: 30
+
+      - name: Render summary to Job Summary
+        if: always()
+        run: |
+          if [ -f e2e-report-output/report-summary.md ]; then
+            cat e2e-report-output/report-summary.md >> "$GITHUB_STEP_SUMMARY"
           fi
