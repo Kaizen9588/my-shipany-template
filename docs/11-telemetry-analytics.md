@@ -18,7 +18,7 @@
 | 层 | 回答的问题 | 数据形态 | 代表工具 | 现状 |
 |----|-----------|----------|----------|------|
 | **产品分析 Analytics** | 多少人点了 Buy？转化率多少？ | 结构化事件流（定量） | GA4 / PostHog / Mixpanel / OpenPanel | ✅ 有（GA4+OpenPanel） |
-| **会话回放 Replay** | 用户到底怎么操作的？哪里卡住了？ | DOM 快照视频流（定性） | PostHog / OpenReplay / Sentry Replay / LogRocket | ❌ 无 |
+| **会话回放 Replay** | 用户到底怎么操作的？哪里卡住了？ | DOM 快照视频流（定性） | PostHog / OpenReplay / Sentry Replay / LogRocket | ✅ 有（PostHog 会话录制默认开启，maskAllInputs） |
 | **错误监控 Error** | 哪里崩了？崩溃前的操作链？ | 异常 + breadcrumb | Sentry / PostHog / GlitchTip | ❌ 无（P3 规划 Sentry） |
 
 **你要的「还原路径 + 复现 bug」= Replay + Error 的交叉**：错误发生时，能点开这个用户当时的操作录像，看到崩前点了什么、输入了什么。
@@ -205,7 +205,7 @@ landing.visited
 | 回放遮盖 | ✅ 已落地：`session_recording.maskAllInputs: true`（posthog.tsx） |
 | 数据保留 | 回放 30 天，事件 13 个月（PostHog 免费版默认），文档写明 |
 | 欧盟用户 | 优先用 PostHog 欧盟节点（`api.eu.posthog.com`） |
-| 与 GDPR 方案整合 | ⚠️ **v3 规划，当前未实现**：代码中 `delete-account` 路由未调用 `posthog.deleteUser`。设计方案见 §11 v3 阶段。
+| 与 GDPR 方案整合 | ✅ 已落地（2026-09-01，迁移 0035）：`delete-account` 路由接入 `deleteTelemetryUser()`（posthog-node v5 无 deletePerson API，按官方口径改发 `$delete_person` capture 事件；未配置 PostHog 时静默跳过），DB 侧日志匿名化见 handoff §1.33。 |
 
 ---
 
@@ -226,7 +226,7 @@ landing.visited
 |------|------|
 | v1（✅ 已落地） | `lib/telemetry/` 抽象层 + PostHog Provider + 身份缝合（匿名→user_uuid）+ §6 漏斗埋点 + 支付停留时长（t1/t2/t3）+ 会话录制默认开启（maskAllInputs）+ 三 SDK consent 门控 + `ai.generated` 服务端埋点 |
 | v2 | 错误追踪 + bug 复现链路（PostHog Error Tracking / Sentry 评估） |
-| v3 | feature flag（灰度/开关）+ 移除 OpenPanel 评估 + GDPR 删除联动（deleteUser） |
+| v3 | feature flag（灰度/开关）+ 移除 OpenPanel 评估（GDPR 删除联动已提前落地：`$delete_person`，见 §上表） |
 
 ---
 

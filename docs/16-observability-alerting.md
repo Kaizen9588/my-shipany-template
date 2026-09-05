@@ -369,7 +369,7 @@ export async function notifyChannel(message: NotifyMessage): Promise<void>;
 | `CRON_SECRET` 校验 | ⚠️ 需确认 | 生产必须配置 `CRON_SECRET`，Vercel Cron 自动注入；未配置时应拒绝访问或 fail-closed |
 | 单实例锁 | ❌ 未实现 | 多实例部署下 cron 可能并发执行，造成重复清理、重复对账等；需分布式锁或唯一约束防重 |
 | 超时保护 | ❌ 未实现 | 长任务应分批/分页执行，避免 Vercel 函数超时（10s Pro / 60s Pro Max） |
-| 成功/失败指标 | ❌ 未实现 | 每次 cron 应记录执行时长、处理条数、失败条数，并写入 op_events；失败触发告警 |
+| 成功/失败指标 | ⚠️ 部分实现 | cron 响应已带 outbox_delivered/inbox_replayed/reconcile_*/ai_compensated 等处理计数（`app/api/cron/daily`）；写入 op_events + 失败触发告警仍未做 |
 | 断点续跑 | ❌ 未实现 | 大规模任务失败后应能从中断处继续，而非重新全量 |
 
 ---

@@ -7,25 +7,28 @@
 | # | 文档 | 内容 | 状态 |
 |---|------|------|------|
 | 01 | [架构设计](./01-architecture.md) | 总体架构图、分层架构、请求处理流程、认证体系、i18n、组件体系、数据流 | ✅ 完成 |
-| 02 | [API 接口文档](./02-api-reference.md) | API 端点请求/响应/认证/幂等键/错误码 | ⚠️ 部分待建（幂等键） |
-| 03 | [数据库设计](./03-database-schema.md) | 表结构、ER 图、索引、存储过程、迁移机制、权限边界、待建表（credit lots/refunds/payment events/ai_requests） | ⚠️ No-Go（资金权限 + 批次账本） |
-| 04 | [鉴权流程](./04-auth-flow.md) | NextAuth 配置、OAuth 登录、JWT/Session、验证码、RBAC、账号删除、安全问题 | ⚠️ No-Go（验证码消费逻辑 + 封禁失效） |
-| 05 | [支付与积分流程](./05-payment-credits-flow.md) | 多渠道支付、Webhook、积分扣减、退款、联盟营销、生产安全门槛 | ⚠️ No-Go（批次账本 + 部分退款 + 对账） |
+| 02 | [API 接口文档](./02-api-reference.md) | API 端点请求/响应/认证/幂等键/错误码 | ✅ 完成（幂等键已随迁移 0032 `ai_requests` 落地） |
+| 03 | [数据库设计](./03-database-schema.md) | 表结构、ER 图、索引、存储过程、迁移机制、权限边界 | ✅ 完成（资金权限 0023/0024 + 批次账本 0026 已落地；credit lots/refunds/payment events/ai_requests 四表均已建） |
+| 04 | [鉴权流程](./04-auth-flow.md) | NextAuth 配置、OAuth 登录、JWT/Session、验证码、RBAC、账号删除、安全问题 | ✅ 完成（验证码消费逻辑已修复：0025 列宽 + count exact；封禁 session 即时失效已实现：jwt 回调每会话刷新 status + getUserUuid/getAdminUser 双拦截） |
+| 05 | [支付与积分流程](./05-payment-credits-flow.md) | 多渠道支付、Webhook、积分扣减、退款、联盟营销、生产安全门槛 | ✅ 完成（批次账本 0026 + 债务化 0021/0022 + 对账 0031 已落地） |
 | 06 | [组件文档](./06-components.md) | 29 个 UI 组件、22 个区块组件、Slot 插槽模式、Context/Hooks | ✅ 完成 |
 | 07 | [部署文档](./07-deployment.md) | Vercel/Cloudflare/Docker 三种部署方式、本地开发配置、Stripe Webhook | ✅ 完成 |
 | 08 | [配置与环境变量](./08-config-env.md) | 全部配置文件解析、环境变量清单（单一真相源，已有+待新增+废弃）、i18n 配置 | ✅ 完成 |
-| 10 | [邮件系统设计](./10-email-system.md) | 事务/营销分离、Provider 抽象、模板管理、触发点、退订、合规 | ⚠️ v2 待建（email logs + 退订） |
-| 11 | [埋点与监控方案](./11-telemetry-analytics.md) | 分析/回放/错误三层拆解、追踪抽象层、事件规范、漏斗、bug 复现、选型 | ⚠️ 部分待建（GDPR 删除） |
-| 13 | [AI 网关闭环](./13-ai-gateway.md) | 核心收费闭环：鉴权→余额校验→预估一次扣清→模型路由→失败退款，幂等/状态机/补偿设计 | ⚠️ No-Go（幂等 + 崩溃补偿） |
-| 14 | [免费试用额度](./14-anonymous-trial.md) | 匿名演示限流（纯 IP 维度，指纹方案已废弃，换 IP 可绕过为已知边界） | ⚠️ No-Go（失败退还 + 无输入限制可单 IP 无限调用，P0-4） |
-| 15 | [专业模板完整度清单](./15-professional-checklist.md) | 工程化/Security/支付/AI/营销/控制台/后台/监控/部署 完整度评估（三态标记） | ⚠️ 多项 No-Go |
-| 16 | [可观测性与告警设计](./16-observability-alerting.md) | 日志采集（op_events）+ 支付渠道告警 + 飞书/企微通知 + Cron 安全 + 飞书多维表格大屏数据源（§八） | ⚠️ 部分待建（outbox + 对账 + 大屏待生产配置） |
+| 10 | [邮件系统设计](./10-email-system.md) | 事务/营销分离、Provider 抽象、模板管理、触发点、退订、合规 | ⚠️ v2 待建（email logs + 退订 + 营销邮件，见该文档 v2 清单） |
+| 11 | [埋点与监控方案](./11-telemetry-analytics.md) | 分析/回放/错误三层拆解、追踪抽象层、事件规范、漏斗、bug 复现、选型 | ⚠️ 部分待建（错误监控接入未做；GDPR 删除联动 0035 已落地） |
+| 13 | [AI 网关闭环](./13-ai-gateway.md) | 核心收费闭环：鉴权→余额校验→预估一次扣清→模型路由→失败退款，幂等/状态机/补偿设计 | ✅ 完成（幂等键/状态机/崩溃补偿已随迁移 0032 落地，见该文档 §七） |
+| 14 | [免费试用额度](./14-anonymous-trial.md) | 匿名演示限流（纯 IP 维度，指纹方案已废弃，换 IP 可绕过为已知边界） | ✅ 完成（P0-4 已关闭：退还语义收紧 + 输入 413 计次 + fail-closed 限流） |
+| 15 | [专业模板完整度清单](./15-professional-checklist.md) | 工程化/Security/支付/AI/营销/控制台/后台/监控/部署 完整度评估（三态标记） | ⚠️ 剩 P1–P3（历史 No-Go 已全部关闭，标记收口中） |
+| 16 | [可观测性与告警设计](./16-observability-alerting.md) | 日志采集（op_events）+ 支付渠道告警 + 飞书/企微通知 + Cron 安全 + 飞书多维表格大屏数据源（§八） | ⚠️ 部分待建（outbox 0029 + 对账 0031 已落地；大屏待生产配置、迁移失败/AI 成本告警条目待补） |
 | 17 | [品牌替换清单](./17-rebranding-checklist.md) | 复制独立项目时清除 ShipAny 原作者品牌/外链/示例内容的逐项替换清单（页面 JSON、硬编码组件、定价、env、logo、验收） | ✅ 完成 |
 | 18 | [API 接口自动化测试](./18-api-testing.md) | 全量 40 路由 HTTP 接口测试 + E2E 端到端（本地库）：本地 Supabase 栈隔离环境（api 3100 / e2e 3101）、8 分组 suites、coverage 覆盖守卫、分组成功率报告、内网报告门户、gate.sh + CI 双闸口、多项目复用指南 | ✅ 完成（API 59/59 + E2E 8/8 绿） |
-| B | [项目边界规范](./boundary-spec.md) | 禁止提交/密钥安全/API 越权/代码工程/Git 工作流/No-Go 缺口清单 | ⚠️ 多项 No-Go |
+| B | [项目边界规范](./boundary-spec.md) | 禁止提交/密钥安全/API 越权/代码工程/Git 工作流/No-Go 缺口清单 | ✅ No-Go 全关闭（N-1~N-15，剩 CSP 与章节编号两个 P3） |
 
-> **整体生产就绪结论**：模板骨架完整度高，但**资金与计费闭环不满足真实收费标准（No-Go）**。
-> 各模块文档的 ⚠️ / ❌ 项汇总为生产上线门槛，详见 [边界规范 §No-Go 清单](./boundary-spec.md#九待关闭的边界缺口生产-no-go-清单)。
+> **整体生产就绪结论（2026-09-05 更新）**：模板骨架完整度高，历史资金/权限 No-Go
+> （P0-1~P0-4、N-1~N-15，迁移 0020~0036）已全部关闭。剩余为非阻断项：
+> CSP 头、错误监控接入、邮件 v2（email logs/退订）、CI e2e job、部署迁移流水线，
+> 以及运营侧配置（OAuth 凭据、Upstash、大屏生产配置）。逐项见各模块文档与
+> [IMPLEMENTATION-HANDOFF](./IMPLEMENTATION-HANDOFF-2026-08-30.md) §4。
 
 ### 支付专题文档（payment/）
 
@@ -68,28 +71,27 @@
 | 5 | Demo API 无认证无限流，可被滥用 | [02-api-reference.md](./02-api-reference.md) | 高 | ✅ 已修复（P-1.4，重构为匿名演示端点） |
 | 6 | /api/update-invite 无认证，可被伪造 | [02-api-reference.md](./02-api-reference.md) | 高 | ✅ 已修复（P-1.4） |
 | 7 | 订单+积分+联盟非事务操作 | [05-payment-credits-flow.md](./05-payment-credits-flow.md) | 高 | ✅ 已修复（P-1.3，迁移 0003/0017） |
-| 8 | 直接使用 Service Role Key，无 RLS | [03-database-schema.md](./03-database-schema.md) | 高 | ⚠️ 部分修复（服务端单例收口；RLS + schema 权限仍 No-Go） |
+| 8 | 直接使用 Service Role Key，无 RLS | [03-database-schema.md](./03-database-schema.md) | 高 | ✅ 已修复（服务端单例收口 P-1.8；资金 RPC private schema + 全表 RLS deny-all 已随 0023/0024 收口） |
 | 9 | API Key 明文存储 | [03-database-schema.md](./03-database-schema.md) | 中高 | ✅ 已修复（P-1.5，SHA-256 hash） |
 | 10 | 并发注册导致 session 无 uuid | [04-auth-flow.md](./04-auth-flow.md) | 中 | ✅ 已修复（P-1.11，并发注册兜底） |
 
 ---
 
-## 当前生产阻断问题（P0 / No-Go）
+## 当前生产阻断问题（P0 / No-Go）— ✅ 已全部关闭（2026-09-01）
 
-> 第八轮（2026-08）对抗式审查新识别的阻断项。
-> **全部关闭前，不建议开放真实生产收款。**
-> 详细分析与整改要求已写入对应模块文档。
+> 第八轮（2026-08）对抗式审查识别的 8 条阻断项，已随迁移 0020~0031 全部关闭。
+> 下表保留原始编号与关闭指向，供追溯。
 
-| # | 问题 | 所在模块 | 位置 |
+| # | 问题 | 所在模块 | 状态 |
 |---|------|----------|------|
-| 1 | 资金 RPC 权限边界不成立（public schema 无 REVOKE/GRANT/RLS） | 数据库 | [03 §权限与安全边界](./03-database-schema.md#权限与安全边界生产强制) |
-| 2 | 积分过期账本设计缺陷（永久负数 + 净额模型） | 支付与积分 | [05 §2.4 剩余设计缺陷](./05-payment-credits-flow.md) |
-| 3 | 部分退款与积分回收不一致 | 支付与积分 | [05 §4.2 部分退款风险](./05-payment-credits-flow.md) |
-| 4 | AI 网关无幂等键、崩溃补偿和状态机 | AI 网关 | [13 §九 v1.5 目标设计](./13-ai-gateway.md#九v15-目标设计幂等--状态机--补偿) |
-| 5 | 远端支付成功、本地落库失败无可靠恢复 | 支付与积分 | [05 §5.1 P0-对账-1](./05-payment-credits-flow.md) |
-| 6 | 管理员通知配置 API 回显完整 Webhook Secret | 边界规范 | [boundary-spec §No-Go 清单](./boundary-spec.md#九待关闭的边界缺口生产-no-go-清单) |
-| 7 | 邮箱验证码消费逻辑疑似在真实环境始终失败 | 鉴权 | [04 §7 鉴权安全问题](./04-auth-flow.md#七鉴权安全问题) |
-| 8 | Webhook 缺少事件 inbox 与强绑定 | 支付与积分 | [05 §5.1 P0-Webhook-1](./05-payment-credits-flow.md) |
+| 1 | 资金 RPC 权限边界不成立（public schema 无 REVOKE/GRANT/RLS） | 数据库 | ✅ 已关闭（0023 五函数迁 private + 0024 全表 RLS deny-all/REVOKE，连库验证 anon 三层被拒） |
+| 2 | 积分过期账本设计缺陷（永久负数 + 净额模型） | 支付与积分 | ✅ 已关闭（0020 advisory lock + 0026 credit_lots 批次账本，并发回归 4/4） |
+| 3 | 部分退款与积分回收不一致 | 支付与积分 | ✅ 已关闭（0026 批次精确回收 + 0021/0022 债务化 + /admin/recovery 回收工作台） |
+| 4 | AI 网关无幂等键、崩溃补偿和状态机 | AI 网关 | ✅ 已关闭（0032 ai_requests 状态机 + cron 崩溃补偿，设计正文见 docs/13 §七） |
+| 5 | 远端支付成功、本地落库失败无可靠恢复 | 支付与积分 | ✅ 已关闭（0031 payment_events inbox + cron 重放 + 三规则对账） |
+| 6 | 管理员通知配置 API 回显完整 Webhook Secret | 边界规范 | ✅ 已关闭（toNotifyConfigView 掩码出口，N-1） |
+| 7 | 邮箱验证码消费逻辑疑似在真实环境始终失败 | 鉴权 | ✅ 已关闭（0025 列宽 + consumeVerificationCode count exact，端到端复测通过） |
+| 8 | Webhook 缺少事件 inbox 与强绑定 | 支付与积分 | ✅ 已关闭（0031，UNIQUE(provider, provider_event_id) 幂等 + 原始 payload 存档） |
 
 ---
 
@@ -104,8 +106,8 @@
 | P0-1 | 退款/拒付对已消费积分无回收路径，方案 A/B 都不闭环 | 阻断 | [05 §4.3](./05-payment-credits-flow.md) + [03 退款表](./03-database-schema.md) |
 | P0-2 | `decrease_credits`「行锁串行化」论证不成立 | 阻断 | [03 §3/§存储过程](./03-database-schema.md) + [05 §2.4](./05-payment-credits-flow.md) |
 | P0-3 | ~~自动迁移向生产库种入公开默认超级管理员~~ | ✅ 已关闭（2026-08-30） | 0012 取消建号、0019 禁用历史固定 hash、显式环境变量一次性引导；见 [boundary-spec §二/§九](./boundary-spec.md) |
-| P0-4 | 匿名 demo「失败退还次数 + 无输入限制」= 单 IP 绕过每日 3 次 | 阻断 | [14 §2.5/§五](./14-anonymous-trial.md) + [13 §八](./13-ai-gateway.md) |
-| P1-5 | 幂等键作用域自相矛盾（全局 UNIQUE vs 按用户作用域） | P1-高 | [02 幂等性](./02-api-reference.md) + [03 ai_requests](./03-database-schema.md) + [13 §四](./13-ai-gateway.md) |
+| P0-4 | 匿名 demo「失败退还次数 + 无输入限制」= 单 IP 绕过每日 3 次 | 阻断 | ✅ 已关闭（2026-08-30）：[14 §2.5/§五](./14-anonymous-trial.md) + [13 §八](./13-ai-gateway.md) |
+| P1-5 | 幂等键作用域自相矛盾（全局 UNIQUE vs 按用户作用域） | P1-高 | ✅ 已关闭（2026-09-01，0032 按用户隔离）：[02 幂等性](./02-api-reference.md) + [03 ai_requests](./03-database-schema.md) + [13 §四](./13-ai-gateway.md) |
 | P1-6 | 两条互斥建库路径（install.sql vs 迁移 0000 基线） | P1-高 | [07 §2.1/§5.2](./07-deployment.md) + [03 概述](./03-database-schema.md) |
 | P1-7 | 启动自动迁移无并发锁/事务/回滚/发布顺序 | P1-高 | [03 存储过程](./03-database-schema.md) + [07 §5.2.1](./07-deployment.md) |
 | P1-8 | 定价真相源两份文档互相矛盾（表优先 vs 文件唯一真相源） | P1-高 | [05 §1.2](./05-payment-credits-flow.md) + [02](./02-api-reference.md) + [01](./01-architecture.md) + [16](./16-observability-alerting.md) |
@@ -130,23 +132,23 @@
 「一二三四九五」且缺六七八。`docs/` 内的 `docs/12` 引用已在本轮回写时指向 ADVERSARIAL-REVIEW 文件；根目录 `README.md` 与
 `DEVELOPMENT_PLAN.md` 的引用待收口。
 
-### 上线前必须关闭（按依赖顺序）
+### 上线前必须关闭（按依赖顺序）— 状态更新（2026-09-05）
 
-1. 关掉默认管理员弱口令（P0-3）；README 删逐字凭据。
-2. 把 6 处错误 ✅ 降级（boundary-spec:47、README:61、05:207、13:43、15:46、03:586 的透支/迁移机制声明）。
-3. 钉死定价真相源（P1-8），据此重定级 P1-定价-1。
-4. 统一建库路径（P1-6）。
-5. 迁移器加 advisory lock + 同事务 + fail-fast + CONCURRENTLY（P1-7）。
-6. `decrease_credits` 加 advisory lock + 并发回归测试进 CI（P0-2）。
-7. 匿名 demo 退还语义收紧 + 输入 413 照常计次 + fail-closed 限流（P0-4）。
-8. **`credit_lots` 批次账本落地**（分水岭，顺带关闭 P2-1）；第 8 项之前不要开真实收款。
-9. 退款闭环（P0-1 债务化 + restricted）。
-10. 争议链路（P2-2）。
-11. webhook inbox + 每日对账（口径补「退款成功但积分回收为 0」与争议差异）。
-12. 幂等键生命周期（P1-5）。
-13. 跨实例限流 + AI 成本/错误率告警 + 迁移失败告警发射点。
-14. 退款政策条款、争议举证导出、风控节流。
-15. 文档收口：No-Go 补建库路径/迁移并发/争议链路/默认管理员/AI 网关整改正文；清理 8 处 docs/12 悬空引用。
+1. ~~关掉默认管理员弱口令（P0-3）~~ ✅ 已关闭（0019/0027 新口径：公开初始凭据仅进一次性强制改密流程）。
+2. ~~把 6 处错误 ✅ 降级~~ ✅ 已关闭（透支/迁移机制问题本身已修复：0020/0023/0026；文档标记随本批收口）。
+3. ~~钉死定价真相源（P1-8）~~ ✅ 已关闭（payment_products 表为运行时权威 + 0033 事务化写入 + 审批双人复核）。
+4. ~~统一建库路径（P1-6）~~ ✅ 已关闭（唯一入口 pnpm migrate，install.sql 降为历史脚本）。
+5. ~~迁移器 advisory lock + 同事务 + fail-fast + CONCURRENTLY（P1-7）~~ ✅ 已关闭（含 pnpm migrate:concurrent 非事务入口与 expand-contract 模板）。
+6. ~~`decrease_credits` advisory lock + 并发回归（P0-2）~~ ✅ 已关闭（0020 + 真库并发 4/4）。
+7. ~~匿名 demo 收紧（P0-4）~~ ✅ 已关闭（退还语义 + 413 计次 + fail-closed）。
+8. ~~`credit_lots` 批次账本~~ ✅ 已关闭（0026，批次 FIFO + 退款精确准入）。
+9. ~~退款闭环（P0-1）~~ ✅ 已关闭（债务化 0021 + webhook 中间态 0022 + 回收工作台）。
+10. ~~争议链路（P2-2）~~ ✅ 已关闭（N-13 状态机 + 0028 佣金冲销 + 0036 奖励发放闭环）。
+11. ~~webhook inbox + 每日对账~~ ✅ 已关闭（0031 三规则对账 + reconcile_anomaly 告警走 outbox）。
+12. ~~幂等键生命周期（P1-5）~~ ✅ 已关闭（0032 按用户隔离幂等键 + 输入硬限制）。
+13. 跨实例限流 ✅（Upstash fail-closed 已落地）；**AI 成本/错误率告警条目 + 迁移失败告警发射点仍待补**（docs/16）。
+14. 退款政策条款、争议举证导出（v1 手工口径已定）、风控节流——**仍待办（需求驱动）**。
+15. 文档收口：No-Go 整改正文 ✅、docs/12 悬空引用 ✅；**各模块旧状态标记收口随本批完成**。
 
 ---
 

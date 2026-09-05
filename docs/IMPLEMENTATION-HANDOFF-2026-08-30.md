@@ -585,6 +585,33 @@ BEGIN/ROLLBACK 不留痕）；静态断言 +5（db-rbac-static，59 全过）；
 **⑤ 文档**：docs/05 §3.4 重写为已落地 + P1-联盟-1 关闭；docs/03 迁移清单 +0036；docs/10 触发点表 +affiliate_reward 行。
 
 
+### 1.37 第二十九批：用户画像字段（0037）+ 文档状态收口（2026-09-05）
+
+**① 迁移 0037（已应用云端库与本地 E2E 双栈）**：`users` 加 `signup_device` /
+`last_login_device` / `last_login_at` / `country` 四列（后台用户画像：设备(UA)/
+注册设备/最近登录设备、国家地区，参照外部后台管理系统字段）。数据最小化：
+只存解析后的「类型 · OS」短语与 ISO 国家码，不存原始 UA；users 表 RLS deny-all
+（0024）沿用。
+
+**② 采集链路**：`lib/user-env.ts` 解析 UA + 国别头只信任平台覆写
+（TRUSTED_PROXY 口径与 lib/ip.ts 一致，默认 none 不信任可伪造头）。采集时刻 =
+登录/注册——jwt 回调 account 分支（OAuth/credentials/One-Tap 登录与 OAuth 首注）
+与 verify-code 注册路由（credentials 直接建号不经 jwt insert 分支，必须单独接线）；
+saveUser 老用户分支刷新登录字段且吞错。`toSafeUser` 出口排除画像字段（仅管理员可见）。
+
+**③ 后台三处展示**：用户列表（国家地区/注册设备/最近登录设备/最近支付/注册时间）、
+用户详情（画像区块：含注册 IP/登录方式）、付费订单（支付成功时间/国家地区/注册设备/
+用户注册时间，本页批量联查 users 拼装）。测试：`__tests__/user-env.test.ts`（UA 解析/
+国家格式化/信任边界 13 用例）+ db-rbac-static 第五批静态断言；61 文件 397 用例全绿；
+e2e 60/60 全绿；端到端探针（注册→登录→DB 校验→后台页面渲染→清理）全链路通过。
+
+**④ 文档状态收口**：docs/README（索引 9 行 + P0 表 8 行 + 15 步清单 + 失效锚点）、
+boundary-spec（N-1/N-3/N-15 三行自相矛盾 + N-8 过时口径）、docs/15（30 处过时
+❌/⚠️ 升级，现存 No-Go 级为 0）、docs/13（首部两块过时警告）、docs/11（GDPR 行 +
+回放矛盾）、docs/16（头部口径 + cron 指标行）。
+
+**验证**：`tsc --noEmit` 通过；全量 Vitest 61 文件 397 用例通过；ESLint 0 errors。
+
 ---
 
 ## 2. 已具备的模块能力（已有实现，不等于生产就绪）
