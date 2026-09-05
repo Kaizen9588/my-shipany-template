@@ -139,7 +139,6 @@ jobs:
             exit 1
           fi
           for i in 1 2 3; do
-          for i in 1 2 3; do
             npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
             npx supabase stop --no-backup 2>/dev/null || true
@@ -274,7 +273,6 @@ jobs:
           if [ "$FAIL_PULL" = true ]; then
             exit 1
           fi
-          for i in 1 2 3; do
           for i in 1 2 3; do
             npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
