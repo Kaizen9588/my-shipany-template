@@ -86,16 +86,25 @@ jobs:
           # 暴露——资金/审批 RPC 走 .schema("private")），init --force 会用默认
           # 配置覆盖掉它（前几轮 CI 红的根因）
           # ECR Public 突发节流（toomanyrequests: Rate exceeded）：CLI 并行拉
-          # 13 个镜像会撞限流。先串行预拉已知镜像（每镜像自带重试），start 只剩
-          # 少量并行拉取；外层再对 start 整体重试兜底
-          IMAGES="public.ecr.aws/supabase/gotrue:v2.196.0 public.ecr.aws/supabase/kong:2.8.1 public.ecr.aws/supabase/postgrest:v16.1 public.ecr.aws/supabase/postgres:17.6.1.165 public.ecr.aws/supabase/mailpit:v1.30.2 public.ecr.aws/supabase/logflare:1.50.4 public.ecr.aws/supabase/postgres-meta:v0.98.0 public.ecr.aws/supabase/storage-api:v1.70.3 public.ecr.aws/supabase/realtime:v2.129.3"
+          # 13 个镜像会撞限流。改为逐个预拉——优先 docker.io（限额宽松），失败再
+          # 退回 ECR，本地 retag 成 CLI 期望的 ECR 名（compose pull policy=missing
+          # 发现本地已有镜像即跳过拉取）
+          IMAGES="gotrue:v2.196.0 kong:2.8.1 postgrest:v16.1 postgres:17.6.1.165 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 realtime:v2.129.3"
           for img in $IMAGES; do
-            for try in 1 2 3 4; do
-              docker pull "$img" && break
-              echo "pull $img failed (attempt $try), backoff 15s"
-              sleep 15
-              [ $try -eq 4 ] && exit 1
+            ecr="public.ecr.aws/supabase/$img"
+            docker image inspect "$ecr" > /dev/null 2>&1 && continue
+            pulled=false
+            for src in "docker.io/supabase/$img" "$ecr"; do
+              for try in 1 2 3; do
+                if docker pull "$src"; then
+                  [ "$src" != "$ecr" ] && docker tag "$src" "$ecr"
+                  pulled=true
+                  break 2
+                fi
+                sleep 10
+              done
             done
+            [ "$pulled" = true ] || { echo "all registries failed for $img"; exit 1; }
           done
           for i in 1 2 3; do
             npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
@@ -173,16 +182,25 @@ jobs:
           # 暴露——资金/审批 RPC 走 .schema("private")），init --force 会用默认
           # 配置覆盖掉它（前几轮 CI 红的根因）
           # ECR Public 突发节流（toomanyrequests: Rate exceeded）：CLI 并行拉
-          # 13 个镜像会撞限流。先串行预拉已知镜像（每镜像自带重试），start 只剩
-          # 少量并行拉取；外层再对 start 整体重试兜底
-          IMAGES="public.ecr.aws/supabase/gotrue:v2.196.0 public.ecr.aws/supabase/kong:2.8.1 public.ecr.aws/supabase/postgrest:v16.1 public.ecr.aws/supabase/postgres:17.6.1.165 public.ecr.aws/supabase/mailpit:v1.30.2 public.ecr.aws/supabase/logflare:1.50.4 public.ecr.aws/supabase/postgres-meta:v0.98.0 public.ecr.aws/supabase/storage-api:v1.70.3 public.ecr.aws/supabase/realtime:v2.129.3"
+          # 13 个镜像会撞限流。改为逐个预拉——优先 docker.io（限额宽松），失败再
+          # 退回 ECR，本地 retag 成 CLI 期望的 ECR 名（compose pull policy=missing
+          # 发现本地已有镜像即跳过拉取）
+          IMAGES="gotrue:v2.196.0 kong:2.8.1 postgrest:v16.1 postgres:17.6.1.165 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 realtime:v2.129.3"
           for img in $IMAGES; do
-            for try in 1 2 3 4; do
-              docker pull "$img" && break
-              echo "pull $img failed (attempt $try), backoff 15s"
-              sleep 15
-              [ $try -eq 4 ] && exit 1
+            ecr="public.ecr.aws/supabase/$img"
+            docker image inspect "$ecr" > /dev/null 2>&1 && continue
+            pulled=false
+            for src in "docker.io/supabase/$img" "$ecr"; do
+              for try in 1 2 3; do
+                if docker pull "$src"; then
+                  [ "$src" != "$ecr" ] && docker tag "$src" "$ecr"
+                  pulled=true
+                  break 2
+                fi
+                sleep 10
+              done
             done
+            [ "$pulled" = true ] || { echo "all registries failed for $img"; exit 1; }
           done
           for i in 1 2 3; do
             npx supabase start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
