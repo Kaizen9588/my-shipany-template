@@ -98,36 +98,47 @@ jobs:
           # 13 个镜像会撞限流。改为逐个预拉——优先 docker.io（限额宽松），失败再
           # 退回 ECR，本地 retag 成 CLI 期望的 ECR 名（compose pull policy=missing
           # 发现本地已有镜像即跳过拉取）
-          IMAGES="kong:2.8.1 postgrest:v16.1 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 gotrue:v2.196.0 realtime:v2.129.3 postgres:17.6.1.165"
+          DOCKERHUB_IMAGES="postgres:17.6.1.165 logflare:1.50.4 gotrue:v2.196.0 storage-api:v1.70.3 postgres-meta:v0.98.0 realtime:v2.129.3"
+          ECR_IMAGES="postgrest:v16.1 kong:2.8.1 mailpit:v1.30.2"
           mkdir -p /tmp/supabase-images
-          # 两遍拉取：第一遍全试（失败不阻塞后面的镜像，最大化入缓存进度），
-          # 第二遍专攻失败者并用更长退避（ECR 节流窗口常以分钟计）
-          FAILED=""
-          for pass in 1 2; do
-            for img in $IMAGES; do
-              ecr="public.ecr.aws/supabase/$img"
-              docker image inspect "$ecr" > /dev/null 2>&1 && continue
-              tar="/tmp/supabase-images/$(basename "$img" | tr ':.' '__').tar"
-              if [ -f "$tar" ]; then docker load -i "$tar" && continue; fi
-              if [ "$pass" = 2 ] && ! echo "$FAILED" | grep -q "$img"; then continue; fi
-              if [ "$pass" = 1 ]; then
-                for backoff in 10 30; do
-                  docker pull "$ecr" && { docker save "$ecr" -o "$tar"; FAILED="$FAILED $img"; break; } || { FAILED="$FAILED $img"; echo "pull $ecr throttled, backoff ${backoff}s"; sleep $backoff; break; }
-                done
-              else
-                ok=false
-                for backoff in 30 60 120 240 300 300; do
-                  if docker pull "$ecr"; then ok=true; docker save "$ecr" -o "$tar"; break; fi
-                  echo "pull $ecr throttled (pass2), backoff ${backoff}s"
-                  sleep $backoff
-                done
-                if [ "$ok" != true ]; then echo "giving up on $img this run (banked progress saved)"; FAIL_PULL=true; fi
+          # 分源拉取：大镜像 Docker Hub 有同名 tag（匿名 100/6h 无压力）；
+          # postgrest/kong/mailpit 仅 ECR 有（体积小，节流可退避扛过）。
+          # 统一 retag 成 CLI 期望的 ECR 名（compose 本地有镜像即跳过拉取）
+          pull_with_retry() {
+            src="$1"; dst="$2"
+            for backoff in 10 30 60 120 240; do
+              if docker pull "$src"; then
+                [ "$src" != "$dst" ] && docker tag "$src" "$dst"
+                return 0
               fi
+              echo "pull $src throttled, backoff ${backoff}s"
+              sleep $backoff
             done
+            return 1
+          }
+          FAIL_PULL=false
+          for img in $DOCKERHUB_IMAGES $ECR_IMAGES; do
+            ecr="public.ecr.aws/supabase/$img"
+            docker image inspect "$ecr" > /dev/null 2>&1 && continue
+            tar="/tmp/supabase-images/$(basename "$img" | tr ':.' '__').tar"
+            if [ -f "$tar" ]; then docker load -i "$tar" && continue; fi
+            if echo " $DOCKERHUB_IMAGES " | grep -q " $img "; then
+              if pull_with_retry "docker.io/supabase/$img" "$ecr"; then
+                docker save "$ecr" -o "$tar"
+                continue
+              fi
+            fi
+            if ! pull_with_retry "$ecr" "$ecr"; then
+              echo "giving up on $img (banked progress saved)"
+              FAIL_PULL=true
+            else
+              docker save "$ecr" -o "$tar"
+            fi
           done
-          if [ "${FAIL_PULL:-false}" = true ]; then
+          if [ "$FAIL_PULL" = true ]; then
             exit 1
           fi
+          for i in 1 2 3; do
           for i in 1 2 3; do
             npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
@@ -223,36 +234,47 @@ jobs:
           # 13 个镜像会撞限流。改为逐个预拉——优先 docker.io（限额宽松），失败再
           # 退回 ECR，本地 retag 成 CLI 期望的 ECR 名（compose pull policy=missing
           # 发现本地已有镜像即跳过拉取）
-          IMAGES="kong:2.8.1 postgrest:v16.1 mailpit:v1.30.2 logflare:1.50.4 postgres-meta:v0.98.0 storage-api:v1.70.3 gotrue:v2.196.0 realtime:v2.129.3 postgres:17.6.1.165"
+          DOCKERHUB_IMAGES="postgres:17.6.1.165 logflare:1.50.4 gotrue:v2.196.0 storage-api:v1.70.3 postgres-meta:v0.98.0 realtime:v2.129.3"
+          ECR_IMAGES="postgrest:v16.1 kong:2.8.1 mailpit:v1.30.2"
           mkdir -p /tmp/supabase-images
-          # 两遍拉取：第一遍全试（失败不阻塞后面的镜像，最大化入缓存进度），
-          # 第二遍专攻失败者并用更长退避（ECR 节流窗口常以分钟计）
-          FAILED=""
-          for pass in 1 2; do
-            for img in $IMAGES; do
-              ecr="public.ecr.aws/supabase/$img"
-              docker image inspect "$ecr" > /dev/null 2>&1 && continue
-              tar="/tmp/supabase-images/$(basename "$img" | tr ':.' '__').tar"
-              if [ -f "$tar" ]; then docker load -i "$tar" && continue; fi
-              if [ "$pass" = 2 ] && ! echo "$FAILED" | grep -q "$img"; then continue; fi
-              if [ "$pass" = 1 ]; then
-                for backoff in 10 30; do
-                  docker pull "$ecr" && { docker save "$ecr" -o "$tar"; FAILED="$FAILED $img"; break; } || { FAILED="$FAILED $img"; echo "pull $ecr throttled, backoff ${backoff}s"; sleep $backoff; break; }
-                done
-              else
-                ok=false
-                for backoff in 30 60 120 240 300 300; do
-                  if docker pull "$ecr"; then ok=true; docker save "$ecr" -o "$tar"; break; fi
-                  echo "pull $ecr throttled (pass2), backoff ${backoff}s"
-                  sleep $backoff
-                done
-                if [ "$ok" != true ]; then echo "giving up on $img this run (banked progress saved)"; FAIL_PULL=true; fi
+          # 分源拉取：大镜像 Docker Hub 有同名 tag（匿名 100/6h 无压力）；
+          # postgrest/kong/mailpit 仅 ECR 有（体积小，节流可退避扛过）。
+          # 统一 retag 成 CLI 期望的 ECR 名（compose 本地有镜像即跳过拉取）
+          pull_with_retry() {
+            src="$1"; dst="$2"
+            for backoff in 10 30 60 120 240; do
+              if docker pull "$src"; then
+                [ "$src" != "$dst" ] && docker tag "$src" "$dst"
+                return 0
               fi
+              echo "pull $src throttled, backoff ${backoff}s"
+              sleep $backoff
             done
+            return 1
+          }
+          FAIL_PULL=false
+          for img in $DOCKERHUB_IMAGES $ECR_IMAGES; do
+            ecr="public.ecr.aws/supabase/$img"
+            docker image inspect "$ecr" > /dev/null 2>&1 && continue
+            tar="/tmp/supabase-images/$(basename "$img" | tr ':.' '__').tar"
+            if [ -f "$tar" ]; then docker load -i "$tar" && continue; fi
+            if echo " $DOCKERHUB_IMAGES " | grep -q " $img "; then
+              if pull_with_retry "docker.io/supabase/$img" "$ecr"; then
+                docker save "$ecr" -o "$tar"
+                continue
+              fi
+            fi
+            if ! pull_with_retry "$ecr" "$ecr"; then
+              echo "giving up on $img (banked progress saved)"
+              FAIL_PULL=true
+            else
+              docker save "$ecr" -o "$tar"
+            fi
           done
-          if [ "${FAIL_PULL:-false}" = true ]; then
+          if [ "$FAIL_PULL" = true ]; then
             exit 1
           fi
+          for i in 1 2 3; do
           for i in 1 2 3; do
             npx --yes supabase@2.116.0 start -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
