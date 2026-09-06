@@ -100,6 +100,9 @@ test.describe("独立 signin 页", () => {
     await page.goto("/auth/signin");
     await page.locator("#email").fill("seed-user@test.local");
     await page.locator("#password").fill("SeedUser123456");
+    // 慢机器上水合未完成时点击会被原生表单提交吞掉（无 CredentialsSignin、
+    // 无跳转），等网络空闲确保 React 已接管表单再点
+    await page.waitForLoadState("networkidle");
     await page.locator("button.w-full", { hasText: "Sign in" }).click();
     // 头像 alt = 当前昵称（settings 用例会改昵称，前缀固定 seed-nick）
     await expect(page.locator('img[alt^="seed-nick"]').first()).toBeVisible({
