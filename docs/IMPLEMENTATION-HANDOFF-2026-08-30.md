@@ -639,6 +639,18 @@ CI 在全新 GitHub runner 上跑通 api-test + e2e-test 两个 job，逐层排�
 180s 不通）——gate.sh 入口显式清代理 + NO_PROXY=localhost（2026-09-05 实测两连挂
 后修复）。最终：GitHub Actions 三 job 全绿（Test & Build / API Tests / E2E Tests）。
 
+### 1.39 第三十一批：自托管 GitHub Actions runner（2026-09-06）
+
+- **位置**：内网服务器 ~/apps/actions-runner（wang 用户，systemd 常驻服务
+  actions.runner.Kaizen9588-my-shipany-template.wang），标签 self-hosted/Linux/X64/cron。
+- **动机**：GitHub 托管 runner 每次 ~20 分钟且被 ECR Public 匿名拉取限流反复折腾；
+  自托管后 docker 镜像/pnpm store/Playwright 浏览器全热缓存，且 runner 就在内网、
+  测试报告可直推门户。
+- **接入**：三个 job `runs-on: [self-hosted]`；常驻 daemon 上每次 start 前防御性
+  `supabase stop`（清上一轮残留容器）。首次拉取镜像由既有分源预拉 + 退避承担。
+- **注意**：runner 用户 wang 有 docker 权限与无密码 sudo（Playwright --with-deps
+  依赖 apt）；仓库必须保持 private；服务器重启后 systemd 自动拉起 runner。
+
 ---
 
 ## 2. 已具备的模块能力（已有实现，不等于生产就绪）

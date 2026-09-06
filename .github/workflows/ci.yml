@@ -6,7 +6,8 @@ on:
   pull_request:
     branches: [master, main]
 
-# 同分支连推时取消旧运行，省配额
+# runner：自托管（内网服务器 ~/apps/actions-runner，标签 self-hosted）——
+# 热缓存免 ECR 限流、报告可直推内网门户；同分支连推时取消旧运行
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -14,7 +15,7 @@ concurrency:
 jobs:
   test:
     name: Test & Build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted]
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +51,7 @@ jobs:
 
   api-test:
     name: API Tests (all routes)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted]
     needs: test # 先过单测/构建，再花时间跑接口全量
     steps:
       - uses: actions/checkout@v4
@@ -139,7 +140,8 @@ jobs:
             exit 1
           fi
           for i in 1 2 3; do
-            npx --yes supabase@2.116.0 start --ignore-health-check -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
+            npx supabase stop --no-backup 2>/dev/null || true
+          npx --yes supabase@2.116.0 start --ignore-health-check -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
             npx supabase stop --no-backup 2>/dev/null || true
             sleep 90
@@ -193,7 +195,7 @@ jobs:
 
   e2e-test:
     name: E2E Tests (all suites)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted]
     # 串行于 api-test：两个 job 并发起栈时 Docker Hub 拉镜像容易撞限流
     needs: [test, api-test]
     steps:
@@ -283,7 +285,8 @@ jobs:
             exit 1
           fi
           for i in 1 2 3; do
-            npx --yes supabase@2.116.0 start --ignore-health-check -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
+            npx supabase stop --no-backup 2>/dev/null || true
+          npx --yes supabase@2.116.0 start --ignore-health-check -x studio,imgproxy,inbucket,realtime,vector,analytics,edge-runtime,pooler && break
             echo "supabase start attempt $i failed, retrying in 90s…"
             npx supabase stop --no-backup 2>/dev/null || true
             sleep 90
