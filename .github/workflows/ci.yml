@@ -24,7 +24,14 @@ jobs:
         with:
           version: 11
 
-      - name: Setup Node
+      - name: Setup Node (self-hosted — local pnpm store, skip cache upload)
+        if: runner.name == 'wang'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Node (hosted fallback — with pnpm cache)
+        if: runner.name != 'wang'
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -61,7 +68,14 @@ jobs:
         with:
           version: 11
 
-      - name: Setup Node
+      - name: Setup Node (self-hosted — local pnpm store, skip cache upload)
+        if: runner.name == 'wang'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Node (hosted fallback — with pnpm cache)
+        if: runner.name != 'wang'
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -71,6 +85,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Cache Playwright browsers
+        if: runner.name != 'wang'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
@@ -80,6 +95,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Restore supabase images cache
+        if: runner.name != 'wang'
         uses: actions/cache/restore@v4
         with:
           path: /tmp/supabase-images
@@ -180,7 +196,7 @@ jobs:
           retention-days: 30
 
       - name: Save supabase images cache
-        if: always()
+        if: always() && runner.name != 'wang'
         uses: actions/cache/save@v4
         with:
           path: /tmp/supabase-images
@@ -206,7 +222,14 @@ jobs:
         with:
           version: 11
 
-      - name: Setup Node
+      - name: Setup Node (self-hosted — local pnpm store, skip cache upload)
+        if: runner.name == 'wang'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Node (hosted fallback — with pnpm cache)
+        if: runner.name != 'wang'
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -216,6 +239,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Cache Playwright browsers
+        if: runner.name != 'wang'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
@@ -225,6 +249,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Restore supabase images cache
+        if: runner.name != 'wang'
         uses: actions/cache/restore@v4
         with:
           path: /tmp/supabase-images
@@ -326,7 +351,7 @@ jobs:
           retention-days: 30
 
       - name: Save supabase images cache
-        if: always()
+        if: always() && runner.name != 'wang'
         uses: actions/cache/save@v4
         with:
           path: /tmp/supabase-images
