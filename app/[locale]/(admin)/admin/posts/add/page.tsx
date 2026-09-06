@@ -1,4 +1,4 @@
-import { PostStatus, findPostBySlug, insertPost } from "@/models/post";
+import { PostStatus, postStatusNames, findPostBySlug, insertPost } from "@/models/post";
 import { localeNames, locales } from "@/i18n/locale";
 
 import Empty from "@/components/blocks/empty";
@@ -16,15 +16,15 @@ export default async function () {
   }
 
   const form: FormSlotType = {
-    title: "Add Post",
+    title: "新增文章",
     crumb: {
       items: [
         {
-          title: "Posts",
+          title: "文章管理",
           url: "/admin/posts",
         },
         {
-          title: "Add Post",
+          title: "新增文章",
           is_active: true,
         },
       ],
@@ -32,26 +32,28 @@ export default async function () {
     fields: [
       {
         name: "title",
-        title: "Title",
+        title: "标题",
         type: "text",
-        placeholder: "Post Title",
+        placeholder: "文章标题",
         validation: {
           required: true,
+          message: "请输入标题",
         },
       },
       {
         name: "slug",
-        title: "Slug",
+        title: "URL 路径（Slug）",
         type: "text",
         placeholder: "what-is-shipany",
         validation: {
           required: true,
+          message: "请输入 URL 路径",
         },
-        tip: "post slug should be unique, visit like: /blog/what-is-shipany",
+        tip: "路径需唯一，前台访问地址形如 /blog/what-is-shipany",
       },
       {
         name: "locale",
-        title: "Locale",
+        title: "发布语言",
         type: "select",
         options: locales.map((locale: string) => ({
           title: localeNames[locale],
@@ -64,48 +66,48 @@ export default async function () {
       },
       {
         name: "status",
-        title: "Status",
+        title: "状态",
         type: "select",
         options: Object.values(PostStatus).map((status: string) => ({
-          title: status,
+          title: postStatusNames[status] ?? status,
           value: status,
         })),
         value: PostStatus.Created,
       },
       {
         name: "description",
-        title: "Description",
+        title: "描述",
         type: "textarea",
-        placeholder: "Post Description",
+        placeholder: "文章描述，用于 SEO 和列表展示",
       },
       {
         name: "cover_url",
-        title: "Cover URL",
+        title: "封面图片 URL",
         type: "url",
-        placeholder: "Post Cover Image URL",
+        placeholder: "封面图片地址",
       },
       {
         name: "author_name",
-        title: "Author Name",
+        title: "作者名称",
         type: "text",
-        placeholder: "Author Name",
+        placeholder: "作者名称",
       },
       {
         name: "author_avatar_url",
-        title: "Author Avatar URL",
+        title: "作者头像 URL",
         type: "url",
-        placeholder: "Author Avatar Image URL",
+        placeholder: "作者头像图片地址",
       },
       {
         name: "content",
-        title: "Content",
+        title: "正文内容（Markdown）",
         type: "markdown_editor",
-        placeholder: "Post Content",
+        placeholder: "用 Markdown 撰写文章正文",
       },
     ],
     submit: {
       button: {
-        title: "Submit",
+        title: "提交",
       },
       handler: async (data: FormData, passby: any) => {
         "use server";
@@ -128,12 +130,12 @@ export default async function () {
           !locale ||
           !locale.trim()
         ) {
-          throw new Error("invalid form data");
+          throw new Error("表单数据不完整，请检查标题、路径和语言");
         }
 
         const existPost = await findPostBySlug(slug, locale);
         if (existPost) {
-          throw new Error("post with same slug already exists");
+          throw new Error("相同路径的文章已存在，请换一个 URL 路径");
         }
 
         const post: Post = {
@@ -155,7 +157,7 @@ export default async function () {
 
           return {
             status: "success",
-            message: "Post added",
+            message: "文章已创建",
             redirect_url: "/admin/posts",
           };
         } catch (err: any) {

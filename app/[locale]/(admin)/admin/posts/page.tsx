@@ -3,7 +3,8 @@ import { NavItem } from "@/types/blocks/base";
 import { Post } from "@/types/post";
 import TableSlot from "@/components/dashboard/slots/table";
 import { Table as TableSlotType } from "@/types/slots/table";
-import { getAllPosts } from "@/models/post";
+import { getAllPosts, postStatusNames } from "@/models/post";
+import { localeNames } from "@/i18n/locale";
 import moment from "moment";
 
 export default async function () {
@@ -36,10 +37,16 @@ export default async function () {
       {
         name: "locale",
         title: "语言",
+        callback: (item: Post) => {
+          return localeNames[item.locale ?? ""] ?? item.locale;
+        },
       },
       {
         name: "status",
         title: "状态",
+        callback: (item: Post) => {
+          return postStatusNames[item.status ?? ""] ?? item.status;
+        },
       },
       {
         name: "created_at",
@@ -69,7 +76,7 @@ export default async function () {
       },
     ],
     data: posts,
-    empty_message: "No posts found",
+    empty_message: "暂无文章",
   };
 
   return <TableSlot {...table} />;

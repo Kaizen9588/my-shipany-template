@@ -8,6 +8,13 @@ export enum PostStatus {
   Offline = "offline",
 }
 
+export const postStatusNames: Record<string, string> = {
+  [PostStatus.Created]: "草稿",
+  [PostStatus.Online]: "已上线",
+  [PostStatus.Offline]: "已下线",
+  [PostStatus.Deleted]: "已删除",
+};
+
 export async function insertPost(post: Post) {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.from("posts").insert(post);
