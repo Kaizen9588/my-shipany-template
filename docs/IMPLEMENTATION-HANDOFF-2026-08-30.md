@@ -663,6 +663,26 @@ CI 在全新 GitHub runner 上跑通 api-test + e2e-test 两个 job，逐层排�
 - **结果**：三 job 全绿（Test & Build / API Tests / E2E Tests）， runners 热身后
   单轮 wall time 显著低于 GitHub 托管（且不再吃托管分钟数、无 ECR 限流面）。
 
+### 1.40 第三十二批：后台文章表单中文化 + 导航下拉嵌套 <a> 修复（2026-09-06）
+
+- **文章管理中文化**：写文章仅管理员一人，新增/编辑表单全量中文化（字段标签、
+  占位符、tip、校验消息、成功/报错提示、面包屑、提交按钮）；`models/post.ts`
+  新增 `postStatusNames` 映射（草稿/已上线/已下线/已删除），列表页状态、语言列
+  与空态同步中文化。
+- **header 下拉嵌套 `<a>` 修复**：`NavigationMenuLink`（渲染 `<a>`）曾包住整个
+  子项列表、子项 `Link` 再渲染 `<a>`，下拉内容悬停挂载时触发 React
+  validateDOMNesting / hydration 报错；改为每个子项 `<NavigationMenuLink asChild>`
+  与 `Link` 合并为单个 `<a>`（shadcn/ui 标准写法）。
+- **e2e 回归用例**：`landing.spec.ts`「Showcase 子菜单展开后无嵌套 `<a>`、无
+  hydration 报错」——DOM 层断言 `a a` 计数为 0 + console 过滤 hydration 类报错；
+  双向验证（修复后绿 / stash 修复后红 / 恢复后绿）。此类 DOM/hydration 缺陷
+  vitest 纯 node 环境守不住，归位 e2e。
+- **已知边界**：本地跑 e2e / gate 前需停 dev server——Next.js 16 的 dev 锁是
+  项目目录级（不分端口），3000 dev 在跑时 3101 测试 server 报
+  "Another next dev server is already running" 起不来。
+- **基线**：`npx tsc --noEmit` 0 错；vitest 61 文件 402 用例 + 3 skipped 全绿；
+  lint 0 errors（既有 warnings 基线内）；e2e 回归用例绿。
+
 ---
 
 ## 2. 已具备的模块能力（已有实现，不等于生产就绪）
