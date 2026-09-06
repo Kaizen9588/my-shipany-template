@@ -650,6 +650,18 @@ CI 在全新 GitHub runner 上跑通 api-test + e2e-test 两个 job，逐层排�
   `supabase stop`（清上一轮残留容器）。首次拉取镜像由既有分源预拉 + 退避承担。
 - **注意**：runner 用户 wang 有 docker 权限与无密码 sudo（Playwright --with-deps
   依赖 apt）；仓库必须保持 private；服务器重启后 systemd 自动拉起 runner。
+- **接入期排掉的四个坑**：
+  1. 服务器直连 github「能握手撑不住传输」——actions/checkout 换 **SSH 通道**：
+     runner 上生成专用 key → 注册为仓库 Deploy Key（只读）→ git 全局
+     `url.git@github.com:.insteadOf https://github.com/`，checkout 零改动；
+  2. GitHub actions/cache（镜像 1GB tar / pnpm store）从内网向缓存服务上传下载
+     近乎卡死 → 按 `runner.name` 条件跳过（镜像常驻本地 daemon、store 本就持久，
+     缓存只是托管 runner 的替代品）；
+  3. 常驻 daemon 上前一轮 supabase 容器残留 → start 前防御性 `supabase stop`；
+  4. 慢机器水合竞态：signin 页未水合时点击被原生表单提交吞掉（无
+     CredentialsSignin、无跳转）→ 点击前 `waitForLoadState("networkidle")`。
+- **结果**：三 job 全绿（Test & Build / API Tests / E2E Tests）， runners 热身后
+  单轮 wall time 显著低于 GitHub 托管（且不再吃托管分钟数、无 ECR 限流面）。
 
 ---
 
