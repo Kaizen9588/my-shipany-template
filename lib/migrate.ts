@@ -151,6 +151,14 @@ export async function runMigrations(): Promise<MigrateResult> {
     return { applied, pending: getPendingMigrationFiles(files, appliedVersions) };
   } catch (error) {
     await client.query("ROLLBACK");
+    // docs/16 §5 发射点：部署期迁移执行失败（此时 DB 可达，事件可落库；
+    // 告警通道若不可达由 emitStartupFailure 内部吞错）
+    try {
+      const { emitStartupFailure } = await import("@/lib/oplog");
+      await emitStartupFailure("migration execution", error);
+    } catch {
+      // 吞错：不掩盖原始迁移错误
+    }
     throw error;
   } finally {
     client.release();

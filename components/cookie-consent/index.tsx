@@ -9,7 +9,7 @@ const CONSENT_KEY = "cookie_consent";
 
 /**
  * Cookie 同意横幅（6.17 GDPR）
- * 同意后才允许加载 GA/PostHog/OpenPanel 追踪（analytics 组件读取同一标记）。
+ * 同意后才允许加载 GA/PostHog 追踪（analytics 组件读取同一标记）。
  *
  * 存储：JSON（analytics / recording 两个布尔位）。
  * 兼容旧值：历史纯字符串 "accepted"/"declined" 按旧语义读（accepted=全允许）。

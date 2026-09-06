@@ -76,3 +76,23 @@ export function deleteTelemetryUser(distinctId: string): void {
     console.error("[telemetry] deleteUser failed:", e);
   }
 }
+
+/**
+ * 服务端异常上报（docs/11 v2 错误追踪：PostHog Error Tracking）
+ * 用于资金/定时任务等关键路径的 catch 块；吞错纪律——监控永不阻塞主流程。
+ * PostHog 未配置时静默跳过（与 deleteTelemetryUser 同口径）。
+ */
+export function captureServerException(
+  error: unknown,
+  properties?: Record<string, unknown>
+): void {
+  try {
+    const c = getClient();
+    if (!c) {
+      return;
+    }
+    c.captureException(error, undefined, properties || {});
+  } catch {
+    // 吞错
+  }
+}

@@ -19,7 +19,10 @@ export async function register() {
   const env = validateEnv();
   if (!env.ok) {
     console.error("[env] missing required variables:", env.errors.join("; "));
-    throw new Error(`invalid environment: ${env.errors.join("; ")}`);
+    const err = new Error(`invalid environment: ${env.errors.join("; ")}`);
+    const { emitStartupFailure } = await import("./lib/oplog");
+    await emitStartupFailure("environment validation", err);
+    throw err;
   }
   if (env.warnings.length > 0) {
     console.warn("[env] warnings:", env.warnings.join("; "));
@@ -37,6 +40,8 @@ export async function register() {
     }
   } catch (e) {
     console.error("[migrate] schema verification failed:", e);
+    const { emitStartupFailure } = await import("./lib/oplog");
+    await emitStartupFailure("migration verification", e);
     throw e;
   }
 }

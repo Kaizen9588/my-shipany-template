@@ -314,3 +314,42 @@ export function fireAndForgetOpEvent(input: OpEventInput): void {
 export function trackCriticalEvent(input: OpEventInput): void {
   recordOpEvent(input);
 }
+
+/**
+ * 启动期失败发射点（docs/16 §5 接入点清单：system.env_or_migration_failed）
+ *
+ * 场景：环境变量校验失败 / 迁移校验失败 / 迁移执行失败——此时数据库往往
+ * 恰好不可达，op_event 落库与 outbox 均可能失败，因此这里是尽力而为：
+ * ① recordOpEvent（critical，内部自带吞错与降级路径）
+ * ② 直接外呼告警通道（notify 不依赖数据库，飞书/企微 webhook 可达即告警）
+ * 任何失败都静默吞掉，绝不掩盖原始启动错误。
+ */
+export async function emitStartupFailure(
+  stage: string,
+  error: unknown
+): Promise<void> {
+  const message = String(
+    error instanceof Error ? error.message : error
+  ).slice(0, 500);
+  try {
+    recordOpEvent({
+      event_type: "system.env_or_migration_failed",
+      severity: "critical",
+      source: "migration",
+      detail: { stage, error: message },
+    });
+  } catch {
+    // 吞错：启动失败路径上任何额外异常都不允许掩盖原始错误
+  }
+  try {
+    const { notifyChannel } = await import("@/lib/notify");
+    await notifyChannel({
+      title: `启动失败：${stage}`,
+      body: `**${stage}**\n\n\`${message}\`\n\n部署实例拒绝启动，请检查部署配置/迁移状态。`,
+      severity: "critical",
+      eventType: "system.env_or_migration_failed",
+    });
+  } catch {
+    // 吞错：同上
+  }
+}

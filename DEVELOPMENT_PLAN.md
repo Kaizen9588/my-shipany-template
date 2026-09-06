@@ -51,7 +51,7 @@
 | **AI SDK** | Vercel AI SDK | 4.1.x | OpenAI / DeepSeek / Replicate / OpenRouter |
 | **AI 视频** | Kling 自定义 Provider | - | 文生视频 |
 | **存储** | AWS S3 SDK | 3.740.x | 文件上传（有 SDK，无 UI） |
-| **分析** | Google Analytics + OpenPanel | - | 双通道（⚠️ OpenPanel 待 PostHog 接入后移除，见 6.5） |
+| **分析** | Google Analytics + PostHog | - | GA4 仅广告归因（OpenPanel 已于 2026-09-05 移除，见 6.5） |
 | **MDX** | @next/mdx | 16.3.1 | 博客内容渲染 |
 | **编辑器** | @uiw/react-md-editor | 4.0.x | 后台博文编辑 |
 | **包管理** | pnpm | 11.x | |
@@ -310,7 +310,7 @@ my-shipany-template/
 | 博客/CMS | ✅ | Markdown 文章，后台 CRUD |
 | 联盟营销 | ⚠️ 记录完成，发放待设计 | 邀请码 + 20% 奖励（上限 $50）已记录到 affiliates 表，但奖励「发放」闭环（提现/转积分）未设计 |
 | Google Analytics | ✅ | 环境变量配置（保留做广告归因） |
-| OpenPanel 分析 | ✅ | 环境变量配置（⚠️ 待 PostHog 接入后移除，见 6.5） |
+| OpenPanel 分析 | ✅ 已移除（2026-09-05） | PostHog 接入后按 6.5 收口移除（组件/env/依赖） |
 | S3 存储 SDK | ⚠️ | 有客户端封装，无上传 UI |
 | 主题切换 | ✅ | 亮/暗色，next-themes |
 | 法律页面 | ✅ | 隐私政策 + 服务条款 |

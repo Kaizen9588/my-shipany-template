@@ -976,3 +976,70 @@ describe("用户画像字段静态断言（0037 采集 + 管理端展示）", ()
     expect(detailPage).toContain("最近登录设备");
   });
 });
+
+describe("cron 加固 + 发射点静态断言（0038 + docs/16 §5 收口）", () => {
+  it("0038 cron_locks 租约锁：private + RLS + REVOKE/GRANT 成对 + TTL 语义", () => {
+    const migration = readFileSync(
+      "data/migrations/0038_cron_lock.sql",
+      "utf8"
+    );
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS private.cron_locks");
+    expect(migration).toContain("ENABLE ROW LEVEL SECURITY");
+    expect(migration).toContain(
+      "REVOKE ALL ON private.cron_locks FROM PUBLIC, anon, authenticated"
+    );
+    expect(migration).toContain("GRANT ALL ON private.cron_locks TO service_role");
+    expect(migration).toContain("locked_at < now() - make_interval(secs => p_ttl_seconds)");
+    expect(migration).toContain(
+      "GRANT EXECUTE ON FUNCTION private.try_acquire_cron_lock(text, int) TO service_role"
+    );
+    expect(migration).not.toMatch(/GRANT ALL ON FUNCTION/i);
+  });
+
+  it("cron 路由：先拿租约再执行，收尾记指标事件并释放锁", () => {
+    const route = readFileSync("app/api/cron/daily/route.ts", "utf8");
+    expect(route).toContain("tryAcquireCronLock()");
+    expect(route).toContain("another cron instance holds the lease");
+    expect(route).toContain("system.cron_daily_completed");
+    expect(route).toContain("releaseCronLock()");
+    // 子任务失败进 errors 数组 → warn 走 outbox
+    expect(route).toContain('errors.length > 0 ? "warn" : "info"');
+  });
+
+  it("发射点落地：登录爆发 / 环境与迁移失败", () => {
+    const guard = readFileSync("lib/login-guard.ts", "utf8");
+    expect(guard).toContain("auth.login_failed_burst");
+    expect(guard).toContain("maskEmailLocal(email)");
+    expect(guard).not.toContain("recordOpEvent({\n        event_type: \"auth.login_failed_burst\",\n        severity: \"critical\"");
+    const instrument = readFileSync("instrumentation.ts", "utf8");
+    expect(instrument).toContain('emitStartupFailure("environment validation"');
+    expect(instrument).toContain('emitStartupFailure("migration verification"');
+    const migrate = readFileSync("lib/migrate.ts", "utf8");
+    expect(migrate).toContain('emitStartupFailure("migration execution"');
+  });
+
+  it("错误监控最小接入：server/client 捕获 + error 页 + 资金路由", () => {
+    const server = readFileSync("lib/telemetry/server.ts", "utf8");
+    expect(server).toContain("captureServerException");
+    const client = readFileSync("lib/telemetry/index.ts", "utf8");
+    expect(client).toContain("captureClientException");
+    const errorPage = readFileSync("app/[locale]/error.tsx", "utf8");
+    expect(errorPage).toContain("captureClientException(error)");
+    for (const route of [
+      "app/api/stripe-notify/route.ts",
+      "app/api/creem-notify/route.ts",
+      "app/api/waffo-notify/route.ts",
+      "app/api/checkout/route.ts",
+    ]) {
+      expect(readFileSync(route, "utf8")).toContain("captureServerException");
+    }
+  });
+
+  it("OpenPanel 已移除（组件/env/依赖零残留）", () => {
+    const analytics = readFileSync("components/analytics/index.tsx", "utf8");
+    expect(analytics).not.toContain("OpenPanel");
+    expect(readFileSync("lib/env.ts", "utf8")).not.toContain("OPENPANEL");
+    const pkg = readFileSync("package.json", "utf8");
+    expect(pkg).not.toContain("@openpanel/nextjs");
+  });
+});

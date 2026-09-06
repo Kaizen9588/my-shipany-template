@@ -1,4 +1,7 @@
 import { respData, respErr } from "@/lib/resp";
+import { tryAcquireCronLock, releaseCronLock } from "@/lib/cron-lock";
+import { recordOpEvent } from "@/lib/oplog";
+import { captureServerException } from "@/lib/telemetry/server";
 import { expireStaleOrders } from "@/scripts/expire-orders";
 import { backupKeyTables } from "@/lib/backup";
 import { cleanupVerificationCodes } from "@/models/verification";
@@ -44,6 +47,19 @@ export async function GET(req: Request) {
       }
     }
 
+    // 单实例锁（docs/16 §cron 加固，迁移 0038）：并发触发时后到者直接跳过
+    let acquired = false;
+    try {
+      acquired = await tryAcquireCronLock();
+    } catch (e: any) {
+      return respErr(`cron lock unavailable: ${e?.message || e}`, 503);
+    }
+    if (!acquired) {
+      return respData({ skipped: "another cron instance holds the lease" });
+    }
+    const startedAt = Date.now();
+    const errors: string[] = [];
+
     const expired = await expireStaleOrders(60);
     const cleaned = await cleanupVerificationCodes();
     const cleanedAnonUsage = await cleanupAnonymousUsage(30);
@@ -66,7 +82,9 @@ export async function GET(req: Request) {
       Object.assign(reconcile, await reconcilePayments());
     } catch (e: any) {
       inboxError = String(e?.message || e);
+      errors.push(`inbox/reconcile: ${inboxError}`);
       console.error("[cron/daily] payment inbox/reconcile failed:", e);
+      captureServerException(e, { scope: "cron.inbox_reconcile" });
     }
 
     // AI 请求崩溃补偿 + 幂等键 TTL 清理（P1-AI，迁移 0032）；失败不阻塞其他任务
@@ -80,8 +98,38 @@ export async function GET(req: Request) {
       aiRecover.cleaned = await cleanupCompletedAiRequests(24);
     } catch (e: any) {
       aiError = String(e?.message || e);
+      errors.push(`ai_compensation: ${aiError}`);
       console.error("[cron/daily] ai request compensation failed:", e);
+      captureServerException(e, { scope: "cron.ai_compensation" });
     }
+
+    if (backup.error) {
+      errors.push(`backup: ${backup.error}`);
+    }
+
+    // 执行指标入 op_events（docs/16 §cron 加固）：有子任务失败 → warn 走
+    // outbox 持久化 + 告警链路；全绿 → info 直插
+    recordOpEvent({
+      event_type: "system.cron_daily_completed",
+      severity: errors.length > 0 ? "warn" : "info",
+      source: "cron",
+      detail: {
+        duration_ms: Date.now() - startedAt,
+        expired_orders: expired,
+        cleaned_verification_codes: cleaned,
+        cleaned_anonymous_usage: cleanedAnonUsage,
+        backup_files: backup.exported,
+        outbox_delivered: outbox.delivered,
+        inbox_replayed: inbox.replayed,
+        inbox_failed: inbox.failed,
+        reconcile_missing_events: reconcile.missing_events,
+        reconcile_amount_mismatches: reconcile.amount_mismatches,
+        ai_compensated: aiRecover.compensated,
+        ai_refunded: aiRecover.refunded,
+        errors,
+      },
+    });
+    releaseCronLock();
 
     return respData({
       expired_orders: expired,

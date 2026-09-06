@@ -1,6 +1,7 @@
 import { creemProvider } from "@/lib/payment";
 import { trackCriticalEvent } from "@/lib/oplog";
 import { logger } from "@/lib/logger";
+import { captureServerException } from "@/lib/telemetry/server";
 import { guardWebhookRequest, requestWithRawBody } from "@/lib/webhook-guard";
 import { processWebhookEvent } from "@/lib/webhook-process";
 
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
     );
   } catch (e: any) {
     logger.error(e, { route: "POST /api/creem-notify", stage: "parseWebhook" });
+    captureServerException(e, { scope: "webhook.creem" });
     trackCriticalEvent({
       event_type: "payment.webhook_invalid_signature",
       severity: "critical",

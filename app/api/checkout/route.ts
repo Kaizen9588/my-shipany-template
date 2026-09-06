@@ -11,6 +11,7 @@ import {
 } from "@/lib/payment/health";
 import { fireAndForgetOpEvent } from "@/lib/oplog";
 import { logger } from "@/lib/logger";
+import { captureServerException } from "@/lib/telemetry/server";
 import { getClientIp } from "@/lib/ip";
 import { rateLimit } from "@/lib/ratelimit";
 
@@ -180,6 +181,7 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     logger.error(e, { route: "POST /api/checkout", order_no });
+    captureServerException(e, { scope: "checkout", order_no });
     fireAndForgetOpEvent({
       event_type: "payment.checkout_failed",
       severity: "error",

@@ -14,6 +14,7 @@ interface PostHogLike {
   __loaded: boolean;
   init(token: string, config?: Record<string, unknown>): void;
   capture(event: string, properties?: Record<string, unknown>): void;
+  captureException?(error: unknown): void;
   identify(userId: string): void;
   isInitialized?(): boolean;
 }
@@ -74,5 +75,25 @@ export function identify(userId: string): void {
     });
   } catch (e) {
     // 静默
+  }
+}
+
+/**
+ * 客户端异常上报（docs/11 v2）：error 边界/全局错误页调用。
+ * 未加载完成或未配置时静默跳过（吞错纪律同 track）。
+ */
+export function captureClientException(error: unknown): void {
+  try {
+    if (typeof window === "undefined") {
+      return;
+    }
+    void ensureInit().then((posthog) => {
+      if (!posthog.__loaded) {
+        return;
+      }
+      posthog.captureException?.(error);
+    });
+  } catch {
+    // 吞错
   }
 }

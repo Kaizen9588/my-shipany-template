@@ -162,8 +162,8 @@ export function trackCriticalEvent(...)
 | payment.amount_mismatch | critical | handlePaymentEvent data==='mismatch' | ✅ 已接入 |
 | payment.refund_processed | warn | processRefund 成功后 | ✅ 已接入 |
 | payment.webhook_invalid_signature | critical | 三渠道 notify 路由 parseWebhook 失败 | ✅ 已接入（2026-08 对抗式审查后接线） |
-| auth.login_failed_burst | warn | 登录 guard 连续失败 | 预留（无发射点） |
-| system.env_or_migration_failed | critical | instrumentation register catch | 预留（无发射点） |
+| auth.login_failed_burst | warn | 登录 guard 连续失败 | ✅ 已落地（2026-09-05：lib/login-guard 邮箱/IP 锁定时刻发射一次，邮箱脱敏、IP 打码前两段） |
+| system.env_or_migration_failed | critical | instrumentation register catch | ✅ 已落地（2026-09-05：emitStartupFailure——instrumentation env/迁移校验失败 + runMigrations 执行失败三处；critical 走 outbox + notifyChannel 直呼兜底，DB 不可达时告警仍可外发，全程吞错不掩盖原始错误） |
 
 > ⚠️ **第九轮（2026-08-26）新增告警缺口**：
 > 1. **迁移失败无人收到告警（P1-7）**：`system.env_or_migration_failed` 仍为「预留（无发射点）」，
@@ -367,9 +367,9 @@ export async function notifyChannel(message: NotifyMessage): Promise<void>;
 | 项 | 状态 | 说明 |
 |----|------|------|
 | `CRON_SECRET` 校验 | ⚠️ 需确认 | 生产必须配置 `CRON_SECRET`，Vercel Cron 自动注入；未配置时应拒绝访问或 fail-closed |
-| 单实例锁 | ❌ 未实现 | 多实例部署下 cron 可能并发执行，造成重复清理、重复对账等；需分布式锁或唯一约束防重 |
+| 单实例锁 | ✅ 已实现（2026-09-05，迁移 0038） | `private.cron_locks` 租约锁 + try_acquire/release RPC（仅授 service_role）：并发触发时后到者 200 跳过；持锁崩溃由 10 分钟 TTL 兜底过期 |
 | 超时保护 | ❌ 未实现 | 长任务应分批/分页执行，避免 Vercel 函数超时（10s Pro / 60s Pro Max） |
-| 成功/失败指标 | ⚠️ 部分实现 | cron 响应已带 outbox_delivered/inbox_replayed/reconcile_*/ai_compensated 等处理计数（`app/api/cron/daily`）；写入 op_events + 失败触发告警仍未做 |
+| 成功/失败指标 | ✅ 已实现（2026-09-05） | cron 收尾写 `system.cron_daily_completed`（duration_ms + 全部处理计数 + errors 数组；有失败 → warn 走 outbox 持久化与告警链路，全绿 → info 直插） |
 | 断点续跑 | ❌ 未实现 | 大规模任务失败后应能从中断处继续，而非重新全量 |
 
 ---

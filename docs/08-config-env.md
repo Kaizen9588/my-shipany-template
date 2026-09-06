@@ -206,7 +206,7 @@ export const config = {
 | 变量 | 必填 | 说明 |
 |------|------|------|
 | `NEXT_PUBLIC_GOOGLE_ANALYTICS_ID` | ❌ | Google Analytics ID（`G-XXXXXXX`） |
-| `NEXT_PUBLIC_OPENPANEL_CLIENT_ID` | ❌ | OpenPanel Client ID |
+| ~~`NEXT_PUBLIC_OPENPANEL_CLIENT_ID`~~ | ❌ 已废弃 | OpenPanel 已移除（2026-09-05，与 PostHog 功能重叠） |
 
 ### 5.8 变量登记台账
 

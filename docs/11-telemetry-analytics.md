@@ -2,7 +2,7 @@
 
 > 版本：v1（✅ 已实现，见落地记录）
 > 背景：GA4 数据延迟（报表 24-72h，免费版无实时）、无会话回放、无法关联错误与用户路径。需要一套能「还原用户操作路径 + 复现 bug」的方案。
-> 现状：`components/analytics/` 已有 GA4（页面浏览）+ OpenPanel（页面/属性/外链），两者均无回放能力。
+> 现状：`components/analytics/` 已有 GA4（页面浏览）+ PostHog（产品分析/回放/错误）；OpenPanel 已于 2026-09-05 移除（与 PostHog 功能重叠，6.5 收口）。
 >
 > ✅ **v1 落地记录（2026-08）**：`lib/telemetry/*`（客户端 track / 服务端 trackServer + 事件常量）、
 > PostHog 适配器（posthog-js 客户端 + posthog-node 服务端）、`components/analytics/posthog.tsx`（初始化 + identify + 输入遮盖）、
@@ -17,9 +17,9 @@
 
 | 层 | 回答的问题 | 数据形态 | 代表工具 | 现状 |
 |----|-----------|----------|----------|------|
-| **产品分析 Analytics** | 多少人点了 Buy？转化率多少？ | 结构化事件流（定量） | GA4 / PostHog / Mixpanel / OpenPanel | ✅ 有（GA4+OpenPanel） |
+| **产品分析 Analytics** | 多少人点了 Buy？转化率多少？ | 结构化事件流（定量） | GA4 / PostHog / Mixpanel / OpenPanel | ✅ 有（GA4+PostHog；OpenPanel 已移除） |
 | **会话回放 Replay** | 用户到底怎么操作的？哪里卡住了？ | DOM 快照视频流（定性） | PostHog / OpenReplay / Sentry Replay / LogRocket | ✅ 有（PostHog 会话录制默认开启，maskAllInputs） |
-| **错误监控 Error** | 哪里崩了？崩溃前的操作链？ | 异常 + breadcrumb | Sentry / PostHog / GlitchTip | ❌ 无（P3 规划 Sentry） |
+| **错误监控 Error** | 哪里崩了？崩溃前的操作链？ | 异常 + breadcrumb | Sentry / PostHog / GlitchTip | ⚠️ 最小接入（2026-09-05）：`captureServerException`（资金路由/cron catch）+ `captureClientException`（error 边界）→ PostHog；完整 Error Tracking（全局边界/告警联动）仍待补 |
 
 **你要的「还原路径 + 复现 bug」= Replay + Error 的交叉**：错误发生时，能点开这个用户当时的操作录像，看到崩前点了什么、输入了什么。
 
@@ -173,7 +173,7 @@ landing.visited
 3. **自托管兜底**：Hobby 版可 Docker 自托管，不担心厂商涨价/关停（延续你对支付渠道「不锁定」的执念）
 4. **与 Sentry 二选一**：PostHog 有错误追踪，P3 规划的 Sentry 可以**取消**，减少一个系统
 
-**现有 OpenPanel 怎么处理**：它只做页面/属性统计，与 PostHog 功能重叠。接入 PostHog 后可移除 OpenPanel，减少一个 SDK。GA4 保留（Google Ads/SEO 归因需要），但退居「广告归因」角色，不做产品分析。
+**OpenPanel 已移除（2026-09-05）**：组件/env/@openpanel/nextjs 依赖全部清除（与 PostHog 功能重叠）。GA4 保留（Google Ads/SEO 归因需要），退居「广告归因」角色。
 
 ---
 
@@ -201,7 +201,7 @@ landing.visited
 
 | 项 | 处理 |
 |----|------|
-| Cookie 同意 | ✅ 已落地：PostHog / GA4 / OpenPanel 均在 consent 接受后才初始化（`components/analytics/*` + `components/cookie-consent`），同意前不采集；回放同样仅同意后开启 |
+| Cookie 同意 | ✅ 已落地：PostHog / GA4 均在 consent 接受后才初始化（`components/analytics/*` + `components/cookie-consent`），同意前不采集；回放同样仅同意后开启 |
 | 回放遮盖 | ✅ 已落地：`session_recording.maskAllInputs: true`（posthog.tsx） |
 | 数据保留 | 回放 30 天，事件 13 个月（PostHog 免费版默认），文档写明 |
 | 欧盟用户 | 优先用 PostHog 欧盟节点（`api.eu.posthog.com`） |
@@ -226,7 +226,7 @@ landing.visited
 |------|------|
 | v1（✅ 已落地） | `lib/telemetry/` 抽象层 + PostHog Provider + 身份缝合（匿名→user_uuid）+ §6 漏斗埋点 + 支付停留时长（t1/t2/t3）+ 会话录制默认开启（maskAllInputs）+ 三 SDK consent 门控 + `ai.generated` 服务端埋点 |
 | v2 | 错误追踪 + bug 复现链路（PostHog Error Tracking / Sentry 评估） |
-| v3 | feature flag（灰度/开关）+ 移除 OpenPanel 评估（GDPR 删除联动已提前落地：`$delete_person`，见 §上表） |
+| v3 | feature flag（灰度/开关）（OpenPanel 已移除；GDPR 删除联动已提前落地：`$delete_person`，见 §上表） |
 
 ---
 

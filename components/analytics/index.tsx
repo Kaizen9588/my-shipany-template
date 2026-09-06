@@ -1,5 +1,4 @@
 import GoogleAnalytics from "./google-analytics";
-import OpenPanelAnalytics from "./open-panel";
 import PostHogAnalytics from "./posthog";
 
 export default function Analytics() {
@@ -10,8 +9,6 @@ export default function Analytics() {
   return (
     <>
       <PostHogAnalytics />
-      <OpenPanelAnalytics />
-
       <GoogleAnalytics />
     </>
   );

@@ -7,6 +7,15 @@
  * v1 内存级实现（单实例有效）；多实例部署需共享存储（Redis/DB），
  * 与 6.18 限流同一升级路径。
  */
+import { recordOpEvent } from "@/lib/oplog";
+
+/** 日志脱敏：只保留首字符（与 auth/config.ts 同口径），避免明文邮箱进事件详情 */
+function maskEmailLocal(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return "***";
+  return `${email[0]}***@${email.slice(at + 1)}`;
+}
+
 interface FailEntry {
   fails: number;
   lockedUntil: number;
@@ -60,6 +69,18 @@ export function recordLoginFailure(email: string, ip: string): void {
     if (emailEntry.fails >= EMAIL_MAX_FAILS) {
       emailEntry.lockedUntil = now + EMAIL_LOCK_MS;
       emailEntry.fails = 0;
+      // docs/16 §5 发射点：auth.login_failed_burst（锁定时刻发一次，锁定期间不重复）
+      recordOpEvent({
+        event_type: "auth.login_failed_burst",
+        severity: "warn",
+        source: "app",
+        detail: {
+          scope: "email",
+          email: maskEmailLocal(email),
+          fails: EMAIL_MAX_FAILS,
+          lock_minutes: EMAIL_LOCK_MS / 60000,
+        },
+      });
     }
   }
 
@@ -75,6 +96,17 @@ export function recordLoginFailure(email: string, ip: string): void {
     if (ipEntry.fails >= IP_MAX_FAILS) {
       ipEntry.lockedUntil = now + IP_LOCK_MS;
       ipEntry.fails = 0;
+      recordOpEvent({
+        event_type: "auth.login_failed_burst",
+        severity: "warn",
+        source: "app",
+        detail: {
+          scope: "ip",
+          ip_prefix: ip.split(".").slice(0, 2).join(".") + ".*",
+          fails: IP_MAX_FAILS,
+          lock_minutes: IP_LOCK_MS / 60000,
+        },
+      });
     }
   }
 }

@@ -159,7 +159,7 @@
 | PostHog 埋点 | ✅ | `lib/telemetry/*`（服务端 + 客户端） |
 | GA4 | ✅ | `components/analytics/google-analytics.tsx` |
 | OpenPanel | ✅ | `components/analytics/open-panel.tsx` |
-| 错误监控 | ❌ 未接入（口径统一） | `lib/telemetry/server.ts` 仅埋点无异常捕获；PostHog Error Tracking / Sentry 接入为真实待办（与 docs/11 §一统一为 ❌，P2-D 收口） |
+| 错误监控 | ⚠️ 最小接入（2026-09-05） | `captureServerException`（checkout/三 webhook/cron catch）+ `captureClientException`（error.tsx）→ PostHog；全局边界/告警规则待补 |
 | 会话回放 | ✅ 已实现 | PostHog `session_recording`（遮罩输入） |
 | 关键事件持久化 | ✅ | Transactional Outbox（0029）：warn+ 入队即持久化，投递重试/退避/死信 + 每日 cron 兜底 |
 | 对账与补偿监控 | ✅ | 每日三规则对账（漏单/失败积压/金额抽核）→ reconcile_anomaly 告警（0031）；AI 请求崩溃补偿 + 补偿计数（0032） |

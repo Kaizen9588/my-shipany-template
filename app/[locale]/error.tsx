@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { captureClientException } from "@/lib/telemetry";
 import { useEffect } from "react";
 
 export default function ErrorPage({
@@ -11,8 +12,9 @@ export default function ErrorPage({
   reset: () => void;
 }) {
   useEffect(() => {
-    // 生产环境可在此上报错误（PostHog / Sentry）
     console.error("[error-boundary]", error);
+    // docs/11 v2 错误追踪：崩溃前进 PostHog（未配置时静默跳过）
+    captureClientException(error);
   }, [error]);
 
   return (

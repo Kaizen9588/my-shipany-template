@@ -51,7 +51,6 @@ const optionalSchema = z.object({
   KLING_BASE_URL: z.string().optional(),
   // 其他
   NEXT_PUBLIC_GOOGLE_ANALYTICS_ID: z.string().optional(),
-  NEXT_PUBLIC_OPENPANEL_CLIENT_ID: z.string().optional(),
   SNOWFLAKE_WORKER_ID: z.string().optional(),
   CORS_ALLOWED_ORIGINS: z.string().optional(),
 });
