@@ -41,6 +41,37 @@ test.describe("header 导航", () => {
     ).toBeVisible();
   });
 
+  test("Showcase 子菜单展开后无嵌套 <a>、无 hydration 报错（回归）", async ({ page }) => {
+    // 回归背景：NavigationMenuLink 曾把整个子项列表包住，形成 <a> 套 <a>；
+    // 下拉内容仅在悬停时挂载，该错误只在真实浏览器交互后出现
+    // （vitest 纯 node 环境不渲染组件，守不住这类 bug，故放 e2e）。
+    const consoleErrors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error") consoleErrors.push(msg.text());
+    });
+    page.on("pageerror", (err) => consoleErrors.push(String(err)));
+
+    await page.goto("/");
+    await dismissCookieBanner(page);
+    await page.getByRole("navigation").getByText("Showcase").hover();
+    await expect(
+      page.getByRole("navigation").getByRole("link", { name: "AI Wallpaper Shop" })
+    ).toBeVisible();
+
+    // DOM 结构断言：任何时刻不允许 <a> 后代里再出现 <a>
+    const nestedCount = await page.evaluate(
+      () => document.querySelectorAll("a a").length
+    );
+    expect(nestedCount, "存在 <a> 嵌套 <a>，会触发 React hydration 报错").toBe(0);
+
+    // console 断言：只过滤本类 DOM 结构/hydration 报错，
+    // 避免第三方脚本等无关 console 噪音导致 flaky
+    const domErrors = consoleErrors.filter((t) =>
+      /cannot be a descendant of|cannot contain a nested|hydration error/i.test(t)
+    );
+    expect(domErrors, domErrors.join("\n")).toEqual([]);
+  });
+
   test("Get Started CTA 指向定价锚点", async ({ page }) => {
     await page.goto("/");
     await dismissCookieBanner(page);
