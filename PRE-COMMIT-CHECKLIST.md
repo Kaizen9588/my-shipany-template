@@ -22,7 +22,7 @@
 ## 3. 测试
 
 - [ ] **一键门禁：`pnpm gate`** —— 串联 e2e 数据清理 → `npx tsc --noEmit` → `pnpm test` → `pnpm lint` → **API 全量接口测试（本地 Supabase 栈）** → Playwright E2E 全链路（smoke + 注册/登录/登出/积分）→ 事后清理，全绿才 push。git 钩子已配置（`core.hooksPath=.githooks`，push 时自动跑；紧急跳过用 `git push --no-verify`）。**新机器克隆后需手动执行一次：`git config core.hooksPath .githooks && chmod +x .githooks/*`**
-- [ ] `pnpm test` 全绿，并核对用例数不少于上一批基线（当前：57 文件 334 用例 + 3 skipped）
+- [ ] `pnpm test` 全绿，并核对用例数不少于上一批基线（当前：62 文件 414 用例 + 3 skipped）
 - [ ] 新增 DB 表/权限/迁移 → `__tests__/db-rbac-static.test.ts` 加静态断言（表结构 + RLS + REVOKE/GRANT 收口 + 调用点约束）
 - [ ] 新增资金/幂等/状态机逻辑 → 有对应单测（supabase 链式桩模式参考 `__tests__/ai-request.test.ts` 的「from() 调用队列弹出」）
 - [ ] 涉及既有行为变更（如路由改走审批/inbox 链）→ 同步适配既有测试，不留红
@@ -36,7 +36,7 @@
 
 ### API 测试补充说明（2026-09-04 起）
 
-- 全量 HTTP 接口测试在 `api-tests/`（Playwright APIRequestContext，独立配置 `playwright.api.config.ts`，与 E2E 互不干扰）；覆盖全部 40 个路由方法，按功能分 8 组（public/auth/user/v1/admin/payment/cron/coverage），`pnpm api-test` 一键跑，报告落 `api-tests/output/report-summary.{md,json}`（分组成功率 + 每用例耗时/结果）
+- 全量 HTTP 接口测试在 `api-tests/`（Playwright APIRequestContext，独立配置 `playwright.api.config.ts`，与 E2E 互不干扰）；覆盖全部 41 个路由方法，按功能分 8 组（public/auth/user/v1/admin/payment/cron/coverage），`pnpm api-test` 一键跑，报告落 `api-tests/output/report-summary.{md,json}`（分组成功率 + 每用例耗时/结果）
 - **门禁要求 100% 通过**：gate.sh 与 CI（`ci.yml` 的 `api-test` job）都会跑；CI 该 job 已是合并闸口，报告以 artifact 留存 30 天。gate.sh 里若检测不到 Docker/本地栈会**警告并跳过**（不假装绿）——但新接口没进测试就是欠债，CI 那道闸口兜底
 - **新增/修改接口必须**：在 `api-tests/suites/` 对应分组补用例，并在 `coverage.spec.ts` 的 COVERED 注册表登记 `METHOD /api/path`（注册表与实际路由不一致会直接红测，防止漏测）
 - 前置依赖：Docker + `supabase start`（本地栈，端口 54321/54322）。测试全程离线跑真实业务逻辑（webhook 签名、资金 RPC、RBAC、限流都是真断言），`.env.api-test` 全部是本地假密钥，严禁换成真实密钥

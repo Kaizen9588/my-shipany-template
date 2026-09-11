@@ -71,6 +71,20 @@ export const NOTIFY_EVENTS: NotifyEventDefinition[] = [
     status: "预留",
   },
   {
+    eventType: "system.client_exception",
+    label: "前端报错上报",
+    description: "用户页面未捕获异常（指纹节流聚合后落库，/admin/logs 可查）",
+    defaultSeverity: "warn",
+    status: "已接入",
+  },
+  {
+    eventType: "system.server_exception",
+    label: "服务端请求异常",
+    description: "服务端请求未捕获异常（instrumentation onRequestError 兜底）",
+    defaultSeverity: "error",
+    status: "已接入",
+  },
+  {
     eventType: "auth.login_failed_burst",
     label: "登录失败激增",
     description: "短时间内多次登录失败，疑似撞库/爆破",

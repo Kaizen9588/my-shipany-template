@@ -451,3 +451,60 @@ export async function notifyChannel(message: NotifyMessage): Promise<void>;
 - [ ] 生产配置 `METRICS_ACCESS_SECRET` 并验证 200/401/429
 - [x] 飞书多维表格建表（每日指标/核心指标/事件流水）+ 运营大屏（10 块：3 KPI + 项目信息 + 3 日趋势 + 3 月趋势，含多项目 `项目` 字段与日/周/月 `统计粒度`、上线时间示例）
 - [ ] 对接真实数据接入：`METRICS_ACCESS_SECRET` + URL 配置 `Authorization` 请求头并首次同步
+
+---
+
+## 九、全站错误追踪 v2（2026-09-06）
+
+> 目标（诉求 4）：**任何页面、任何操作产生的报错都能被侦测到**——用户侧前端未捕获异常、
+> 服务端请求异常、根级布局崩溃三条路全接进既有 op_events + 告警链路，零新增外部依赖。
+
+### 9.1 三个捕获层（互补，不是三选一）
+
+| 层 | 载体 | 捕获范围 | 落点 |
+|----|------|----------|------|
+| ① 客户端全局监听 | `components/error-reporter.tsx`（挂在 `[locale]/layout.tsx`） | 所有浏览器 `error` / `unhandledrejection` 未捕获异常（含异步 Promise 拒绝） | `system.client_exception`（warn，走 outbox + 告警外呼） |
+| ② 服务端请求兜底 | `instrumentation.ts` `onRequestError()`（Next.js v15+ 稳定 API） | 所有 SSR/route handler/server action 未捕获异常 | `system.server_exception`（error，走 outbox + 告警外呼） |
+| ③ 根级兜底页 | `app/global-error.tsx`（替换根 layout 的最后防线） | 布局树本身崩溃（①②的载体都渲染不出来时） | 自行双上报（fetch ① 的端点 + `captureClientException`），并展示重试/回首页 |
+
+> PostHog（`captureClientException`）继续并行上报（配置了 key 时）；本地未配置则静默跳过。
+> error.tsx（路由段错误边界）已有重试 UI，本次不动。
+
+### 9.2 防噪与防滥用（核心设计，防告警刷屏与接口滥用）
+
+**客户端（`components/error-reporter.tsx`）**：
+- **指纹节流**：同一错误（message + 堆栈首帧的 djb2 指纹）60s 窗口内只上报一次——错误风暴不刷接口
+- **会话上限**：单次页面会话最多上报 20 条，防失控循环
+- **噪音过滤**：`Script error.`（跨域脱敏）、`ResizeObserver loop`（布局抖动）直接丢弃
+
+**服务端（`app/api/log-client-error/route.ts` + `lib/error-report.ts` 纯逻辑）**：
+- **IP 限频**：`rateLimit("clienterr:ip:<ip>", 30)` / 分钟（有 Upstash 则多实例共享）
+- **体积上限**：请求体 16KB，413；字段逐项截断（message 500 / stack 4000 / url 1000）
+- **指纹节流（服务端再兜一层）**：单实例内存 Map，条目上限 500，OOM 防泄漏纪律同 `lib/ratelimit.ts`
+- **无 5xx 纪律**：任何内部异常一律 204——客户端无法处理 5xx，只会诱发重试放大；
+  噪音/不可上报也按 204 静默吞掉（客户端无感）
+
+**事件去重**：`system.client_exception` / `system.server_exception` 已登记进 `lib/notify/events.ts`
+（后台 /admin/notify 可按事件开关 + 调级别），warn/error 级走 outbox 持久化 → notifyChannel 外呼，
+管理员在飞书/企微群里直接看到用户侧报错。
+
+### 9.3 端点契约（`POST /api/log-client-error`，公开无鉴权）
+
+| 请求 | 响应 |
+|------|------|
+| `{kind: "error"\|"unhandledrejection", message, stack, url}` | 全部成功路径与内部异常 → **204**；噪音消息 → 204；非法 JSON/字段超限 → 400/413；限频命中 → 429；体积超限 → 413 |
+
+> 公开的理由：匿名用户的报错也要能收到；滥用面由 IP 限频 + 体积上限 + 噪音过滤收口。
+> CSRF：浏览器同源 fetch 自带同源 Origin，middleware 同源放行，无需豁免。
+
+### 9.4 已落地检查
+
+- [x] `lib/error-report.ts`：指纹/节流/噪音过滤/载荷校验纯逻辑（`__tests__/error-report.test.ts` 12 用例覆盖，含 Map 上限驱逐）
+- [x] `components/error-reporter.tsx`：全局 error/unhandledrejection 监听 + 节流 + 上报
+- [x] `app/[locale]/layout.tsx`：挂载 `<ErrorReporter />`
+- [x] `app/api/log-client-error/route.ts`：上报端点（限频/收口/节流/oplog）
+- [x] `instrumentation.ts`：`onRequestError` 服务端兜底（edge runtime 跳过——oplog 依赖 pg）
+- [x] `app/global-error.tsx`：根级兜底页（重试按钮 + 回首页 + 自行双上报）
+- [x] `lib/notify/events.ts`：登记 `system.client_exception`（warn）/ `system.server_exception`（error）
+- [x] api-tests：public 组 3 用例（合法 204 / 噪音 204+坏 JSON 400 / 超 16KB 413）+ coverage 注册表登记
+- [ ] 生产观察：上线后看 /admin/logs 的 client_exception 量与分布，必要时调过滤规则/告警级别

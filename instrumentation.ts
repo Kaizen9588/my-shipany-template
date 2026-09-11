@@ -1,4 +1,5 @@
 import { validateEnv } from "./lib/env";
+import type { FingerprintThrottle } from "./lib/error-report";
 
 /**
  * Next.js 服务启动钩子（App Router，根目录约定文件）。
@@ -43,5 +44,66 @@ export async function register() {
     const { emitStartupFailure } = await import("./lib/oplog");
     await emitStartupFailure("migration verification", e);
     throw e;
+  }
+}
+
+/**
+ * 服务端请求级错误兜底（docs/16 v2，Next 15+ instrumentation 稳定 API）。
+ *
+ * 任何 server 请求未捕获异常（render / route / action / proxy）统一进
+ * op_events（system.server_exception，error 级走 outbox + 告警），补齐
+ * captureServerException 手动埋点（checkout/webhook/cron）之外的面。
+ * 指纹节流防风暴：如 DB 不可达时每个请求都会炸，同因错误窗口内只落一条。
+ * 全程吞错：监控自身不允许产生新错误。
+ */
+let serverErrorThrottle: FingerprintThrottle | null = null;
+
+export async function onRequestError(
+  error: unknown,
+  request: { path: string; method: string; headers: { [key: string]: string | string[] } },
+  context: {
+    routerKind: string;
+    routePath: string;
+    routeType: string;
+  }
+): Promise<void> {
+  try {
+    if (process.env.NEXT_RUNTIME === "edge") {
+      return;
+    }
+    const { computeFingerprint, createFingerprintThrottle } = await import(
+      "./lib/error-report"
+    );
+    if (!serverErrorThrottle) {
+      serverErrorThrottle = createFingerprintThrottle();
+    }
+
+    const message = String(
+      error instanceof Error ? error.message : error
+    ).slice(0, 500);
+    const stack = error instanceof Error ? (error.stack || "").slice(0, 1500) : "";
+    if (!serverErrorThrottle.allow(computeFingerprint(message, stack))) {
+      return;
+    }
+
+    const digest =
+      error instanceof Error ? (error as { digest?: string }).digest : undefined;
+    const { recordOpEvent } = await import("./lib/oplog");
+    recordOpEvent({
+      event_type: "system.server_exception",
+      severity: "error",
+      source: "app",
+      detail: {
+        message,
+        digest,
+        path: String(request.path || "").slice(0, 500),
+        method: request.method,
+        routePath: context.routePath,
+        routeType: context.routeType,
+        routerKind: context.routerKind,
+      },
+    });
+  } catch {
+    // 吞错
   }
 }

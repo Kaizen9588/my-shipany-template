@@ -166,3 +166,47 @@ test.describe("public / 无鉴权接口", () => {
     }
   });
 });
+
+test.describe("public / 客户端错误上报", () => {
+  const post = (request: any, body: string | object) =>
+    request.post(`${BASE}/api/log-client-error`, {
+      data: typeof body === "string" ? body : JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+    });
+
+  test("POST /api/log-client-error 合法载荷 → 204", async ({ request }) => {
+    const res = await post(request, {
+      kind: "error",
+      message: `api-test client error ${Date.now()}`,
+      stack: "Error: api-test\n    at suite (/tests/public.spec.ts:1:1)",
+      url: "http://localhost:3100/",
+    });
+    expect(res.status()).toBe(204);
+  });
+
+  test("非法 JSON → 400；噪音消息（Script error）→ 204 静默吞掉", async ({
+    request,
+  }) => {
+    const bad = await post(request, "{not-json");
+    expect(bad.status()).toBe(400);
+
+    const noise = await post(request, {
+      kind: "error",
+      message: "Script error.",
+      stack: "",
+      url: "http://localhost:3100/",
+    });
+    expect(noise.status()).toBe(204);
+  });
+
+  test("超 16KB 请求体 → 413", async ({ request }) => {
+    const big = {
+      kind: "error",
+      message: "boom",
+      stack: "x".repeat(17 * 1024),
+      url: "/",
+    };
+    const res = await post(request, JSON.stringify(big));
+    expect(res.status()).toBe(413);
+  });
+});

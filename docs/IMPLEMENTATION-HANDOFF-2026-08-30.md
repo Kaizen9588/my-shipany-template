@@ -685,6 +685,40 @@ CI 在全新 GitHub runner 上跑通 api-test + e2e-test 两个 job，逐层排�
 
 ---
 
+### 1.41 第三十三批：全站错误追踪 v2（错误侦测诉求落地，2026-09-06）
+
+> 背景：用户提出「能否侦测到任何页面/任何操作的报错」。盘点后发现 error.tsx 里虽有
+> `captureClientException`，但 PostHog 未配置（.env.local 零 key）→ 当前实际零监控；
+> 服务端仅 checkout/webhook/cron 有手工埋点。方案经用户确认后落地（用户原话「好的，那你做吧」）。
+
+- **三层捕获**（方案详见 docs/16-observability-alerting.md §九）：
+  ① `components/error-reporter.tsx`（挂 `[locale]/layout.tsx`）——window error/
+  unhandledrejection 全局监听，指纹节流 60s + 会话上限 20 条 + 噪音过滤（Script error /
+  ResizeObserver loop），上报 `POST /api/log-client-error`，全程静默自吞不影响用户；
+  ② `instrumentation.ts` `onRequestError`（Next 15+ 稳定 API）——SSR/route/action 未捕获
+  异常兜底，edge runtime 跳过（oplog 依赖 pg）；
+  ③ `app/global-error.tsx`——根 layout 崩溃的最后防线（自己带 html/body + 重试/回首页 +
+  自行双上报）。
+- **新端点** `POST /api/log-client-error`（公开无鉴权，匿名报错也要能收）：
+  IP 限频 30/分（rateLimit）→ 16KB 体积上限 413 → JSON 校验 400 → 噪音 204 静默吞 →
+  服务端指纹节流（内存 Map 上限 500，防泄漏纪律同 ratelimit）→ `recordOpEvent`
+  `system.client_exception`（warn，走 outbox + 飞书/企微告警外呼）。**无 5xx 纪律**：
+  一切内部异常回 204，防客户端重试放大。
+- **纯逻辑下沉** `lib/error-report.ts`：computeFingerprint（djb2 message+堆栈首帧）/
+  createFingerprintThrottle（可注入 now，惰性清理驱逐）/ isReportableClientError /
+  parseClientErrorPayload（字段类型+长度收口）。client reporter 与服务端端点共用。
+- **事件登记**：`lib/notify/events.ts` 新增 `system.client_exception`（warn）/ 
+  `system.server_exception`（error），/admin/notify 可按事件开关。
+- **测试**：`__tests__/error-report.test.ts` 12 用例（指纹稳定/唯一、噪音过滤、节流窗口/
+  重入/上限驱逐、载荷校验）；api-tests public 组 +3 用例（合法 204 / 噪音 204+坏 JSON 400 /
+  超 16KB 413），coverage 注册表登记 `POST /api/log-client-error`。
+- **文档**：docs/16 §九（v2 全文：三层捕获表 / 防噪防滥用 / 端点契约 / 落地检查）。
+- **基线**：`npx tsc --noEmit` 0 错；vitest 62 文件 414 用例 + 3 skipped 全绿；
+  lint 0 errors；api-test 62/62 全绿（本地 Supabase 栈 + .env.api-test）。
+- **运维注意**：跑 api-test/e2e 前仍需停 dev server（§1.40 已知边界，本批复现并按此执行）。
+
+---
+
 ## 2. 已具备的模块能力（已有实现，不等于生产就绪）
 
 | 模块 | 当前能力 | 状态 | 主要实现位置 |

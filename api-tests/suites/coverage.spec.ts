@@ -64,6 +64,7 @@ const COVERED: string[] = [
   "POST /api/send-verification",
   "POST /api/verify-code",
   "GET /api/payment-methods",
+  "POST /api/log-client-error",
   // ---- auth（suites/auth.spec.ts）----
   "GET /api/auth/*nextauth",
   "POST /api/auth/*nextauth",

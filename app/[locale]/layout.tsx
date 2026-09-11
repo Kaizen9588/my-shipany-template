@@ -5,6 +5,7 @@ import { getMessages, getTranslations } from "next-intl/server";
 import { AppContextProvider } from "@/contexts/app";
 import CrispWidget from "@/components/feedback/crisp";
 import CookieConsent from "@/components/cookie-consent";
+import ErrorReporter from "@/components/error-reporter";
 import { Inter as FontSans } from "next/font/google";
 import { Metadata } from "next";
 import { NextAuthSessionProvider } from "@/auth/session";
@@ -83,6 +84,7 @@ export default async function RootLayout({
               </ThemeProvider>
               <CookieConsent />
               <CrispWidget />
+              <ErrorReporter />
             </AppContextProvider>
           </NextAuthSessionProvider>
         </NextIntlClientProvider>
