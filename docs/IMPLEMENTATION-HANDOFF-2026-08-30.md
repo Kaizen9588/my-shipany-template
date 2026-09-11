@@ -719,6 +719,40 @@ CI 在全新 GitHub runner 上跑通 api-test + e2e-test 两个 job，逐层排�
 
 ---
 
+### 1.42 第三十三批附：自托管 runner 服务器 systemd 卡死故障（首次 push 红、服务器级修复，2026-09-11）
+
+- **现象**：b35ee65 push 后 CI 首红——`API Tests` job 的「Start local Supabase stack」
+  连续 3 次（每次间隔 90s 重试）失败于
+  `runc create failed: unable to apply cgroup configuration … Failed to activate service
+  'org.freedesktop.systemd1': timed out`；`gh run rerun --failed` 复跑同样失败。
+  Test & Build / E2E 两个 job 始终绿——纯基础设施故障，与代码无关。
+- **排查路径**（SSH 到 runner 服务器 wang@192.168.3.22）：
+  1. `systemctl is-system-running` → `Failed to activate service 'org.freedesktop.systemd1':
+     timed out`；机器本身 up 7 天、负载 0.1、内存磁盘富余 → 不是资源问题。
+  2. `journalctl -p err`：systemd-journald 持续 `Failed to send WATCHDOG=1 … Transport
+     endpoint is not connected`、systemd-logind `Failed to start session scope … Connection
+     timed out` → PID 1 与 D-Bus 的事件环断了。
+  3. `sudo cat /proc/1/syscall` → 主线程阻塞在 `waitid(P_ALL, WSTOPPED)`；`/proc/1/fd`
+     仅剩 3 个全部指向 `/dev/null`（正常应有几十个 socket/epoll fd）且时间戳 9/10 22:51
+     → 更早发生过一次夭折的 daemon-reexec（fd 被清空后主循环没恢复），此后阻塞至今。
+  4. `ShdPnd` 里 SIGUSR1/SIGCHLD 挂着没人消费——主循环回不来，**任何信号都无效**。
+- **软修复尝试（全部无效，留档防复走）**：SIGUSR1（重连 D-Bus）→ 总线上 systemd1 名字
+  变 activatable 但请求依然超时；清理 /run/systemd/transient/ 里 12 个孤儿 docker-*.scope
+  → 无效；SIGRTMIN+25（daemon-reexec）→ 信号根本不被处理；kill 卡住的 `login -- wang`
+  子进程（想唤醒 waitid）→ login 退了，waitid 继续卡。
+- **最终修复**：`docker stop $(docker ps -q)` 优雅停全部容器（保护 mysql8 InnoDB）→
+  `sync` → `sudo reboot -f`（systemd 已死，只能强制重启）。
+- **重启后恢复验证**：`systemctl is-system-running` → running；docker active；
+  gitea/mysql8/kazhen_one/act_runner 靠 restart=always 自动回来；test-portal
+  （unless-stopped，因被显式 stop）与 confident_bartik（restart=no 探针容器）手动补拉；
+  两个 actions runner systemd 服务自启且 `Listening for Jobs`；`docker run hello-world`
+  通过 → cgroup→systemd 链路恢复。
+- **遗留观察**：PID 1 的 fd 全部变 /dev/null 的触发原因未查到（journald 日志在故障前
+  无 panic 记录）；若复发，先 `cat /proc/1/syscall` + `ls /proc/1/fd` 快速判定是否同一
+  模式，同一模式直接走「停容器 → reboot -f」，不必再试软修复。
+
+---
+
 ## 2. 已具备的模块能力（已有实现，不等于生产就绪）
 
 | 模块 | 当前能力 | 状态 | 主要实现位置 |
